@@ -91,6 +91,9 @@ public final class TabUI {
         // collide with HUD's invisible entries ("§8"+spaces) — the board is shared and an entry
         // string can belong to only one team. Use a different invisible color (§0) for Tab rows.
         t.addEntry("§0" + " ".repeat(index + 1));
+        // A PLAYER_LIST objective only shows rows that have a score; descending value = order
+        // from top of the tab. Must be set (repeatedly is fine — same value = no-op packet).
+        o.getScore("§0" + " ".repeat(index + 1)).setScore(100 - index);
     }
 
     private String fmt(double v) {
