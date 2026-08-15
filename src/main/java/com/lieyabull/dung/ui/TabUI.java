@@ -49,8 +49,20 @@ public final class TabUI {
                 team(o, i++, "   §fRooms explored §7" + vis + "/" + total + "   §aCleared §7" + cleared);
                 team(o, i++, "   §cBoss: " + (di.boss() != null ? "§4ENGAGED" : (di.curRoom() != null && di.curRoom().type.name().equals("BOSS") ? "§6AWAITING" : "§8hidden")));
             }
+            // Class ability info
+            String classAbilityLabel = switch (st.classId) {
+                case "warrior" -> "War Cry";
+                case "mage" -> "Arcane Nova";
+                case "ranger" -> "Shadow Step";
+                default -> "Class Ability";
+            };
+            String classKey = "class_" + st.classId;
+            Long classCd = st.cooldowns.get(classKey);
+            long classRem = classCd == null ? 0 : classCd - System.currentTimeMillis();
+            String cdStr = classRem > 0 ? String.format("%.1fs", classRem / 1000.0) : "§aReady";
+            team(o, i++, "§6" + classAbilityLabel + " §7" + cdStr);
             team(o, i++, "");
-            team(o, i++, "§8Hold sneak to cast, click to attack");
+            team(o, i++, "§8Sneak+Q=Class  Sneak+RMB=Weapon  Click=Attack");
         }
         // hide real player name rows (single player)
     }

@@ -8,7 +8,6 @@ import com.lieyabull.dung.items.ItemPool;
 import com.lieyabull.dung.items.ItemTags;
 import com.lieyabull.dung.items.Rarity;
 import com.lieyabull.dung.meta.MetaManager;
-import com.lieyabull.dung.meta.Upgrades;
 import com.lieyabull.dung.party.Party;
 import com.lieyabull.dung.party.PartyManager;
 import com.lieyabull.dung.ui.ChatUI;
@@ -21,9 +20,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
 public final class DungCommand implements CommandExecutor {
-    private static final int WEAPON_COST = 20;
-    private static final int ARMOR_COST = 15;
-
     private final Dung plugin;
 
     public DungCommand(Dung plugin) {
@@ -196,99 +192,15 @@ public final class DungCommand implements CommandExecutor {
     // ---------- /shop ----------
 
     private boolean shopCmd(Player p, String[] args) {
-        if (args.length == 0) { showShop(p); return true; }
-        switch (args[0].toLowerCase()) {
-            case "weapon": return buyGear(p, true);
-            case "armor": return buyGear(p, false);
-            default: showShop(p); return true;
-        }
-    }
-
-    /** Between-run shop: spend persistent coins on gear that carries into your next run. */
-    private void showShop(Player p) {
-        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
-        p.sendMessage("§6--- Dung Shop ---");
-        p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins + " §8(earned by beating bosses, survives death)");
-        p.sendMessage("§7Shards: §b" + prof.shards + " §8(from salvaging armor in a run — /salvage)");
-        p.sendMessage("");
-        p.sendMessage("§7Buy gear that persists between runs:");
-        p.sendMessage(ChatUI.command("  [ RANDOM WEAPON — §6" + WEAPON_COST + " coins§6 ]", "/shop weapon", "Buy a random weapon (rarity up-weighted)"));
-        p.sendMessage(ChatUI.command("  [ RANDOM ARMOR — §6" + ARMOR_COST + " coins§6 ]", "/shop armor", "Buy a random armor piece"));
-        p.sendMessage(ChatUI.command("  [ Permanent Upgrades ]", "/upgrades", "Spend shards on permanent stat upgrades"));
-    }
-
-    private boolean buyGear(Player p, boolean weapon) {
-        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
-        int cost = weapon ? WEAPON_COST : ARMOR_COST;
-        if (prof.persistentCoins < cost) {
-            p.sendMessage("§cYou need " + cost + " coins. Earn them by beating bosses.");
-            return true;
-        }
-        prof.persistentCoins -= cost;
-        plugin.meta().save(); // persist the spend so a restart can't duplicate the item
-        ItemStack item = (weapon ? ItemPool.randomWeapon(2) : ItemPool.randomArmor(2, (int) (Math.random() * 4)));
-        GearFactory.markPersistent(item); // bought with persistent coins -> survives death
-        p.getInventory().addItem(item);
-        p.sendMessage("§aPurchased! " + item.getItemMeta().getDisplayName() + " §7(-§6" + cost + " coins§7)");
+        plugin.shopUI().openPersistentShop(p);
         return true;
     }
 
     // ---------- /upgrades ----------
 
     private boolean upgradesCmd(Player p, String[] args) {
-        if (args.length >= 2 && args[0].equalsIgnoreCase("buy")) {
-            return buyUpgrade(p, args[1].toLowerCase());
-        }
-        showUpgrades(p);
+        plugin.shopUI().openUpgrades(p);
         return true;
-    }
-
-    /** Between-run menu: spend shards on permanent stat upgrades. */
-    private void showUpgrades(Player p) {
-        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
-        p.sendMessage("§b--- Permanent Upgrades ---");
-        p.sendMessage("§7You have §b" + prof.shards + " shards§7. Earn them with §f/salvage§7 in a run.");
-        p.sendMessage("");
-        for (Upgrades.Track t : Upgrades.ALL) {
-            int owned = prof.upgrades.getOrDefault(t.id(), 0);
-            String line = "§7" + t.label() + "  §8Lv §f" + owned;
-            if (owned >= t.maxLevel()) {
-                p.sendMessage("  " + line + "  §8MAXED");
-            } else {
-                int cost = Upgrades.cost(t, owned);
-                p.sendMessage(ChatUI.command("  " + line + "  §8→ §6" + cost + " shards§8 " + effect(t, owned), "/upgrades buy " + t.id(), "Spend " + cost + " shards"));
-            }
-        }
-    }
-
-    private boolean buyUpgrade(Player p, String id) {
-        Upgrades.Track t = Upgrades.byId(id);
-        if (t == null) { p.sendMessage("§cUnknown upgrade."); return true; }
-        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
-        int owned = prof.upgrades.getOrDefault(t.id(), 0);
-        if (owned >= t.maxLevel()) { p.sendMessage("§8That upgrade is already maxed."); return true; }
-        int cost = Upgrades.cost(t, owned);
-        if (prof.shards < cost) {
-            p.sendMessage("§cYou need " + cost + " shards (have " + prof.shards + "). Salvage armor with /salvage in a run.");
-            return true;
-        }
-        prof.shards -= cost;
-        prof.upgrades.put(t.id(), owned + 1);
-        plugin.meta().save();
-        p.sendMessage("§a" + t.label() + " §7is now §fLv " + (owned + 1) + "§7. §8(Effect: " + effect(t, owned + 1) + ")");
-        return true;
-    }
-
-    private String effect(Upgrades.Track t, int level) {
-        return switch (t.id()) {
-            case "damage" -> "+" + (level * 2) + " damage";
-            case "hearts" -> "+" + (level * 10) + " max HP";
-            case "defense" -> "+" + level + " defense";
-            case "crit" -> "+" + level + "% crit chance";
-            case "speed" -> "+" + (level * 5) + "% move speed";
-            case "mana" -> "+" + (level * 10) + " max mana";
-            default -> "";
-        };
     }
 
     // ---------- /salvage ----------

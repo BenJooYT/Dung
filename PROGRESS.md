@@ -100,12 +100,12 @@ tab = detailed build/run/progression).
       rooms small for the multi-phase boss; melee reach probe (2.2) narrower than MC swing (~3.0);
       `tab.refresh` every tick is wasteful (only HUD needs per-tick cadence).
 - [ ] Truly wall-hidden secrets (bomb-through-wall) vs connected room marked secret.
-- [ ] Real pedestal presentation for treasure/shop loot.
-- [ ] Class-specific active abilities keyed per class (not just weapon abilities).
+- [x] **Chest GUI shop:** In-run shop rooms and the between-run `/shop` command now open a chest GUI with multiple items (weapons, armor, hearts, mana potions, keys, bombs, floor buffs). `/upgrades` also opens a GUI with a back button to the main shop.
+- [x] **Class-specific active abilities:** Warrior (War Cry — party damage boost + invuln), Mage (Arcane Nova — AoE 2x damage), Ranger (Shadow Step — teleport behind enemy + guaranteed crit). Triggered by sneak+drop (Q).
 
 ## Build / run
 ```
 gradlew build            # compiles + jars
 gradlew runServer        # boots a Paper 1.21.11 server with the plugin
 ```
-Commands: `/dung start|descend|leave|shop|stats|class|give|help`
+Commands: `/dung start|descend|leave|shop|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop [weapon|armor]` `/upgrades [buy <id>]` `/salvage [all|favorite]`

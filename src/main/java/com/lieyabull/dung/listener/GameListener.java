@@ -23,6 +23,7 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason;
+import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
@@ -139,6 +140,17 @@ public final class GameListener implements Listener {
         }
         // Then clean up party membership
         plugin.game().partyManager().onPlayerQuit(p);
+    }
+
+    /** Sneak + drop (Q) casts the player's class-specific active ability. */
+    @EventHandler
+    public void onDropItem(PlayerDropItemEvent e) {
+        Player p = e.getPlayer();
+        if (!p.isSneaking()) return;
+        DungeonInstance di = instanceOf(p);
+        if (di == null) return;
+        e.setCancelled(true);
+        di.tryCastClassAbility(p);
     }
 
     /** Left click / attack to fire tears. */

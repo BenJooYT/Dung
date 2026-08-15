@@ -48,6 +48,11 @@ public final class PlayerState {
     // invulnerability timestamp (ms)
     public long invulnUntil = 0;
     public boolean dead = false;
+    // class ability: damage boost (War Cry)
+    public long damageBoostUntil = 0;
+    public double damageBoostMult = 1.0;
+    // class ability: guaranteed crit (Shadow Step)
+    public long guaranteedCritUntil = 0;
 
     public PlayerState(Player p) {
         this.player = p;
@@ -193,6 +198,16 @@ public final class PlayerState {
         double since = (System.currentTimeMillis() - lastDamageTime) / 1000.0;
         if (since < HEAL_DELAY_SECONDS) return;
         hearts = Math.min(maxHearts, hearts + healPerSecond / 20.0);
+    }
+
+    /** Check if the damage boost from War Cry is active. */
+    public boolean hasDamageBoost() {
+        return System.currentTimeMillis() < damageBoostUntil;
+    }
+
+    /** Check if the guaranteed crit from Shadow Step is active. */
+    public boolean hasGuaranteedCrit() {
+        return System.currentTimeMillis() < guaranteedCritUntil;
     }
 
     public void spendMana(double amt) {

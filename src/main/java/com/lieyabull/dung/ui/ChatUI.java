@@ -16,8 +16,8 @@ public final class ChatUI {
         p.sendMessage(Component.text("Dung", NamedTextColor.RED, TextDecoration.BOLD)
                 .append(Component.text(" — the dungeon awaits.", NamedTextColor.GRAY)));
         p.sendMessage(command("[ Start a run ]", "/dung start", "Begin a fresh run"));
-        p.sendMessage(command("[ Shop ]", "/shop", "Spend persistent coins on gear"));
-        p.sendMessage(command("[ Upgrades ]", "/upgrades", "Spend shards on permanent stat upgrades"));
+        p.sendMessage(command("[ Shop ]", "/shop", "Open the shop GUI — spend persistent coins on gear"));
+        p.sendMessage(command("[ Upgrades ]", "/upgrades", "Open the upgrades GUI — spend shards on permanent stat upgrades"));
         p.sendMessage(command("[ My Stats ]", "/dung stats", "View your meta-progression"));
         p.sendMessage(command("[ Help ]", "/dung help", "List commands"));
     }

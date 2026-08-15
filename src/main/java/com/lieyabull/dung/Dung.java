@@ -4,6 +4,7 @@ import com.lieyabull.dung.command.DungCommand;
 import com.lieyabull.dung.game.GameManager;
 import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.listener.GameListener;
+import com.lieyabull.dung.ui.ShopUI;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -14,6 +15,7 @@ public final class Dung extends JavaPlugin {
     private static Dung instance;
     private GameManager game;
     private MetaManager meta;
+    private ShopUI shopUI;
     private World world;
 
     public static Dung instance() {
@@ -27,7 +29,9 @@ public final class Dung extends JavaPlugin {
         meta = new MetaManager(new File(getDataFolder(), "saves.yml"));
         meta.load();
         game = new GameManager(this);
+        shopUI = new ShopUI(this);
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
+        Bukkit.getPluginManager().registerEvents(shopUI, this);
         getCommand("dung").setExecutor(new DungCommand(this));
         getCommand("dungeon").setExecutor(new DungCommand(this));
         getCommand("shop").setExecutor(new DungCommand(this));
@@ -65,5 +69,9 @@ public final class Dung extends JavaPlugin {
 
     public MetaManager meta() {
         return meta;
+    }
+
+    public ShopUI shopUI() {
+        return shopUI;
     }
 }

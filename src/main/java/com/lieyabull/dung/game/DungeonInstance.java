@@ -155,8 +155,9 @@ public final class DungeonInstance {
                 prof.hasSeenTutorial = true;
                 p.sendTitle("§cDUNGEON", "§7Clear every room. Find the Warden. Descend deeper.", 10, 70, 10);
                 p.sendMessage("§6Clear rooms to earn coins and gear. Find the boss room to go deeper.");
-                p.sendMessage("§7Attack: §fLeft-Click    §7Ability: §fSneak + Right-Click");
-                p.sendMessage("§7Heal: pick up §c♥§7 hearts. Salvage spare armor: §f/salvage§7. Exit: §f/dung leave");
+                p.sendMessage("§7Attack: §fLeft-Click    §7Weapon Ability: §fSneak + Right-Click");
+                p.sendMessage("§7Class Ability: §fSneak + Drop (Q)    §7Heal: pick up §c♥§7 hearts");
+                p.sendMessage("§7Salvage spare armor: §f/salvage§7. Exit: §f/dung leave");
             }
         }
         plugin.meta().save();
@@ -515,6 +516,11 @@ public final class DungeonInstance {
         if (ps == null) return;
         fireCd = ps.fireRateTicks;
 
+        // Apply damage boost (War Cry) and guaranteed crit (Shadow Step)
+        double baseDmg = ps.damage;
+        if (ps.hasDamageBoost()) baseDmg *= ps.damageBoostMult;
+        boolean guaranteeCrit = ps.hasGuaranteedCrit();
+
         org.bukkit.util.Vector dir = p.getEyeLocation().getDirection().normalize();
         long k = run.floor.key(curRoom.x, curRoom.z);
         List<Enemy> roomList = roomEnemies.getOrDefault(k, List.of());
@@ -525,7 +531,8 @@ public final class DungeonInstance {
             double horiz = Math.hypot(el.getX() - eyeBase.getX(), el.getZ() - eyeBase.getZ());
             double vert = Math.abs(el.getY() - eyeBase.getY());
             if (horiz < ps.reach && vert < 2.0) {
-                double dmg = ps.damage * (Math.random() < ps.critChance ? ps.critMult : 1.0);
+                boolean crit = guaranteeCrit || Math.random() < ps.critChance;
+                double dmg = baseDmg * (crit ? ps.critMult : 1.0);
                 e.damage(dmg, p, dir.getX(), dir.getZ());
             }
         }
@@ -534,7 +541,8 @@ public final class DungeonInstance {
             double horiz = Math.hypot(bl.getX() - eyeBase.getX(), bl.getZ() - eyeBase.getZ());
             double vert = Math.abs(bl.getY() - eyeBase.getY());
             if (horiz < ps.reach + 0.5 && vert < 3.0) {
-                double dmg = ps.damage * (Math.random() < ps.critChance ? ps.critMult : 1.0);
+                boolean crit = guaranteeCrit || Math.random() < ps.critChance;
+                double dmg = baseDmg * (crit ? ps.critMult : 1.0);
                 boss.damage(dmg);
             }
         }
@@ -550,6 +558,13 @@ public final class DungeonInstance {
         "Ravage",      new long[]{ 40, 8000 }
     );
     private static final long[] DEFAULT_ABILITY_COST_CD = new long[]{ 15, 3500 };
+
+    // Class-specific active abilities: [manaCost, cooldownMs]
+    private static final Map<String, long[]> CLASS_ABILITY_COST_CD = Map.of(
+        "warrior", new long[]{ 10, 8000 },
+        "mage",    new long[]{ 25, 6000 },
+        "ranger",  new long[]{ 15, 5000 }
+    );
 
     public void tryCastAbility(Player p, ItemStack item) {
         if (!running || item == null) return;
@@ -576,6 +591,118 @@ public final class DungeonInstance {
         st.spendMana(cost);
         st.startCooldown(id, cd);
         dispatchAbility(id, st, p);
+    }
+
+    /**
+     * Cast the player's class-specific active ability.
+     * Triggered by sneak + drop (Q) while in a run.
+     */
+    public void tryCastClassAbility(Player p) {
+        if (!running) return;
+        PlayerState st = run.playerStateOf(p.getUniqueId());
+        if (st == null) return;
+
+        String classId = st.classId;
+        long[] cfg = CLASS_ABILITY_COST_CD.get(classId);
+        if (cfg == null) {
+            p.sendMessage("§cYour class has no active ability.");
+            return;
+        }
+        double cost = cfg[0];
+        long cd = cfg[1];
+        String abilityKey = "class_" + classId;
+        if (!st.canCast(abilityKey, cost, cd)) {
+            p.sendMessage("§cNot enough mana or on cooldown.");
+            return;
+        }
+        st.spendMana(cost);
+        st.startCooldown(abilityKey, cd);
+        dispatchClassAbility(classId, st, p);
+    }
+
+    private void dispatchClassAbility(String classId, PlayerState st, Player caster) {
+        long k = run.floor.key(curRoom.x, curRoom.z);
+        List<Enemy> roomList = roomEnemies.getOrDefault(k, List.of());
+        double dmg = st.damage * (Math.random() < st.critChance ? st.critMult : 1.0);
+        org.bukkit.util.Vector dir = caster.getEyeLocation().getDirection().normalize();
+
+        switch (classId) {
+            case "warrior":
+                // War Cry: boost all party members' damage by 30% for 5 seconds, brief invuln
+                long warCryUntil = System.currentTimeMillis() + 5000;
+                for (Player pm : party.onlineMembers()) {
+                    PlayerState pst = run.playerStateOf(pm.getUniqueId());
+                    if (pst != null) {
+                        pst.damageBoostUntil = warCryUntil;
+                        pst.damageBoostMult = 1.3;
+                        pm.sendMessage("§6War Cry! Damage boosted by 30% for 5s!");
+                    }
+                }
+                st.invulnUntil = Math.max(st.invulnUntil, System.currentTimeMillis() + 1000);
+                world.spawnParticle(org.bukkit.Particle.FLASH, caster.getLocation().add(0, 1, 0), 1, 0, 0, 0);
+                world.spawnParticle(org.bukkit.Particle.CRIT, caster.getLocation().add(0, 1, 0), 20, 1.5, 1, 1.5);
+                caster.sendMessage("§6§lWAR CRY!");
+                break;
+
+            case "mage":
+                // Arcane Nova: AoE damage (2x) to all enemies within 5 blocks
+                java.util.function.DoubleConsumer hitBossNova = (radius) -> {
+                    if (boss != null && boss.isActive() && boss.location().distance(caster.getLocation()) < radius) {
+                        boss.damage(dmg * 2.0);
+                    }
+                };
+                hitBossNova.accept(5.0);
+                for (Enemy e : roomList) {
+                    if (!e.dead && e.entity.getLocation().distance(caster.getLocation()) < 5) {
+                        e.damage(dmg * 2.0, caster, 0, 0);
+                    }
+                }
+                world.spawnParticle(org.bukkit.Particle.CRIT, caster.getLocation().add(0, 1, 0), 40, 2, 1, 2);
+                world.spawnParticle(org.bukkit.Particle.PORTAL, caster.getLocation().add(0, 1, 0), 20, 2, 1, 2);
+                world.playSound(caster.getLocation(), org.bukkit.Sound.ENTITY_FIREWORK_ROCKET_BLAST, 1.0f, 0.7f);
+                caster.sendMessage("§d§lARCANE NOVA!");
+                break;
+
+            case "ranger":
+                // Shadow Step: teleport behind the nearest enemy, guarantee next crit
+                Enemy target = null;
+                double bestDist = Double.MAX_VALUE;
+                for (Enemy e : roomList) {
+                    if (e.dead) continue;
+                    double dist = e.entity.getLocation().distanceSquared(caster.getLocation());
+                    if (dist < bestDist) { bestDist = dist; target = e; }
+                }
+                if (target != null) {
+                    Location el = target.entity.getLocation();
+                    org.bukkit.util.Vector away = el.toVector().subtract(caster.getLocation().toVector()).setY(0).normalize();
+                    Location behind = el.clone().add(away.clone().multiply(-2));
+                    behind.setY(el.getY());
+                    behind.setYaw(caster.getLocation().getYaw());
+                    behind.setPitch(caster.getLocation().getPitch());
+                    caster.teleport(behind);
+                    caster.sendMessage("§aShadow Stepped behind " + target.type.name + "!");
+                } else if (boss != null && boss.isActive()) {
+                    Location bl = boss.location();
+                    org.bukkit.util.Vector away = bl.toVector().subtract(caster.getLocation().toVector()).setY(0).normalize();
+                    Location behind = bl.clone().add(away.clone().multiply(-3));
+                    behind.setY(bl.getY());
+                    behind.setYaw(caster.getLocation().getYaw());
+                    behind.setPitch(caster.getLocation().getPitch());
+                    caster.teleport(behind);
+                    caster.sendMessage("§aShadow Stepped behind the Warden!");
+                } else {
+                    // No enemies — short forward dash
+                    caster.setVelocity(dir.clone().multiply(1.0).setY(0.3));
+                    caster.sendMessage("§aShadow Step — no enemies nearby.");
+                }
+                // Guarantee next crit within 1.5 seconds
+                st.guaranteedCritUntil = System.currentTimeMillis() + 1500;
+                world.spawnParticle(org.bukkit.Particle.SMOKE, caster.getLocation().add(0, 1, 0), 15, 0.5, 0.5, 0.5);
+                world.spawnParticle(org.bukkit.Particle.CRIT, caster.getLocation().add(0, 1, 0), 10, 0.5, 0.5, 0.5);
+                world.playSound(caster.getLocation(), org.bukkit.Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.2f);
+                caster.sendMessage("§b§lSHADOW STEP!");
+                break;
+        }
     }
 
     private void dispatchAbility(String id, PlayerState st, Player caster) {
@@ -676,28 +803,12 @@ public final class DungeonInstance {
         }
     }
 
-    /** In-room shop: spend run coins on gear. */
+    /** In-room shop: open the chest GUI shop. */
     public void openShop(Player p) {
         if (!running || curRoom == null || curRoom.type != RoomType.SHOP) return;
         PlayerState st = run.playerStateOf(p.getUniqueId());
         if (st == null) return;
-        p.sendMessage("§6--- Shop (Floor " + (run.floorIndex + 1) + ") ---");
-        p.sendMessage("§7Coins: §e" + st.coins);
-        if (curRoom.shopBought) {
-            p.sendMessage("§7(You've already bought here this floor.)");
-            return;
-        }
-        if (st.coins < 8) {
-            p.sendMessage("§cYou need 8 coins. Clear combat rooms to earn them.");
-            return;
-        }
-        st.coins -= 8;
-        curRoom.shopBought = true;
-        int slot = ThreadLocalRandom.current().nextInt(2);
-        ItemStack s = slot == 0 ? ItemPool.randomWeapon(run.floorIndex)
-                : ItemPool.randomArmor(run.floorIndex, ThreadLocalRandom.current().nextInt(4));
-        world.dropItem(RoomGen.center(world, curRoom, BASE_Y, spacing).add(0, 1, 0), s).setPickupDelay(0);
-        p.sendMessage("§aPurchased! §7(-§e8 coins§7)");
+        plugin.shopUI().openRunShop(p, this);
     }
 
     private void onRoomClear(Floor.RoomNode n, long k) {

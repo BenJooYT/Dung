@@ -66,7 +66,23 @@ public final class HUD {
             long r = e.getValue() - now;
             if (r > 0 && r > rem) { rem = r; cdName = e.getKey(); }
         }
-        setLine(o, 11, rem > 0 ? ("§7" + cdName + " §f" + String.format("%.1f", rem / 1000.0) + "s") : "");
+        // Show class ability cooldown with a friendly name
+        String classAbilityLabel = switch (st.classId) {
+            case "warrior" -> "War Cry";
+            case "mage" -> "Arcane Nova";
+            case "ranger" -> "Shadow Step";
+            default -> "Class";
+        };
+        String classKey = "class_" + st.classId;
+        Long classCd = st.cooldowns.get(classKey);
+        long classRem = classCd == null ? 0 : classCd - now;
+        if (classRem > 0) {
+            setLine(o, 11, "§7" + classAbilityLabel + " §f" + String.format("%.1f", classRem / 1000.0) + "s");
+        } else if (rem > 0) {
+            setLine(o, 11, "§7" + cdName + " §f" + String.format("%.1f", rem / 1000.0) + "s");
+        } else {
+            setLine(o, 11, "§7" + classAbilityLabel + " §aReady");
+        }
     }
 
     /** Action bar above the hotbar: red hearts + blue mana with current/max amounts (integer counts). */
