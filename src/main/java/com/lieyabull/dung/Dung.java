@@ -33,6 +33,7 @@ public final class Dung extends JavaPlugin {
         getCommand("shop").setExecutor(new DungCommand(this));
         getCommand("upgrades").setExecutor(new DungCommand(this));
         getCommand("salvage").setExecutor(new DungCommand(this));
+        getCommand("party").setExecutor(new DungCommand(this));
         getLogger().info("Dung enabled. World resolved lazily.");
     }
 

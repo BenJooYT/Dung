@@ -59,30 +59,35 @@ else (including `/shop`, `/upgrades`, `/salvage`) is open to all players.
 
 ## Architecture overview
 
-The plugin is deliberately **single-run, single-player**: `GameManager` owns exactly one active
-`Run` at a time. All per-run combat state lives in a `PlayerState` object (the single source of
-truth for HP/mana/stats); gear is never duplicated — it stays in the real player inventory and
-stats are recomputed from it on every change. Dungeon geometry is generated purely as data
-(`Floor`, `FloorGenerator`, `RoomNode`) and then projected into the world by `RoomGen`, all at a
-fixed `BASE_Y = 80` in the resolved non-End world.
+The plugin supports **multi-player parties and parallel dungeon instances**: `GameManager` is a
+registry of `DungeonInstance`s — each party gets its own instance with its own floor, enemies,
+boss, and per-player state. Multiple parties can run dungeons simultaneously in the same world
+at different coordinates. Each player has their own `PlayerState` (the single source of truth
+for HP/mana/stats); gear is never duplicated — it stays in the real player inventory and stats
+are recomputed from it on every change. Dungeon geometry is generated purely as data (`Floor`,
+`FloorGenerator`, `RoomNode`) and then projected into the world by `RoomGen`, all at a fixed
+`BASE_Y = 80` in the resolved non-End world.
 
 ```
  Dung (JavaPlugin)
-  ├─ MetaManager      persistent progression (saves.yml)
-  ├─ GameManager      one live run: lifecycle, combat tick, rooms, boss, HUD
-  │   ├─ Run          per-run data (rng, floor, coins, kills)
-  │   ├─ PlayerState  live HP/mana/stats/cooldowns (source of truth)
-  │   ├─ Floor        room grid (data)
-  │   ├─ FloorGenerator  builds the branching room graph
-  │   ├─ RoomGen      projects rooms/corridors into the world
-  │   ├─ Enemy        runtime mob + AI
-  │   └─ BossController  the Warden
-  ├─ GameListener     Paper events -> GameManager
-  ├─ DungCommand      /dung, /dungeon, /shop, /upgrades, /salvage
-  ├─ Upgrades         permanent stat-upgrade tracks (shards)
+  ├─ MetaManager          persistent progression (saves.yml)
+  ├─ GameManager          registry of DungeonInstance(s), routes events per player
+  │   ├─ PartyManager     party lifecycle: create, invite, accept, leave, kick, disband
+  │   │   └─ Party        group of players sharing a dungeon run (max 4)
+  │   └─ DungeonInstance  one active dungeon per party
+  │       ├─ Run          per-run data (rng, floor, coins, kills)
+  │       ├─ PlayerState  per-player HP/mana/stats/cooldowns (source of truth)
+  │       ├─ Floor        room grid (data)
+  │       ├─ FloorGenerator  builds the branching room graph
+  │       ├─ RoomGen      projects rooms/corridors into the world
+  │       ├─ Enemy        runtime mob + AI
+  │       └─ BossController  the Warden (HP scales with party size)
+  ├─ GameListener         Paper events -> GameManager -> correct DungeonInstance
+  ├─ DungCommand          /dung, /dungeon, /shop, /upgrades, /salvage, /party
+  ├─ Upgrades             permanent stat-upgrade tracks (shards)
   ├─ ItemPool / GearFactory / ItemTags / Rarity   loot system
-  ├─ Pickup           floor pickup identity & effects
-  └─ HUD / TabUI / ChatUI   display
+  ├─ Pickup               floor pickup identity & effects
+  └─ HUD / TabUI / ChatUI display
 ```
 
 ---
@@ -108,6 +113,13 @@ fixed `BASE_Y = 80` in the resolved non-End world.
 | `/dung class <w\|m\|r>` | all | Sets the class for the next run; persists immediately. |
 | `/dung give <t>` | `dung.admin` | Debug: `rareweapon`, `heal`, `coins`. |
 | `/dung help` | all | Shows clickable chat actions (`ChatUI.startPrompt`). |
+| `/party create` | all | Create a new party (you become leader). |
+| `/party invite <player>` | all | Invite a player to your party (leader only). |
+| `/party accept` | all | Accept a pending party invite. |
+| `/party decline` | all | Decline a pending party invite. |
+| `/party leave` | all | Leave your current party. |
+| `/party kick <player>` | all | Kick a member from the party (leader only). |
+| `/party disband` | all | Disband the party entirely (leader only). |
 
 `/dung give` is a free admin debug surface: `rareweapon` now spawns a persistent weapon at no
 coin cost (real purchases go through `/shop weapon`); `/dung give coins` drops 10 gold-nugget

@@ -1,6 +1,7 @@
 package com.lieyabull.dung.command;
 
 import com.lieyabull.dung.Dung;
+import com.lieyabull.dung.game.DungeonInstance;
 import com.lieyabull.dung.game.GameManager;
 import com.lieyabull.dung.items.GearFactory;
 import com.lieyabull.dung.items.ItemPool;
@@ -8,7 +9,11 @@ import com.lieyabull.dung.items.ItemTags;
 import com.lieyabull.dung.items.Rarity;
 import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.meta.Upgrades;
+import com.lieyabull.dung.party.Party;
+import com.lieyabull.dung.party.PartyManager;
 import com.lieyabull.dung.ui.ChatUI;
+import com.lieyabull.dung.util.TextUtil;
+import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -35,6 +40,7 @@ public final class DungCommand implements CommandExecutor {
             case "shop": return shopCmd(p, args);
             case "upgrades": return upgradesCmd(p, args);
             case "salvage": return salvageCmd(p, args);
+            case "party": return partyCmd(p, args);
             default: return dungCmd(p, args);
         }
     }
@@ -46,38 +52,143 @@ public final class DungCommand implements CommandExecutor {
         String sub = args.length > 0 ? args[0].toLowerCase() : "help";
         switch (sub) {
             case "start":
-                if (gm.isRunning()) {
+                if (gm.isInInstance(p)) {
                     p.sendMessage("§cYou're already in a run. Use /dung leave first.");
                     return true;
                 }
-                gm.startRun(p, System.nanoTime());
-                p.sendMessage("§aRun started. Clear rooms, gear up, defeat the Warden.");
+                // Check if player is in a party
+                Party party = gm.partyManager().partyOf(p);
+                if (party != null) {
+                    // Party leader starts the run for the whole party
+                    if (!party.isLeader(p.getUniqueId())) {
+                        p.sendMessage("§cOnly the party leader can start a run.");
+                        return true;
+                    }
+                    gm.startRun(party, System.nanoTime());
+                    party.broadcast("§aRun started! Clear rooms, gear up, defeat the Warden.");
+                } else {
+                    // Solo: create a single-player party
+                    party = gm.partyManager().createParty(p);
+                    gm.startRun(party, System.nanoTime());
+                    p.sendMessage("§aRun started. Clear rooms, gear up, defeat the Warden.");
+                }
                 return true;
-            case "descend":
-                if (!gm.isRunning()) { p.sendMessage("§cStart a run first."); return true; }
-                gm.descend();
+            case "descend": {
+                DungeonInstance di = gm.instanceOf(p);
+                if (di == null) { p.sendMessage("§cStart a run first."); return true; }
+                di.descend();
                 return true;
-            case "leave":
-                if (gm.isRunning()) {
-                    gm.endRun(true);
+            }
+            case "leave": {
+                DungeonInstance di = gm.instanceOf(p);
+                if (di != null) {
+                    gm.leaveInstance(p);
                     p.sendMessage("§7Left the run.");
                 } else {
                     p.sendMessage("§cNo active run.");
                 }
                 return true;
+            }
+            case "party": return partyCmd(p, args);
             case "shop": return shopCmd(p, args);
             case "upgrades": return upgradesCmd(p, args);
             case "salvage": return salvageCmd(p, args);
             case "stats": stats(p); return true;
             case "class": classCmd(p, args); return true;
             case "give":
-                // cheat/debug command: admin-only so normal players can't spawn items/heal
                 if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
                 give(p, args);
                 return true;
             case "help":
             default:
                 ChatUI.startPrompt(p);
+                return true;
+        }
+    }
+
+    // ---------- /party ----------
+
+    private boolean partyCmd(Player p, String[] args) {
+        PartyManager pm = plugin.game().partyManager();
+        if (args.length == 0) {
+            Party party = pm.partyOf(p);
+            if (party == null) {
+                p.sendMessage("§7You are not in a party. Use §f/party create§7 to start one.");
+                p.sendMessage("§7Commands: §fcreate, invite <player>, accept, decline, leave, kick <player>, disband, info");
+                return true;
+            }
+            p.sendMessage("§6--- Party ---");
+            p.sendMessage("§7Leader: §f" + Bukkit.getOfflinePlayer(party.leader()).getName());
+            p.sendMessage("§7Members (" + party.size() + "/" + Party.MAX_SIZE + "):");
+            for (java.util.UUID uid : party.members()) {
+                String name = Bukkit.getOfflinePlayer(uid).getName();
+                String tag = uid.equals(party.leader()) ? " §6(Leader)" : "";
+                p.sendMessage("  §7- §f" + name + tag);
+            }
+            return true;
+        }
+        switch (args[0].toLowerCase()) {
+            case "create": {
+                if (pm.partyOf(p) != null) {
+                    p.sendMessage("§cYou're already in a party. Leave first.");
+                    return true;
+                }
+                pm.createParty(p);
+                p.sendMessage("§aParty created! Invite players with §f/party invite <player>");
+                return true;
+            }
+            case "invite": {
+                if (args.length < 2) { p.sendMessage("§cUsage: /party invite <player>"); return true; }
+                Player target = Bukkit.getPlayer(args[1]);
+                if (target == null) { p.sendMessage("§cPlayer not found."); return true; }
+                if (target.equals(p)) { p.sendMessage("§cYou can't invite yourself."); return true; }
+                if (pm.invite(p, target)) {
+                    p.sendMessage("§aInvited " + target.getName() + " to the party.");
+                    target.sendMessage("§a" + p.getName() + " invited you to a party! §f/party accept§a or §f/party decline");
+                } else {
+                    p.sendMessage("§cCould not invite. You may not be the leader, or they're already in a party.");
+                }
+                return true;
+            }
+            case "accept": {
+                if (pm.acceptInvite(p)) {
+                    p.sendMessage("§aYou joined the party!");
+                } else {
+                    p.sendMessage("§cNo pending invite or party is full.");
+                }
+                return true;
+            }
+            case "decline": {
+                pm.declineInvite(p);
+                p.sendMessage("§7Invite declined.");
+                return true;
+            }
+            case "leave": {
+                pm.leaveParty(p);
+                p.sendMessage("§7You left the party.");
+                return true;
+            }
+            case "kick": {
+                if (args.length < 2) { p.sendMessage("§cUsage: /party kick <player>"); return true; }
+                Player target = Bukkit.getPlayer(args[1]);
+                if (target == null) { p.sendMessage("§cPlayer not found."); return true; }
+                if (pm.kick(p, target)) {
+                    p.sendMessage("§aKicked " + target.getName() + " from the party.");
+                } else {
+                    p.sendMessage("§cCould not kick. You may not be the leader.");
+                }
+                return true;
+            }
+            case "disband": {
+                if (pm.disband(p)) {
+                    p.sendMessage("§cParty disbanded.");
+                } else {
+                    p.sendMessage("§cYou are not the party leader.");
+                }
+                return true;
+            }
+            default:
+                p.sendMessage("§7Party commands: §fcreate, invite <player>, accept, decline, leave, kick <player>, disband, info");
                 return true;
         }
     }
@@ -193,7 +304,7 @@ public final class DungCommand implements CommandExecutor {
     /** Break the held Dung armor piece into permanent shards (only during a run). */
     private boolean salvageHeld(Player p) {
         GameManager gm = plugin.game();
-        if (!gm.isRunning() || !gm.player().equals(p)) {
+        if (!gm.isInInstance(p)) {
             p.sendMessage("§cSalvage only works while inside a run. Start one with /dung start.");
             return true;
         }
@@ -233,7 +344,7 @@ public final class DungCommand implements CommandExecutor {
      *  and offhand. Favorited pieces are always skipped. */
     private boolean salvageAll(Player p) {
         GameManager gm = plugin.game();
-        if (!gm.isRunning() || !gm.player().equals(p)) {
+        if (!gm.isInInstance(p)) {
             p.sendMessage("§cSalvage only works while inside a run. Start one with /dung start.");
             return true;
         }
@@ -312,7 +423,7 @@ public final class DungCommand implements CommandExecutor {
     private void stats(Player p) {
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
         p.sendMessage("§6--- " + p.getName() + " ---");
-        p.sendMessage("§7Class: §f" + capital(prof.classId));
+        p.sendMessage("§7Class: §f" + TextUtil.capital(prof.classId));
         p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins + "   §7Shards: §b" + prof.shards);
         p.sendMessage("§7Deaths: §c" + prof.deaths + "   §7Best floor: §f" + prof.bestFloor + "   §7Kills: §f" + prof.kills);
         p.sendMessage("§7Floors cleared: §f" + prof.clears);
@@ -330,7 +441,7 @@ public final class DungCommand implements CommandExecutor {
         }
         plugin.meta().profile(p.getUniqueId()).classId = c;
         plugin.meta().save(); // persist immediately so a crash/restart can't roll the choice back
-        p.sendMessage("§aClass set to " + capital(c) + ". Next run uses it.");
+        p.sendMessage("§aClass set to " + TextUtil.capital(c) + ". Next run uses it.");
     }
 
     private void give(Player p, String[] args) {
@@ -361,7 +472,4 @@ public final class DungCommand implements CommandExecutor {
         return v;
     }
 
-    private String capital(String s) {
-        return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1);
-    }
 }

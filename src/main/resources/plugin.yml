@@ -20,6 +20,9 @@ commands:
   salvage:
     description: Break held/favorited Dung armor into permanent shards (in a run)
     usage: /salvage [all|favorite]
+  party:
+    description: Party management commands
+    usage: /party <create|invite|accept|decline|leave|kick|disband>
 permissions:
   dung.admin:
     description: Admin debug commands

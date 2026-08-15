@@ -1,9 +1,10 @@
 package com.lieyabull.dung.ui;
 
 import com.lieyabull.dung.dungeon.Floor;
-import com.lieyabull.dung.game.GameManager;
+import com.lieyabull.dung.game.DungeonInstance;
 import com.lieyabull.dung.game.PlayerState;
 import com.lieyabull.dung.game.Run;
+import com.lieyabull.dung.util.TextUtil;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
@@ -15,11 +16,10 @@ import org.bukkit.scoreboard.*;
  * repurposed to show combat build stats, class/abilities, and dungeon exploration status.
  */
 public final class TabUI {
-    public void refresh(GameManager gm, org.bukkit.scoreboard.Scoreboard board) {
-        Player p = gm.player();
+    public void refresh(Player p, DungeonInstance di, org.bukkit.scoreboard.Scoreboard board) {
         if (p == null || !p.isOnline() || board == null) return;
-        Run run = gm.run();
-        PlayerState st = run == null ? null : run.playerState();
+        Run run = di.run();
+        PlayerState st = run == null ? null : run.playerStateOf(p.getUniqueId());
         Objective o = board.getObjective("dungtab");
         if (o == null) {
             o = board.registerNewObjective("dungtab", Criteria.DUMMY, Component.text("Dung"));
@@ -27,14 +27,14 @@ public final class TabUI {
         }
         // header
         o.setDisplayName("§cDUNG §7— §fFloor " + (run == null ? 0 : run.floorIndex + 1)
-                + (st == null ? "" : " §8Class §f" + capital(st.classId)));
+                + (st == null ? "" : " §8Class §f" + TextUtil.capital(st.classId)));
         // fill player list rows with detailed info via teams
         int i = 0;
         if (st != null) {
-            team(o, i++, "§cDMG §f" + fmt(st.damage) + "   §aDEF §f" + (int) st.defense
-                    + "   §fCRIT §f" + (int) (st.critChance * 100) + "%§fx" + fmt(st.critMult));
-            team(o, i++, "§bMana §f" + fmt(st.mana) + "/" + (int) st.maxMana
-                    + "   §6Speed §f" + fmt(st.speedMult) + "   §7FireRate §f" + st.fireRateTicks + "t");
+            team(o, i++, "§cDMG §f" + TextUtil.fmt(st.damage) + "   §aDEF §f" + (int) st.defense
+                    + "   §fCRIT §f" + (int) (st.critChance * 100) + "%§fx" + TextUtil.fmt(st.critMult));
+            team(o, i++, "§bMana §f" + TextUtil.fmt(st.mana) + "/" + (int) st.maxMana
+                    + "   §6Speed §f" + TextUtil.fmt(st.speedMult) + "   §7FireRate §f" + st.fireRateTicks + "t");
             team(o, i++, "§eCoins " + st.coins + "   §9Keys " + st.keys + "   §4Bombs " + st.bombs);
             team(o, i++, "");
             team(o, i++, "§6Equipment");
@@ -47,7 +47,7 @@ public final class TabUI {
                 int vis = run.floor.visited.size();
                 int cleared = countCleared(run.floor);
                 team(o, i++, "   §fRooms explored §7" + vis + "/" + total + "   §aCleared §7" + cleared);
-                team(o, i++, "   §cBoss: " + (gm.boss() != null ? "§4ENGAGED" : (gm.curRoom() != null && gm.curRoom().type.name().equals("BOSS") ? "§6AWAITING" : "§8hidden")));
+                team(o, i++, "   §cBoss: " + (di.boss() != null ? "§4ENGAGED" : (di.curRoom() != null && di.curRoom().type.name().equals("BOSS") ? "§6AWAITING" : "§8hidden")));
             }
             team(o, i++, "");
             team(o, i++, "§8Hold sneak to cast, click to attack");
@@ -94,13 +94,5 @@ public final class TabUI {
         // A PLAYER_LIST objective only shows rows that have a score; descending value = order
         // from top of the tab. Must be set (repeatedly is fine — same value = no-op packet).
         o.getScore("§0" + " ".repeat(index + 1)).setScore(100 - index);
-    }
-
-    private String fmt(double v) {
-        return v == Math.floor(v) ? String.valueOf((int) v) : String.format("%.1f", v);
-    }
-
-    private String capital(String s) {
-        return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 }

@@ -1,8 +1,9 @@
 package com.lieyabull.dung.ui;
 
-import com.lieyabull.dung.game.GameManager;
+import com.lieyabull.dung.game.DungeonInstance;
 import com.lieyabull.dung.game.PlayerState;
 import com.lieyabull.dung.game.Run;
+import com.lieyabull.dung.util.TextUtil;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
@@ -28,12 +29,12 @@ public final class HUD {
         lastDisplayName = null;
     }
 
-    public void update(GameManager gm, org.bukkit.scoreboard.Scoreboard board) {
-        Player p = gm.player();
+    public void update(Player p, DungeonInstance di, org.bukkit.scoreboard.Scoreboard board) {
         if (p == null || !p.isOnline() || board == null) return;
-        Run run = gm.run();
+        Run run = di.run();
         if (run == null) return;
-        PlayerState st = run.playerState();
+        PlayerState st = run.playerStateOf(p.getUniqueId());
+        if (st == null) return;
         Objective o = board.getObjective("dung");
         if (o == null) {
             o = board.registerNewObjective("dung", Criteria.DUMMY, Component.text("Dung"));
@@ -47,17 +48,17 @@ public final class HUD {
         }
         setLine(o, 0, "§8§m                   ");
         // combat stats
-        setLine(o, 1, "§7DMG §c" + fmt(st.damage) + "   §7DEF §a" + (int) st.defense);
-        setLine(o, 2, "§7Crit §f" + (int) (st.critChance * 100) + "% §b✕" + fmt(st.critMult));
-        setLine(o, 3, "§7Reach §f" + fmt(st.reach) + "   §7Spd §f" + fmt(st.speedMult));
+        setLine(o, 1, "§7DMG §c" + TextUtil.fmt(st.damage) + "   §7DEF §a" + (int) st.defense);
+        setLine(o, 2, "§7Crit §f" + (int) (st.critChance * 100) + "% §b✕" + TextUtil.fmt(st.critMult));
+        setLine(o, 3, "§7Reach §f" + TextUtil.fmt(st.reach) + "   §7Spd §f" + TextUtil.fmt(st.speedMult));
         setLine(o, 4, "");
         // consumables / run
         setLine(o, 5, "§e⛁ Coins §f" + st.coins + "   §9⛂ Keys §f" + st.keys);
         setLine(o, 6, "§4✹ Bombs §f" + st.bombs + "   §cKills §f" + run.kills);
         setLine(o, 7, "");
-        setLine(o, 8, "§6Room: §f" + gm.curRoom().type.label);
-        setLine(o, 9, gm.boss() != null ? "§4!! BOSS ACTIVE" : "");
-        setLine(o, 10, "§7Class §f" + capital(st.classId));
+        setLine(o, 8, "§6Room: §f" + di.curRoom().type.label);
+        setLine(o, 9, di.boss() != null ? "§4!! BOSS ACTIVE" : "");
+        setLine(o, 10, "§7Class §f" + TextUtil.capital(st.classId));
         // ability cooldown (longest currently running)
         long now = System.currentTimeMillis();
         long rem = 0; String cdName = "";
@@ -114,13 +115,5 @@ public final class HUD {
             vis++;
         }
         return sb.toString();
-    }
-
-    private String fmt(double v) {
-        return v == Math.floor(v) ? String.valueOf((int) v) : String.format("%.1f", v);
-    }
-
-    private String capital(String s) {
-        return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 }

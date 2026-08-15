@@ -11,7 +11,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.UUID;
 
 /**
  * Floor boss: a large, telegraphed combatant with an HP bar and a few patterns. Defeating it
@@ -23,10 +23,12 @@ public final class BossController {
     private final double maxHp;
     private double hp;
     private final int floor;
-    private final Player target;
     private final Dung plugin;
     private final KeyedBossBar bar;
     private final org.bukkit.NamespacedKey barKey;
+    private final java.util.List<Player> viewers = new java.util.ArrayList<>();
+    private final Runnable onDefeated;
+    private boolean defeated = false;
     private int patternTimer = 0;
     // attack state machine (boss stays still; each attack is telegraphed before it lands)
     private static final int ATTACK_BEAM = 1, ATTACK_SLAM = 2, ATTACK_RADIAL = 3;
@@ -43,12 +45,22 @@ public final class BossController {
     }
 
     public BossController(World w, Location center, int floor, Player target, Dung plugin) {
+        this(w, center, floor, target, plugin, 1, () -> {});
+    }
+
+    /** Create a boss with HP scaled by party size. */
+    public BossController(World w, Location center, int floor, Player target, Dung plugin, int partySize) {
+        this(w, center, floor, target, plugin, partySize, () -> {});
+    }
+
+    /** Create a boss with HP scaled by party size and a callback for when it's defeated. */
+    public BossController(World w, Location center, int floor, Player target, Dung plugin, int partySize, Runnable onDefeated) {
         this.world = w;
         this.floor = floor;
-        this.target = target;
         this.plugin = plugin;
+        this.onDefeated = onDefeated;
         this.anchor = center;
-        this.maxHp = 60 + floor * 25;
+        this.maxHp = (60 + floor * 25) * Math.max(1, partySize);
         this.hp = maxHp;
         this.boss = w.spawnEntity(center, EntityType.ZOGLIN);
         boss.setPersistent(true);
@@ -56,11 +68,19 @@ public final class BossController {
         // PlayerState-based damage in tick()/fire(), so the vanilla hit must not reach real HP).
         boss.addScoreboardTag("dung.entity");
         try { boss.setCustomName("§4Warden of Floor " + (floor + 1)); boss.setCustomNameVisible(true); } catch (Throwable ignored) {}
-        this.barKey = new org.bukkit.NamespacedKey(Dung.instance(), "dung_boss_" + ThreadLocalRandom.current().nextInt(100000));
+        this.barKey = new org.bukkit.NamespacedKey(Dung.instance(), "dung_boss_" + UUID.randomUUID().toString().replace("-", ""));
         this.bar = Bukkit.createBossBar(barKey, "§4The Warden", BarColor.RED, BarStyle.SEGMENTED_10);
         this.bar.setProgress(1.0);
         this.bar.addPlayer(target);
         this.bar.setVisible(true);
+    }
+
+    /** Add additional viewers to the boss bar (e.g. party members). */
+    public void addViewer(Player p) {
+        if (!viewers.contains(p)) {
+            viewers.add(p);
+            bar.addPlayer(p);
+        }
     }
 
     public void tick(Player p) {
@@ -171,15 +191,17 @@ public final class BossController {
     }
 
     public void damage(double dmg) {
+        if (defeated) return;
         hp -= dmg;
         bar.setProgress(Math.max(0, hp / maxHp));
         bar.setTitle("§4The Warden §8" + Math.max(0, (int) hp) + "/" + (int) maxHp);
         if (hp <= 0) {
+            defeated = true;
             boss.remove();
             bar.removeAll();
             bar.setVisible(false);
             Bukkit.removeBossBar(barKey);
-            com.lieyabull.dung.game.GameManager.instance().onBossDefeated();
+            onDefeated.run();
         }
     }
 

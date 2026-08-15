@@ -73,6 +73,21 @@ tab = detailed build/run/progression).
 - [x] **Sneak+RMB canceled** so ability cast doesn't also fire the vanilla block interaction.
 - [x] **Rarity flood tamed:** floor push cap lowered 0.45 -> 0.24 so deep floors stay mixed.
 
+### Iteration 5 — Party system + parallel dungeons
+- [x] **Party system:** `/party create`, `/party invite <player>`, `/party accept`, `/party decline`,
+      `/party leave`, `/party kick <player>`, `/party disband`. Max 4 players per party.
+- [x] **Parallel dungeon instances:** `GameManager` is now a registry of `DungeonInstance`s.
+      Each party gets its own instance with its own floor, enemies, boss, and per-player state.
+      Multiple parties can run dungeons simultaneously.
+- [x] **Boss HP scaling:** Boss HP scales with party size (multiplier applied to base HP).
+- [x] **Shared room progression:** Any party member entering a room triggers it for all.
+      Room clear requires all enemies dead (any party member can kill them).
+- [x] **Per-player loot/coins:** Each player gets their own drops and coins.
+- [x] **Party-aware HUD/Tab:** Each player sees their own HUD with party context.
+- [x] **Boss bar shared:** All party members see the boss HP bar.
+- [x] **Death handling:** A player dying in a party removes them from the instance.
+      If the party becomes empty, the instance ends.
+
 ### Remaining candidate work
 - [x] **Log flood / "stall" root cause:** `TabUI.team` passed legacy `§`-coded strings to Adventure's
       `Component.text()`, which throws `LegacyFormattingDetected` + a 60-line stacktrace for every

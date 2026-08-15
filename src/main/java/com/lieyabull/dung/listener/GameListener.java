@@ -1,6 +1,7 @@
 package com.lieyabull.dung.listener;
 
 import com.lieyabull.dung.Dung;
+import com.lieyabull.dung.game.DungeonInstance;
 import com.lieyabull.dung.game.GameManager;
 import com.lieyabull.dung.game.PlayerState;
 import com.lieyabull.dung.game.Run;
@@ -29,7 +30,7 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 
-/** Wires Paper events to the game. Only the active run's player is affected. */
+/** Wires Paper events to the game. Routes events to the correct dungeon instance per player. */
 public final class GameListener implements Listener {
     private final Dung plugin;
 
@@ -38,8 +39,11 @@ public final class GameListener implements Listener {
     }
 
     private boolean isInRun(Player p) {
-        GameManager gm = plugin.game();
-        return gm.isRunning() && gm.player().equals(p);
+        return plugin.game().isInInstance(p);
+    }
+
+    private DungeonInstance instanceOf(Player p) {
+        return plugin.game().instanceOf(p);
     }
 
     @EventHandler
@@ -55,38 +59,40 @@ public final class GameListener implements Listener {
      *  the run world without interfering with other plugins' spawners in other worlds. */
     @EventHandler
     public void onCreatureSpawn(CreatureSpawnEvent e) {
-        GameManager gm = plugin.game();
-        if (!gm.isRunning()) return;
-        if (!e.getEntity().getWorld().equals(gm.world())) return;
-        SpawnReason r = e.getSpawnReason();
-        if (r == SpawnReason.NATURAL || r == SpawnReason.CHUNK_GEN
-                || r == SpawnReason.SPAWNER || r == SpawnReason.REINFORCEMENTS
-                || r == SpawnReason.DROWNED || r == SpawnReason.INFECTION
-                || r == SpawnReason.NETHER_PORTAL) {
-            e.setCancelled(true);
+        // Check all active instances for world match
+        for (DungeonInstance inst : plugin.game().instances()) {
+            if (inst.world() != null && e.getEntity().getWorld().equals(inst.world())) {
+                SpawnReason r = e.getSpawnReason();
+                if (r == SpawnReason.NATURAL || r == SpawnReason.SPAWNER || r == SpawnReason.REINFORCEMENTS
+                        || r == SpawnReason.DROWNED || r == SpawnReason.INFECTION
+                        || r == SpawnReason.NETHER_PORTAL) {
+                    e.setCancelled(true);
+                }
+                return;
+            }
         }
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onMove(PlayerMoveEvent e) {
         Player p = e.getPlayer();
-        if (!isInRun(p)) return;
-        plugin.game().onPlayerMoved(p.getLocation());
+        DungeonInstance di = instanceOf(p);
+        if (di == null) return;
+        di.onPlayerMoved(p, p.getLocation());
     }
 
     /** Handle death cleanly for the run's player so they never strand on the vanilla screen. */
     @EventHandler(priority = EventPriority.HIGH)
     public void onDeath(org.bukkit.event.entity.PlayerDeathEvent e) {
         Player p = e.getEntity();
-        if (plugin.game().isRunning() && plugin.game().player().equals(p)) {
+        DungeonInstance di = instanceOf(p);
+        if (di != null) {
             e.setKeepInventory(true);
             e.setKeepLevel(true);
             e.setDeathMessage(null);
             p.sendMessage("§cYou died.");
-            // schedule the run teardown on the next tick to avoid modifying the player mid-event,
-            // then kick them off the death screen so they are never trapped on it.
             org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
-                plugin.game().onDeath();
+                di.onPlayerDeath(p);
                 if (p.isDead()) p.spigot().respawn();
             });
         }
@@ -97,9 +103,9 @@ public final class GameListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH)
     public void onRespawn(org.bukkit.event.player.PlayerRespawnEvent e) {
         Player p = e.getPlayer();
-        GameManager gm = plugin.game();
-        if (gm.player() != null && gm.player().equals(p)) {
-            gm.endRun(false);
+        DungeonInstance di = instanceOf(p);
+        if (di != null) {
+            plugin.game().removeInstance(di);
             e.setRespawnLocation(e.getPlayer().getWorld().getSpawnLocation());
             p.setHealth(20);
             p.setGameMode(GameMode.SURVIVAL);
@@ -110,30 +116,40 @@ public final class GameListener implements Listener {
     /** Recompute MMORPG stats when the player swaps held item or changes armor. */
     @EventHandler
     public void onHeldItem(org.bukkit.event.player.PlayerItemHeldEvent e) {
-        if (isInRun(e.getPlayer())) plugin.game().run().playerState().recomputeStats();
+        Player p = e.getPlayer();
+        DungeonInstance di = instanceOf(p);
+        if (di != null) di.recomputeStats();
     }
 
     @EventHandler
     public void onArmor(org.bukkit.event.inventory.InventoryClickEvent e) {
-        if (e.getWhoClicked() instanceof Player p && isInRun(p)) {
-            plugin.game().run().playerState().recomputeStats();
+        if (e.getWhoClicked() instanceof Player p) {
+            DungeonInstance di = instanceOf(p);
+            if (di != null) di.recomputeStats();
         }
     }
 
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
-        GameManager gm = plugin.game();
-        if (gm.isRunning() && gm.player().equals(e.getPlayer())) {
-            gm.endRun(true);
+        Player p = e.getPlayer();
+        // Clean up party membership
+        plugin.game().partyManager().onPlayerQuit(p);
+        // Clean up dungeon instance
+        DungeonInstance di = instanceOf(p);
+        if (di != null) {
+            plugin.game().removeInstance(di);
         }
     }
 
     /** Left click / attack to fire tears. */
     @EventHandler
     public void onAttack(EntityDamageByEntityEvent e) {
-        if (e.getDamager() instanceof Player p && isInRun(p)) {
-            e.setCancelled(true);
-            plugin.game().registerAttack();
+        if (e.getDamager() instanceof Player p) {
+            DungeonInstance di = instanceOf(p);
+            if (di != null) {
+                e.setCancelled(true);
+                di.registerAttack(p);
+            }
         }
     }
 
@@ -143,8 +159,7 @@ public final class GameListener implements Listener {
     @EventHandler(priority = EventPriority.LOW)
     public void onEnemyDamage(EntityDamageByEntityEvent e) {
         if (!(e.getEntity() instanceof Player p)) return;
-        GameManager gm = plugin.game();
-        if (!(gm.isRunning() && gm.player().equals(p))) return;
+        if (!isInRun(p)) return;
         if (isDungSource(e.getDamager())) {
             e.setCancelled(true);
         }
@@ -164,15 +179,9 @@ public final class GameListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH)
     public void onInteract(PlayerInteractEvent e) {
         Player p = e.getPlayer();
-        if (!isInRun(p)) return;
-        // block placing/destroying while in run
-        if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getItem() != null
-                && (e.getItem().getType().isBlock() || e.getItem().getType() == Material.TNT)) {
-            // allow? bombs are consumables used via sneak; block block-placing
-        }
-        // ability: sneak + right-click casts the held weapon's stored ability. Gated on the held
-        // item carrying a dung.ability tag so vanilla sneak+RMB (place block, eat, offhand) keeps
-        // working for everything else — and non-weapon sneaky clicks never spam "no ability".
+        DungeonInstance di = instanceOf(p);
+        if (di == null) return;
+        // ability: sneak + right-click casts the held weapon's stored ability.
         ItemStack held = p.getInventory().getItemInMainHand();
         boolean hasAbility = held != null && !held.getType().isAir() && held.getItemMeta() != null
                 && held.getItemMeta().getPersistentDataContainer()
@@ -181,32 +190,33 @@ public final class GameListener implements Listener {
         if (hasAbility && (e.getAction() == Action.RIGHT_CLICK_AIR || e.getAction() == Action.RIGHT_CLICK_BLOCK)
                 && p.isSneaking()) {
             e.setCancelled(true);
-            plugin.game().tryCastAbility(p, held);
+            di.tryCastAbility(p, held);
         }
         if (e.getItem() != null) {
             String en = e.getItem().getType().name();
             if (en.endsWith("_HELMET") || en.endsWith("_CHESTPLATE")
                     || en.endsWith("_LEGGINGS") || en.endsWith("_BOOTS")) {
-                plugin.game().recomputeStats();
+                di.recomputeStats();
             }
         }
         // shop: right-click the shop block in a SHOP room
         if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getClickedBlock() != null
                 && e.getClickedBlock().getType() == Material.EMERALD_BLOCK) {
-            plugin.game().openShop();
+            di.openShop(p);
         }
     }
 
     @EventHandler
     public void onPickup(EntityPickupItemEvent e) {
-        if (e.getEntity() instanceof Player p && isInRun(p)) {
+        if (e.getEntity() instanceof Player p) {
+            DungeonInstance di = instanceOf(p);
+            if (di == null) return;
             Item it = e.getItem();
             Material m = it.getItemStack().getType();
             if (Pickup.isPickup(m)) {
                 e.setCancelled(true);
-                GameManager gm = plugin.game();
-                PlayerState st = gm.run().playerState();
-                if (Pickup.apply(m, st)) {
+                PlayerState st = di.playerStateOf(p);
+                if (st != null && Pickup.apply(m, st)) {
                     it.remove();
                     ChatUI.notify(p, pickupMsg(m, st));
                 }
