@@ -14,9 +14,18 @@ import org.bukkit.scoreboard.*;
  * current room type, and a class/ability hint. Detailed info lives in the Tab menu instead.
  */
 public final class HUD {
+    /** Number of fixed sidebar rows. Rows are registered ONCE per board and never cleared per
+     *  tick — resetting + re-adding scores every tick made the client tear the whole board down
+     *  and rebuild it each frame, which reads as the sidebar flickering between two states. */
+    private static final int ROWS = 12;
+    private final String[] lastText = new String[ROWS];
+    private String lastDisplayName = null;
+
     public void reset(Player p, org.bukkit.scoreboard.Scoreboard board) {
         if (board == null) return;
         if (board.getObjective("dung") != null) board.getObjective("dung").unregister();
+        java.util.Arrays.fill(lastText, null);
+        lastDisplayName = null;
     }
 
     public void update(GameManager gm, org.bukkit.scoreboard.Scoreboard board) {
@@ -29,28 +38,26 @@ public final class HUD {
         if (o == null) {
             o = board.registerNewObjective("dung", Criteria.DUMMY, Component.text("Dung"));
             o.setDisplaySlot(DisplaySlot.SIDEBAR);
+            registerRows(o);
         }
-        o.setDisplayName("§cDUNG §8Floor " + (run.floorIndex + 1));
-        // clear prior line entries so removed rows don't linger
-        for (org.bukkit.scoreboard.Team t : board.getTeams()) {
-            if (t.getName().startsWith("h")) {
-                for (String entry : t.getEntries()) board.resetScores(entry);
-            }
+        String display = "§cDUNG §8Floor " + (run.floorIndex + 1);
+        if (!display.equals(lastDisplayName)) {
+            o.setDisplayName(display);
+            lastDisplayName = display;
         }
-        int score = 11;
-        set(o, 0, score--, "§8§m                   ");
+        setLine(o, 0, "§8§m                   ");
         // combat stats
-        set(o, 1, score--, "§7DMG §c" + fmt(st.damage) + "   §7DEF §a" + (int) st.defense);
-        set(o, 2, score--, "§7Crit §f" + (int) (st.critChance * 100) + "% §b✕" + fmt(st.critMult));
-        set(o, 3, score--, "§7Reach §f" + fmt(st.reach) + "   §7Spd §f" + fmt(st.speedMult));
-        set(o, 4, score--, "");
+        setLine(o, 1, "§7DMG §c" + fmt(st.damage) + "   §7DEF §a" + (int) st.defense);
+        setLine(o, 2, "§7Crit §f" + (int) (st.critChance * 100) + "% §b✕" + fmt(st.critMult));
+        setLine(o, 3, "§7Reach §f" + fmt(st.reach) + "   §7Spd §f" + fmt(st.speedMult));
+        setLine(o, 4, "");
         // consumables / run
-        set(o, 5, score--, "§e⛁ Coins §f" + st.coins + "   §9⛂ Keys §f" + st.keys);
-        set(o, 6, score--, "§4✹ Bombs §f" + st.bombs + "   §cKills §f" + run.kills);
-        set(o, 7, score--, "");
-        set(o, 8, score--, "§6Room: §f" + gm.curRoom().type.label);
-        set(o, 9, score--, gm.boss() != null ? "§4!! BOSS ACTIVE" : "");
-        set(o, 10, score--, "§7Class §f" + capital(st.classId));
+        setLine(o, 5, "§e⛁ Coins §f" + st.coins + "   §9⛂ Keys §f" + st.keys);
+        setLine(o, 6, "§4✹ Bombs §f" + st.bombs + "   §cKills §f" + run.kills);
+        setLine(o, 7, "");
+        setLine(o, 8, "§6Room: §f" + gm.curRoom().type.label);
+        setLine(o, 9, gm.boss() != null ? "§4!! BOSS ACTIVE" : "");
+        setLine(o, 10, "§7Class §f" + capital(st.classId));
         // ability cooldown (longest currently running)
         long now = System.currentTimeMillis();
         long rem = 0; String cdName = "";
@@ -58,8 +65,7 @@ public final class HUD {
             long r = e.getValue() - now;
             if (r > 0 && r > rem) { rem = r; cdName = e.getKey(); }
         }
-        String cdLine = rem > 0 ? ("§7" + cdName + " §f" + String.format("%.1f", rem / 1000.0) + "s") : "";
-        set(o, 11, score--, cdLine);
+        setLine(o, 11, rem > 0 ? ("§7" + cdName + " §f" + String.format("%.1f", rem / 1000.0) + "s") : "");
     }
 
     /** Action bar above the hotbar: red hearts + blue mana with current/max amounts (integer counts). */
@@ -70,20 +76,26 @@ public final class HUD {
         p.sendActionBar(LegacyComponentSerializer.legacySection().deserialize(hearts + "   " + mana));
     }
 
-    /** Team name "h<line>" is internal (never displayed). The visible ENTRY is an invisible
-     *  colored-blank string so the prefix text shows without stray letters; entry stays stable
-     *  so updating only re-paints the prefix instead of adding rows. */
-    private void set(Objective o, int line, int score, String text) {
-        String teamName = "h" + line;
-        String entry = "§8" + " ".repeat(line + 1); // unique + invisible entry per line
+    /** Register all rows (team + invisible entry + static score) exactly once per objective so the
+     *  sidebar row set is stable; later updates only re-paint prefixes. */
+    private void registerRows(Objective o) {
         org.bukkit.scoreboard.Scoreboard b = o.getScoreboard();
-        org.bukkit.scoreboard.Team t = b.getTeam(teamName);
-        if (t == null) {
-            t = b.registerNewTeam(teamName);
+        for (int line = 0; line < ROWS; line++) {
+            String teamName = "h" + line;
+            String entry = "§8" + " ".repeat(line + 1); // unique + invisible entry per line
+            org.bukkit.scoreboard.Team t = b.registerNewTeam(teamName);
             t.addEntry(entry);
+            o.getScore(entry).setScore(ROWS - line);
         }
-        t.prefix(LegacyComponentSerializer.legacySection().deserialize(truncateVisible(text, 40)));
-        o.getScore(entry).setScore(score);
+    }
+
+    /** Re-paint one row's text only when it changed. Scores/entries are registered once, so an
+     *  unchanged line sends no packets at all — no tear-down, no flicker. */
+    private void setLine(Objective o, int line, String text) {
+        if (line >= 0 && line < ROWS && text.equals(lastText[line])) return;
+        if (line >= 0 && line < ROWS) lastText[line] = text;
+        org.bukkit.scoreboard.Team t = o.getScoreboard().getTeam("h" + line);
+        if (t != null) t.prefix(LegacyComponentSerializer.legacySection().deserialize(truncateVisible(text, 40)));
     }
 
     /** Truncate to `max` VISIBLE characters, keeping any §-codes that started before the cut so
