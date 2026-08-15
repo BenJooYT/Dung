@@ -1,0 +1,11 @@
+# Dung configuration
+# Dungeon tuning
+floors: 8
+rooms-per-floor: 7
+# Combat
+base-player-damage: 3
+base-fire-rate-ticks: 12
+mana-regen-per-tick: 1
+# Economy / progression multipliers
+coin-drop-base: 3
+permanent-coin-bonus: 0.0

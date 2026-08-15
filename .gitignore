@@ -1,0 +1,17 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IntelliJ
+.idea/
+*.iml
+out/
+
+# Run/Server data (world, logs, config generated at runtime)
+run/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log

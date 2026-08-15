@@ -1,0 +1,448 @@
+# Dung
+
+A **room-based dungeon roguelite** for Paper 1.21.x, built in the spirit of *The Binding of
+Isaac* but with **MMORPG-style combat, loot, and progression**. Each run generates a branching
+floor of rooms, spawns enemies you fight with a melee arc + weapon abilities, and ends with a
+telegraphed boss ("The Warden") that opens the way down to the next floor. Defeating bosses and
+clearing rooms banks persistent coins and kill/full-clear stats that survive death.
+
+- **Language / platform:** Java 21, Paper API `1.21.11-R0.1-SNAPSHOT`
+- **Build:** Gradle (offline-friendly: `.\gradlew.bat --offline`)
+- **Gameplay:** `The Binding of Isaac` (random room graph, rooms lock until cleared, boss per
+  floor) × `SkyBlock` (rarity-scaled gear, HP/mana resource pools, stat-based combat).
+
+---
+
+## Table of contents
+
+1. [Quick start](#quick-start)
+2. [Architecture overview](#architecture-overview)
+3. [Commands](#commands)
+4. [Package reference](#package-reference)
+   - [`com.lieyabull.dung` — plugin root](#comlieyabullndung--plugin-root)
+   - [`dungeon` — floor & room generation](#dungeon--floor--room-generation)
+   - [`entity` — enemies & AI](#entity--enemies--ai)
+   - [`items` — gear, rarity & loot](#items--gear-rarity--loot)
+   - [`game` — run state, combat & lifecycle](#game--run-state-combat--lifecycle)
+   - [`boss` — the Warden](#boss--the-warden)
+   - [`listener` — Paper event wiring](#listener--paper-event-wiring)
+   - [`meta` — persistent progression](#meta--persistent-progression)
+   - [`pickup` — floor pickups](#pickup--floor-pickups)
+   - [`ui` — HUD, tab menu & chat](#ui--hud-tab-menu--chat)
+5. [Combat & stats model](#combat--stats-model)
+6. [Death & persistence model](#death--persistence-model)
+7. [Design notes & known issues](#design-notes--known-issues)
+
+---
+
+## Quick start
+
+```bash
+# Build offline (no network needed if deps are cached)
+.\gradlew.bat --offline build
+
+# Run a Paper server with the plugin (run-paper, Minecraft 1.21.11)
+.\gradlew.bat --offline runServer
+
+# In-game
+/dung start       # begin a run
+/dung class mage  # pick a class (warrior | mage | ranger) before starting
+```
+
+Requires permission `dung.admin` (default: OP) for the debug commands `/dung shop`,
+`/dung give`, and `/dung class` is open to all.
+
+---
+
+## Architecture overview
+
+The plugin is deliberately **single-run, single-player**: `GameManager` owns exactly one active
+`Run` at a time. All per-run combat state lives in a `PlayerState` object (the single source of
+truth for HP/mana/stats); gear is never duplicated — it stays in the real player inventory and
+stats are recomputed from it on every change. Dungeon geometry is generated purely as data
+(`Floor`, `FloorGenerator`, `RoomNode`) and then projected into the world by `RoomGen`, all at a
+fixed `BASE_Y = 80` in the resolved non-End world.
+
+```
+ Dung (JavaPlugin)
+  ├─ MetaManager      persistent progression (saves.yml)
+  ├─ GameManager      one live run: lifecycle, combat tick, rooms, boss, HUD
+  │   ├─ Run          per-run data (rng, floor, coins, kills)
+  │   ├─ PlayerState  live HP/mana/stats/cooldowns (source of truth)
+  │   ├─ Floor        room grid (data)
+  │   ├─ FloorGenerator  builds the branching room graph
+  │   ├─ RoomGen      projects rooms/corridors into the world
+  │   ├─ Enemy        runtime mob + AI
+  │   └─ BossController  the Warden
+  ├─ GameListener     Paper events -> GameManager
+  ├─ DungCommand      /dung & /dungeon
+  ├─ ItemPool / GearFactory / ItemTags / Rarity   loot system
+  ├─ Pickup           floor pickup identity & effects
+  └─ HUD / TabUI / ChatUI   display
+```
+
+---
+
+## Commands
+
+Registered for both `/dung` and the `/dungeon` alias (`DungCommand`).
+
+| Command | Permission | Effect |
+|---|---|---|
+| `/dung start` | all | Begins a new run (errors if one is active). |
+| `/dung descend` | all | After beating the boss, generates and enters the next floor. |
+| `/dung leave` | all | Ends the current run (clears inventory). |
+| `/dung shop` | `dung.admin` | Prints persistent-coin wallet + a clickable buy link. |
+| `/dung stats` | all | Prints the profile: class, coins, deaths, best floor, kills, clears. |
+| `/dung class <w\|m\|r>` | all | Sets the class for the next run; persists immediately. |
+| `/dung give <t>` | `dung.admin` | Debug: `rareweapon`, `heal`, `coins`. |
+| `/dung help` | all | Shows clickable chat actions (`ChatUI.startPrompt`). |
+
+`/dung give rareweapon` spends 20 persistent coins (the in-run shop equivalent); `/dung give
+coins` drops 10 gold-nugget run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
+
+---
+
+## Package reference
+
+### `com.lieyabull.dung` — plugin root
+
+**`Dung`** (extends `JavaPlugin`) — plugin lifecycle & shared accessors.
+
+- `onEnable()` — saves default config, loads `MetaManager`, builds `GameManager`, registers
+  `GameListener`, and binds `DungCommand` to `/dung` and `/dungeon`.
+- `onDisable()` — shuts down the run (`game.shutdown()`) and saves meta.
+- `world()` / `resolveWorld()` — **lazy** world resolution: skips the End, falls back to the
+  first world. Resolved lazily to avoid NPEs during `onEnable` before worlds load.
+- `instance()` — static singleton accessor.
+- `game()` / `meta()` — accessors to the managers.
+
+### `dungeon` — floor & room generation
+
+**`Floor`** — pure-data room grid for one floor.
+
+- `key(x, z)` — packs `(x,z)` into a `long` map key (`x*4096 + z`).
+- `add`, `at`, `inBounds`, `rooms`, `roomCount` — graph accessors.
+- `RoomNode` — one room: grid coords, `RoomType`, interior `sizeW/sizeH`
+  (13×13 square or 17 long), connectivity `doors[4]` (N/E/S/W), and flags `cleared`,
+  `visited`, `looted`, `shopBought`.
+  - `randomizeShape(rng)` — mostly square, occasionally elongated along one axis.
+
+**`FloorGenerator`** — builds the Isaac-like branching graph.
+
+- `generate()` — a random walk carves `roomCount` connected rooms with no overlaps; a
+  backtrack escape prevents trapping the walk. A BFS from START finds the **farthest room**,
+  which becomes the BOSS. A branching pass forks up to 2 dead-end leaves so the floor is a
+  real tree, not a snake. Placement then guarantees exactly one `SHOP` (shallow), `TREASURE`,
+  `SECRET` (a deep single-door dead-end), and `ELITE` (deepest remaining combat room), all
+  distinct, non-boss rooms.
+
+**`RoomType`** — enum mapping each room to its `kind` (0–6) and label. The kind index drives
+loot-table odds and difficulty.
+
+**`RoomGen`** — projects a `RoomNode` into the world at `BASE_Y`.
+
+- `baseFor(n, spacing)` — base coordinate of a room (`n.x*spacing, n.z*spacing`).
+- `build(w, n, baseY, spacing)` — hollows a walled, ceilinged, floored room. **Boss rooms**
+  read differently: deepslate-brick walls, polished-blackstone floor, red `SHROOMLIGHT`
+  ceiling + a `REDSTONE_BLOCK` warning tile at each doorway. Carves 3-wide door passages
+  whose **perpendicular center is anchored to a fixed offset** (`PERP_CENTER`) shared by all
+  rooms, so a square (13) + long (17) pair carve the same tunnel line. Fills the corridor gap
+  with solid stone (except the 3-wide passage) so corridors read as tunnels, hangs a lantern
+  in odd-length corridors, and lights interiors with ceiling `GLOWSTONE`.
+- `center(w, n, baseY, spacing)` — the exact room floor center (+1 for the player).
+- Constants: `SQUARE=13`, `LONG=17`, `WALL=1`, `ROOM_HEIGHT=4`, `PERP_CENTER=9`.
+
+### `entity` — enemies & AI
+
+**`MobType`** — the enemy catalog. Each type has a base HP/damage/speed, an `ai` behavior kind,
+and an `id`. Elite variants use `id >= 100`.
+
+- `isElite()` — `id >= 100`.
+- `hpAt(floor)` — `baseHp * (1 + floor*0.5)`.
+- `damageAt(floor)` — `baseDamage * (1 + floor*0.15) * 10` (the ×10 matches the 100-HP pool).
+
+| Mob | AI kind | Behavior |
+|---|---|---|
+| Gaper / Elite Gaper | 1 | contact: approaches and melees at <1.8 |
+| Fly | 2 | fast contact, faster movement |
+| Spider / Elite Charger | 3 / 5 | Spider = contact; Charger = telegraphed dash |
+| Mulliboom | 4 | burst-range, attacks at <2.2 |
+| Charger | 5 | charger dash (windup, lunge, cooldown) |
+| Maw | 6 | long-range, attacks at <3.2 |
+
+**`Enemy`** — a runtime mob: a real vanilla `Zombie`/`Phantom`/`Pig`/`Blaze` spawned and tagged
+`dung.entity`, with its own HP tracked independently of the mob's native health.
+
+- `Enemy(...)` — spawns the mob, sets `maxHealth`, applies infinite slowness (mobs are steered
+  by `tick`, not vanilla AI), sizes/skews the model, and shows a `Name hp/maxHp` bar.
+- `tick(p, deltaMs)` — per-tick steering: knockback, post-attack freeze, charger dash
+  (windup → lunge → cooldown), then homing movement toward the player. Incremental movement
+  (small capped steps) so mobs can't teleport through walls. Attacks only when in range and off
+  cooldown, then freezes ~0.5s to give a dodge window.
+- `damage(dmg, source, dx, dz)` — applies damage, knockback, updates the name bar, and triggers
+  the death poof + sound when defeated.
+- `alive()`, `despawn()`, `playDeathAnimation()`, `deathSound()`, `faceTarget()`,
+  `isWalkable()`.
+
+### `items` — gear, rarity & loot
+
+**`ItemTags`** — the single source of truth for every PDC tag key. Centralizing them turns
+typos into compile errors instead of silent save incompatibility. All tags live under the
+**vanilla** namespace (`NamespacedKey.minecraft(...)`) for save compatibility.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `dung.gear` | string | `"true"` — marks an item as Dung gear |
+| `dung.kind` | string | `"weapon"` or `"armor"` |
+| `dung.base` | string | base id (e.g. `longsword`, `iron_2`) |
+| `dung.rarity` | string | `Rarity.name()` |
+| `dung.damage` | int | weapon damage |
+| `dung.reach` | double | weapon melee reach override |
+| `dung.defense` | int | armor defense |
+| `dung.health` | int | health affix (adds max hearts) |
+| `dung.ability` | string | weapon ability id |
+| `dung.cost` | int | ability mana cost override |
+
+**`Rarity`** — SkyBlock-style enum: `COMMON`, `UNCOMMON`, `RARE`, `EPIC`, `LEGENDARY`,
+`MYTHIC`. Each carries a text color, a `statMult` (damage/defense multiplier), a `floorUnlock`
+(earliest fractional floor it may appear), and a `baseChance`.
+
+**`GearFactory`** — builds rarity-colored `ItemStack`s with lore.
+
+- `weapon(id, name, mat, r, dmg, health, ability, cost)` — tags GEAR/KIND/BASE/RARITY/DAMAGE
+  (+HEALTH/ABILITY/COST), hides attributes/enchants, adds an enchant to rare+ items, and writes
+  damage/health/ability lore.
+- `withReach(s, reach)` — attaches a `dung.reach` tag.
+- `armor(id, name, mat, r, defense, health)` — tags defense/health, builds armor lore.
+- `weaponLore`, `armorLore`, `usage(ability)` — lore/helper text.
+
+**`ItemPool`** — template + roll logic.
+
+- Weapon templates (Frayed Blade, Crude Axe, Longsword, War Hammer, Crystal Shard, Arcane
+  Staff, Doomblade) with base damage, ability, and mana cost.
+- Armor base sets (Cloth → Netherite) with per-material defense.
+- `rollRarity(floor)` — rarity is eligible once `floor >= floorUnlock`; weights are
+  `baseChance * (1 + floor*0.05 * ordinal)` so deep floors push toward rarer tiers (uncapped).
+- `randomWeapon(floor)` / `randomArmor(floor, slot)` — roll a template + rarity, scale damage/
+  defense by `statMult`, add reach (Longsword 3.8, Arcane Staff 4.5, Doomblade 4.0) and health
+  affixes.
+- `roomReward(floor, roomKind)` — chance to drop gear per room kind (treasure/shop/elite/boss
+  always drop; combat 30%; secret 55%) plus coins.
+
+**Health affix roll** — `rollWeaponHealth` (bruiser melee weapons only: war hammer, doomblade,
+longsword, crude axe) and `rollArmorHealth` (per material-tier × slot weight {head .65, chest
+1.0, legs .80, boots .55} × rarity). All applied to the max-heart pool.
+
+### `game` — run state, combat & lifecycle
+
+**`Run`** — per-run mutable data lost on death: `rng` (seeded), `floorIndex`, `floor`,
+`startNanos`, `runCoinsEarned`, `bankedCoins`, `kills`, and the `PlayerState`. Gear lives in the
+inventory, not here.
+
+**`PlayerState`** — the live MMORPG stats + resource bars (single source of truth). Fields:
+`maxHearts`/`hearts` (100 base), `mana`/`maxMana`, `manaRegen`, `coins`, `keys`, `bombs`,
+combat stats (`damage`, `defense`, `reach`, `critChance`, `critMult`, `speedMult`,
+`fireRateTicks`), `classId`, `cooldowns`, `invulnUntil`, `dead`.
+
+- `recomputeStats()` — rebuilds combat stats from held weapon + 4 armor slots (SkyBlock style):
+  damage from mainhand, reach override, rarity crit/knockback, defense/health from armor, then
+  class passives. The health affix is applied as a **symmetric reservoir** (see below).
+- `applyClassPassives()` — warrior: ×1.15 damage, +2 defense; mage: 160 max mana, 8 mana/s;
+  ranger: +10% crit, faster fire rate. Resets mana baselines first so class swaps never leave a
+  stale pool.
+- `isInvuln()`, `hurt(dmg)` — invuln check; damage mitigated by defense
+  (`dmg * 100/(100+def)`, min 1), 1s i-frame after each hit, records `lastDamageTime` (gates
+  natural regen), sets `dead` at ≤0.
+- `heal(amount)` — clamp to max.
+- `regenMana()` — per-tick mana regen (rate/20).
+- `regenHearts()` — **out-of-combat** HP regen: only when alive, not at max, and >5s since the
+  last hit (`HEAL_DELAY_SECONDS`); rate `healPerSecond` (default 2/s), 0 disables it.
+- `canCast(id, cost, cdMs)`, `spendMana`, `startCooldown` — ability resource/cooldown gating.
+- `bestEquipRarity()` — highest rarity across equipped gear.
+
+**`GameManager`** — owns the single live run: lifecycle, tick loop, rooms, combat, boss, HUD.
+
+Lifecycle:
+- `startRun(p, seed)` — resets per-run state, resolves world, creates `Run` + `PlayerState`
+  (applies the class + held gear immediately), sets up a fresh scoreboard, then `enterFloor(0)`.
+- `enterFloor(i)` — randomizes spacing (22–28), generates + builds the floor, teleports the
+  player to the START room.
+- `enterRoom(n)` — marks visited, applies a 2.5s spawn-grace invuln, spawns enemies for
+  un-cleared COMBAT/ELITE rooms (and locks doors), spawns room pickups, places the SHOP
+  emerald block, and checks the boss on BOSS rooms.
+- `onPlayerMoved(loc)` — room-crossing detection from movement (only when physically inside a
+  real door opening), preventing door-snap.
+- `descend()` / `endRun(quit)` / `onDeath()` / `resetPlayerToSpawn()` — see the
+  [death model](#death--persistence-model).
+
+Combat:
+- `tick()` (per game tick): checks death, syncs stats from real gear, drains melee cooldown,
+  applies speed, clears rooms when all enemies die (and counts kills), ticks the current room's
+  enemies + boss, regens mana/HP, syncs the real HP bar (`hearts/5` clamped to the vanilla
+  `20.0` cap), keeps food low to suppress vanilla hunger-regen, and throttles the action bar.
+- `registerAttack()` — melee arc: damages enemies within `reach` (horizontal + vertical), with
+  a wider arc on the boss.
+- `tryCastAbility(p, item)` / `dispatchAbility(id, st)` — casts the held weapon's stored ability
+  if mana + cooldown allow. Abilities (with `[cost, cdMs]`): **Rush** `[5,1000]` (dash + brief
+  invuln), **Slash** `[12,2500]`, **Cleave** `[15,3000]`, **Smash** `[18,3500]`, **Blade Storm**
+  `[25,4500]`, **Arcane Bolt** `[20,3500]`, **Ravage** `[40,8000]`. AOE abilities also hit the
+  boss in range so it is never ability-immune.
+- `openShop()` — in-room shop (8 run coins) that drops random gear; one purchase per room.
+
+Rooms/rewards:
+- `onRoomClear(n, k)` — clears the room, opens doors, awards coins (`2 + floorIndex`) + gear.
+- `onRoomEnterBossCheck()` / `onBossDefeated()` — spawn/despawn the Warden, open doors, drop
+  guaranteed rare+ loot, and **bank coins** into the persistent wallet (delta since last bank,
+  capped at 40) + increment `clears`/`bestFloor`.
+
+Utilities:
+- `playerHurt(p, dmg)` (static) — applies `PlayerState.hurt` + a red-hurt animation/sound
+  without touching the real HP bar; returns true if it connected. Uses `GameManagerRef` to reach
+  the run statically so `Enemy`/`BossController` don't need constructor cycles.
+- `clearRoomEntities()` / `tearDownDungeon()` — despawn mobs, unseal barriers, and reset every
+  built block back to air so an inactive dungeon disappears.
+
+### `boss` — the Warden
+
+**`BossController`** — a large, telegraphed floor boss with a `KeyedBossBar`. Spawns a Zoglin
+tagged `dung.entity`, anchored in the boss room. `tick()` runs an attack state machine: the boss
+holds still while warning, then fires:
+
+- **ATTACK_BEAM** — a red lane telegraphed toward the player (dodge perpendicular).
+- **ATTACK_SLAM** — hits within 3 blocks.
+- **ATTACK_RADIAL** — enrage-only (below 50% HP): expands a ring, hits within 5 blocks.
+
+A contact sting damages if you walk into the boss. `enraged()` past 50% HP speeds up patterns and
+raises damage. `damage(dmg)` updates the boss bar and, at 0, despawns + calls
+`GameManager.onBossDefeated()`.
+
+### `listener` — Paper event wiring
+
+**`GameListener`** — routes Paper events to the game, only for the active run's player.
+
+- `onJoin` — teleport new players to spawn + show the help prompt.
+- `onCreatureSpawn` — suppress natural/world mob spawns inside the run world while running
+  (Dung mobs are `CUSTOM`-reasoned so they're unaffected).
+- `onMove` (MONITOR) — room-crossing detection.
+- `onDeath` / `onRespawn` — clean death teardown; force respawn at world spawn (see
+  [death model](#death--persistence-model)).
+- `onHeldItem` / `onArmor` / `onInteract` — recompute stats on gear change; block block-place;
+  cast abilities on sneak+right-click; open the shop on the emerald block.
+- `onAttack` — left-click triggers `registerAttack()` and cancels the vanilla hit.
+- `onEnemyDamage` — **cancels all vanilla damage from Dung entities** (mobs + their projectiles,
+  via `isDungSource`) so only `PlayerState`-based damage applies.
+- `onPickup` — intercepts pickups (heart/coin/key/bomb) and applies their effect.
+- `onQuit` — ends the run (clears inventory) on logout.
+
+### `meta` — persistent progression
+
+**`MetaManager`** — permanent progression in `saves.yml`, with **atomic writes** and **corrupt
+backup**.
+
+- `load()` — on a corrupt save, renames the file to `saves.yml.corrupt-<ts>` for recovery
+  instead of silently wiping it.
+- `save()` — writes to a temp file then atomically moves it over the target.
+- `profile(uuid)` — lazily creates/loads a `MetaProfile` (`persistentCoins`, `deaths`, `clears`,
+  `classId`, `kills`, `bestFloor`).
+- `addPersistentCoins(uuid, amount)` — permanent coins that survive death.
+
+### `pickup` — floor pickups
+
+**`Pickup`** — floor-pickup identity via raw `Material` (no literal item copying).
+
+| Material | Type | Effect |
+|---|---|---|
+| `RED_DYE` | HEART | heals 8 HP |
+| `GOLD_NUGGET` | COIN | +1 run coin |
+| `TRIPWIRE_HOOK` | KEY | +1 key (placeholder) |
+| `TNT` | BOMB | +1 bomb (placeholder) |
+
+- `isPickup(m)` / `typeOf(m)` / `apply(m, st)` / `stack(m)`.
+
+### `ui` — HUD, tab menu & chat
+
+**`HUD`** — sidebar scoreboard with combat stats, run consumables, current room, boss status,
+class, and the longest running ability cooldown. `sendBar` paints the action bar:
+`♥ <hearts>/<maxHearts>   ✦ <mana>/<maxMana>` (integer counts).
+
+**`TabUI`** — tab menu (player-list slot) with layered detail: header (floor + class), combat
+stats, mana/speed/fire-rate, equipment (mainhand + 4 armor slots), and dungeon exploration
+status (rooms explored/cleared, boss state).
+
+**`ChatUI`** — clickable chat actions (`startPrompt`), notifications, and the reusable
+`command(label, command, hover)` builder.
+
+---
+
+## Combat & stats model
+
+- **HP** — a 100-HP pool tracked in `PlayerState.hearts`; the vanilla heart bar is a projection
+  (`hearts/5`) clamped to the 20-HP cap, so a gear-boosted pool above 100 shows in the numeric
+  HUD rather than extra vanilla hearts.
+- **Damage** — melee arc damages enemies within `reach` (horizontal) and 2 blocks (vertical).
+- **Defense** — reduces incoming damage: `dmg * 100/(100+defense)`, minimum 1.
+- **Critical hits** — `critChance` chance of `critMult` damage (rarity pushes both).
+- **Speed** — `speedMult` scales walk speed (`min(0.3, 0.2*speedMult)`).
+- **Mana** — regenerates per second; spent on weapon abilities with per-ability cooldowns.
+- **Natural healing** — out-of-combat regen (`healPerSecond`, 5s after damage). Vanilla hunger
+  regen is suppressed by pinning food to 10 / saturation 0.
+- **Health affix (reservoir)** — a gear health bonus raises `maxHearts`. Growing the pool heals
+  the gained amount; shrinking it refunds exactly that amount, so rapid gear-swapping cannot
+  farm free HP. This is the key anti-exploit detail of the health system.
+
+### Classes
+
+| Class | Passive |
+|---|---|
+| Warrior | ×1.15 damage, +2 defense |
+| Mage | 160 max mana, 8 mana/s |
+| Ranger | +10% crit, faster fire rate |
+
+---
+
+## Death & persistence model
+
+There are **two distinct death paths**, handled differently so the player is never stranded on
+the vanilla death screen:
+
+1. **Dung-system death** (`st.dead`) — when `PlayerState.hurt` drops hearts to ≤0. The real HP
+   bar never hits 0 (it's a projection), so there's no vanilla death screen. `tick()` calls
+   `onDeath()` then `resetPlayerToSpawn()`, which revives + teleports to world spawn.
+2. **Vanilla death** (void/fall/suffocation) — the real player is dead and the death screen
+   shows. `tick()`/`onDeath` tear down the run and force `player.spigot().respawn()`; the
+   `onRespawn` handler sets the respawn location back to world spawn. Crucially, this path does
+   **not** teleport/revive the player while they're still on the death screen.
+
+**What's kept vs. lost:**
+- Kept: class, persistent coins, clears, best floor, kills. Items bought with persistent coins
+  (e.g. `/dung give rareweapon`) are never destroyed.
+- Lost: run coins and run gear (left behind with the run).
+
+Persistent coins are **banked** on boss defeat from the delta earned that floor (capped at 40),
+so the same run coins aren't re-banked on every floor.
+
+---
+
+## Design notes & known issues
+
+- **Single player, single run.** `GameManager` holds one run; only that player is affected by
+  listeners. Not designed for concurrent players.
+- **Dungeon placement** — everything is built at `BASE_Y = 80` in the first non-End world and
+  fully torn down (`tearDownDungeon`) when a run ends, so no persistent world edits remain.
+- **Vanilla mobs as enemies** — Dung mobs/boss are real vanilla entities whose native AI is
+  suppressed (slowness + manual steering), and all their vanilla damage is cancelled
+  (`onEnemyDamage`/`isDungSource`). Their HP is tracked independently; the mob's own health bar
+  is only cosmetic.
+- **Fixed corridor geometry** — door passages and barriers share the fixed `PERP_CENTER` line so
+  square + elongated neighbours carve aligned tunnels. `spacing` (22–28) leaves a 3–9-block
+  corridor for any shape.
+- **Health reservoir** prevents the gear-swap heal exploit; natural healing is out-of-combat
+  only.
+- **Placeholder systems** — keys and bombs are tracked but have no sinks yet; intended for
+  future locked doors/chests and destructible walls.
+
+### Tests
+
+Headless JUnit tests under `src/test` cover corridor geometry and simulated floor generation
+(`CorridorGeometryTest`, `SimulatedPlayerFloorTest`). Run with `.\gradlew.bat --offline cleanTest test`.

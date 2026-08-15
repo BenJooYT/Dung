@@ -1,0 +1,17 @@
+name: ${name}
+main: com.lieyabull.dung.Dung
+version: ${version}
+api-version: 1.21
+authors: [lieyabull]
+description: Room-based dungeon roguelite with MMORPG-style combat and progression.
+commands:
+  dung:
+    description: Dung game commands
+    usage: /dung <start|join|shop|stats|inventory|class|give|help>
+  dungeon:
+    description: Alias for /dung
+    usage: /dungeon <...>
+permissions:
+  dung.admin:
+    description: Admin debug commands
+    default: op
