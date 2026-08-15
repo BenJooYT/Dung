@@ -239,7 +239,9 @@ public final class DungCommand implements CommandExecutor {
         }
         org.bukkit.inventory.PlayerInventory inv = p.getInventory();
         int pieces = 0, shards = 0;
-        for (int slot = 9; slot < inv.getSize(); slot++) { // 9..35 = non-hotbar main storage
+        // main storage only (0-35); slots 36+ are armor/offhand which getSize() ALSO includes,
+        // and those are armed/equipped, not "in the bag".
+        for (int slot = 9; slot < 36; slot++) {
             org.bukkit.inventory.ItemStack s = inv.getItem(slot);
             if (!isSalvableArmor(s)) continue;
             pieces++;
@@ -265,7 +267,13 @@ public final class DungCommand implements CommandExecutor {
     /** Shard value of one armor piece: rarity-scaled + defense. */
     private static int salvageValue(org.bukkit.inventory.ItemStack s) {
         String rs = pdcString(s, ItemTags.RARITY);
-        Rarity r = rs == null ? Rarity.COMMON : Rarity.valueOf(rs);
+        Rarity r = Rarity.COMMON;
+        if (rs != null) {
+            try {
+                r = Rarity.valueOf(rs);
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
         int def = pdcInt(s, ItemTags.DEFENSE);
         return Math.max(1, (r.ordinal() + 1) * 2 + def / 10);
     }
