@@ -339,16 +339,18 @@ public final class GameManager {
         long k = run.floor.key(n.x, n.z);
         roomLocked.put(k, true);
         sealDoors(n, true);
-        // Feedback so the invisible barrier reads as "the room has locked", not a bug.
+        // Feedback so the iron-bar gate reads as "the room has locked", not a bug.
         Location c = RoomGen.center(world, n, BASE_Y, spacing);
         world.playSound(c, org.bukkit.Sound.BLOCK_IRON_DOOR_CLOSE, 1.0f, 0.9f);
         world.spawnParticle(org.bukkit.Particle.CRIT, c.clone().add(0, 1.5, 0), 24, 8, 1.5, 8);
         player.sendActionBar("§cRoom locked — defeat all enemies!");
     }
 
-    /** Seal (true) or open (false) every outward door of a room with a barrier wall. The barrier
-     *  must sit on the SAME fixed perpendicular line RoomGen carved the doorway (PERP_CENTER), not
-     *  the room's geometric center, or square rooms' doors are sealed off by 2 blocks and leak. */
+    /** Seal (true) or open (false) every outward door of a room with an iron-bar gate. Iron bars
+     *  make the lock visible (they read as a cage/gate), unlike an invisible barrier that players
+     *  kept walking into. The gate must sit on the SAME fixed perpendicular line RoomGen carved
+     *  the doorway (PERP_CENTER), not the room's geometric center, or square rooms' doors are
+     *  sealed off by 2 blocks and leak. */
     private void sealDoors(Floor.RoomNode n, boolean close) {
         int[] DX = {0, 1, 0, -1};
         int[] DZ = {-1, 0, 1, 0};
@@ -368,8 +370,8 @@ public final class GameManager {
                     int px = horiz ? wallX : (perpC + off);
                     int pz = horiz ? (perpC + off) : wallZ;
                     if (close) {
-                        world.getBlockAt(px, y, pz).setType(Material.BARRIER);
-                    } else if (world.getBlockAt(px, y, pz).getType() == Material.BARRIER) {
+                        world.getBlockAt(px, y, pz).setType(Material.IRON_BARS);
+                    } else if (world.getBlockAt(px, y, pz).getType() == Material.IRON_BARS) {
                         world.getBlockAt(px, y, pz).setType(Material.AIR);
                     }
                 }
