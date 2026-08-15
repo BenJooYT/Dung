@@ -105,7 +105,7 @@ public final class GameListener implements Listener {
         Player p = e.getPlayer();
         DungeonInstance di = instanceOf(p);
         if (di != null) {
-            plugin.game().removeInstance(di);
+            di.endRun();
             e.setRespawnLocation(e.getPlayer().getWorld().getSpawnLocation());
             p.setHealth(20);
             p.setGameMode(GameMode.SURVIVAL);
@@ -132,13 +132,13 @@ public final class GameListener implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
         Player p = e.getPlayer();
-        // Clean up party membership
-        plugin.game().partyManager().onPlayerQuit(p);
-        // Clean up dungeon instance
+        // Clean up dungeon instance first (endRun cleans up blocks/entities and removes from registry)
         DungeonInstance di = instanceOf(p);
         if (di != null) {
-            plugin.game().removeInstance(di);
+            di.endRun();
         }
+        // Then clean up party membership
+        plugin.game().partyManager().onPlayerQuit(p);
     }
 
     /** Left click / attack to fire tears. */
