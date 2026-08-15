@@ -48,12 +48,17 @@ public final class MetaManager {
         try {
             for (Map.Entry<UUID, MetaProfile> e : profiles.entrySet()) {
                 String key = e.getKey().toString();
-                data.set(key + ".coins", e.getValue().persistentCoins);
-                data.set(key + ".deaths", e.getValue().deaths);
-                data.set(key + ".clears", e.getValue().clears);
-                data.set(key + ".class", e.getValue().classId);
-                data.set(key + ".kills", e.getValue().kills);
-                data.set(key + ".bestsFloor", e.getValue().bestFloor);
+                MetaProfile prof = e.getValue();
+                data.set(key + ".coins", prof.persistentCoins);
+                data.set(key + ".deaths", prof.deaths);
+                data.set(key + ".clears", prof.clears);
+                data.set(key + ".class", prof.classId);
+                data.set(key + ".kills", prof.kills);
+                data.set(key + ".bestsFloor", prof.bestFloor);
+                data.set(key + ".shards", prof.shards);
+                for (java.util.Map.Entry<String, Integer> u : prof.upgrades.entrySet()) {
+                    data.set(key + ".upgrades." + u.getKey(), u.getValue());
+                }
             }
             file.getParentFile().mkdirs();
             // Atomic write: dump to a temp file, then move it over the target. A crash mid-write
@@ -81,6 +86,12 @@ public final class MetaManager {
             p.classId = data.getString(key + ".class", "warrior");
             p.kills = data.getInt(key + ".kills", 0);
             p.bestFloor = data.getInt(key + ".bestsFloor", 0);
+            p.shards = data.getInt(key + ".shards", 0);
+            if (data.contains(key + ".upgrades")) {
+                for (String u : data.getConfigurationSection(key + ".upgrades").getKeys(false)) {
+                    p.upgrades.put(u, data.getInt(key + ".upgrades." + u, 0));
+                }
+            }
             return p;
         });
     }
@@ -92,6 +103,8 @@ public final class MetaManager {
 
     public static final class MetaProfile {
         public int persistentCoins;
+        public int shards;
+        public final Map<String, Integer> upgrades = new LinkedHashMap<>();
         public int deaths;
         public int clears;
         public String classId = "warrior";

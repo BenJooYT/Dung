@@ -47,10 +47,13 @@ clearing rooms banks persistent coins and kill/full-clear stats that survive dea
 # In-game
 /dung start       # begin a run
 /dung class mage  # pick a class (warrior | mage | ranger) before starting
+/shop             # between runs: spend persistent coins on gear
+/upgrades         # between runs: spend shards on permanent upgrades
+/salvage          # in a run: break held armor into permanent shards
 ```
 
-Requires permission `dung.admin` (default: OP) for the debug commands `/dung shop`,
-`/dung give`, and `/dung class` is open to all.
+Requires permission `dung.admin` (default: OP) for the debug command `/dung give`; everything
+else (including `/shop`, `/upgrades`, `/salvage`) is open to all players.
 
 ---
 
@@ -75,7 +78,8 @@ fixed `BASE_Y = 80` in the resolved non-End world.
   │   ├─ Enemy        runtime mob + AI
   │   └─ BossController  the Warden
   ├─ GameListener     Paper events -> GameManager
-  ├─ DungCommand      /dung & /dungeon
+  ├─ DungCommand      /dung, /dungeon, /shop, /upgrades, /salvage
+  ├─ Upgrades         permanent stat-upgrade tracks (shards)
   ├─ ItemPool / GearFactory / ItemTags / Rarity   loot system
   ├─ Pickup           floor pickup identity & effects
   └─ HUD / TabUI / ChatUI   display
@@ -85,21 +89,35 @@ fixed `BASE_Y = 80` in the resolved non-End world.
 
 ## Commands
 
-Registered for both `/dung` and the `/dungeon` alias (`DungCommand`).
+`DungCommand` routes `/dung` + `/dungeon` (subcommands), and the top-level `/shop`,
+`/upgrades`, and `/salvage` commands. Only `/dung give` is admin-restricted.
 
 | Command | Permission | Effect |
 |---|---|---|
 | `/dung start` | all | Begins a new run (errors if one is active). |
 | `/dung descend` | all | After beating the boss, generates and enters the next floor. |
 | `/dung leave` | all | Ends the current run (clears inventory). |
-| `/dung shop` | `dung.admin` | Prints persistent-coin wallet + a clickable buy link. |
-| `/dung stats` | all | Prints the profile: class, coins, deaths, best floor, kills, clears. |
+| `/shop` | all | Between-run shop: spend persistent coins on persistent gear. |
+| `/shop weapon` · `/shop armor` | all | Buy a random weapon (20 coins) or armor piece (15 coins). |
+| `/upgrades` | all | Between-run menu: spend shards on permanent stat upgrades. |
+| `/upgrades buy <id>` | all | Purchase a level of an upgrade track. |
+| `/salvage` | all | Break the held Dung armor piece into permanent shards (in a run). |
+| `/dung stats` | all | Prints the profile: class, coins, shards, deaths, best floor, kills, clears. |
 | `/dung class <w\|m\|r>` | all | Sets the class for the next run; persists immediately. |
 | `/dung give <t>` | `dung.admin` | Debug: `rareweapon`, `heal`, `coins`. |
 | `/dung help` | all | Shows clickable chat actions (`ChatUI.startPrompt`). |
 
 `/dung give rareweapon` spends 20 persistent coins (the in-run shop equivalent); `/dung give
 coins` drops 10 gold-nugget run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
+
+### Persistent economy
+
+- **Persistent coins** — earned by beating bosses (banked each floor), survive death, and are
+  spent in `/shop` on gear that persists between runs.
+- **Shards** — earned in a run by breaking held armor with `/salvage` (value scales with rarity
+  and defense). Spent in `/upgrades` on permanent stat upgrades: **Permanent Damage** (+2/lv),
+  **Max Hearts** (+10/lv), **Defense** (+1/lv), **Crit Chance** (+1%/lv), **Move Speed**
+  (+5%/lv), **Max Mana** (+10/lv). Each has a rising cost and a level cap.
 
 ---
 
@@ -247,10 +265,14 @@ combat stats (`damage`, `defense`, `reach`, `critChance`, `critMult`, `speedMult
 
 - `recomputeStats()` — rebuilds combat stats from held weapon + 4 armor slots (SkyBlock style):
   damage from mainhand, reach override, rarity crit/knockback, defense/health from armor, then
-  class passives. The health affix is applied as a **symmetric reservoir** (see below).
+  class passives, then permanent shard upgrades. The health affix is applied as a **symmetric
+  reservoir** (see below).
 - `applyClassPassives()` — warrior: ×1.15 damage, +2 defense; mage: 160 max mana, 8 mana/s;
   ranger: +10% crit, faster fire rate. Resets mana baselines first so class swaps never leave a
   stale pool.
+- `applyUpgrades()` — folds the player's purchased permanent upgrades (track id -> level, loaded
+  from meta at run start) on top of gear + class passives: damage, defense, crit, speed, and max
+  mana; the hearts upgrade feeds into the max-heart reservoir.
 - `isInvuln()`, `hurt(dmg)` — invuln check; damage mitigated by defense
   (`dmg * 100/(100+def)`, min 1), 1s i-frame after each hit, records `lastDamageTime` (gates
   natural regen), sets `dead` at ≤0.
@@ -265,7 +287,8 @@ combat stats (`damage`, `defense`, `reach`, `critChance`, `critMult`, `speedMult
 
 Lifecycle:
 - `startRun(p, seed)` — resets per-run state, resolves world, creates `Run` + `PlayerState`
-  (applies the class + held gear immediately), sets up a fresh scoreboard, then `enterFloor(0)`.
+  (loads the class + permanent upgrades, applies held gear immediately), sets up a fresh
+  scoreboard, then `enterFloor(0)`.
 - `enterFloor(i)` — randomizes spacing (22–28), generates + builds the floor, teleports the
   player to the START room.
 - `enterRoom(n)` — marks visited, applies a 2.5s spawn-grace invuln, spawns enemies for
@@ -342,10 +365,23 @@ backup**.
 
 - `load()` — on a corrupt save, renames the file to `saves.yml.corrupt-<ts>` for recovery
   instead of silently wiping it.
-- `save()` — writes to a temp file then atomically moves it over the target.
-- `profile(uuid)` — lazily creates/loads a `MetaProfile` (`persistentCoins`, `deaths`, `clears`,
-  `classId`, `kills`, `bestFloor`).
+- `save()` — writes to a temp file then atomically moves it over the target. Persists coins,
+  shards, per-track upgrade levels, deaths, clears, class, kills, and best floor.
+- `profile(uuid)` — lazily creates/loads a `MetaProfile` (`persistentCoins`, `shards`,
+  `upgrades`, `deaths`, `clears`, `classId`, `kills`, `bestFloor`).
 - `addPersistentCoins(uuid, amount)` — permanent coins that survive death.
+- `MetaProfile` — per-player data; `upgrades` is a `track id -> level` map.
+
+**`Upgrades`** — the permanent stat-upgrade catalog: 6 tracks (`damage`, `hearts`, `defense`,
+`crit`, `speed`, `mana`), each with a label, `baseCost`/`costPerLevel` price curve, a `maxLevel`
+cap, and the per-level stat `delta`.
+
+- `byId(id)` — look up a track by id.
+- `cost(t, level)` — shard cost of the next level.
+- `delta(t)` — permanent stat gained per level.
+
+The upgrades are applied in `PlayerState.applyUpgrades()` (after class passives):
+damage +2/lv, max hearts +10/lv, defense +1/lv, crit +1%/lv, move speed +5%/lv, max mana +10/lv.
 
 ### `pickup` — floor pickups
 
@@ -385,6 +421,8 @@ status (rooms explored/cleared, boss state).
 - **Critical hits** — `critChance` chance of `critMult` damage (rarity pushes both).
 - **Speed** — `speedMult` scales walk speed (`min(0.3, 0.2*speedMult)`).
 - **Mana** — regenerates per second; spent on weapon abilities with per-ability cooldowns.
+- **Permanent upgrades** — shard-bought levels from `/upgrades` add damage, max hearts, defense,
+  crit chance, move speed, and max mana on top of gear and class every run.
 - **Natural healing** — out-of-combat regen (`healPerSecond`, 5s after damage). Vanilla hunger
   regen is suppressed by pinning food to 10 / saturation 0.
 - **Health affix (reservoir)** — a gear health bonus raises `maxHearts`. Growing the pool heals
@@ -415,12 +453,15 @@ the vanilla death screen:
    **not** teleport/revive the player while they're still on the death screen.
 
 **What's kept vs. lost:**
-- Kept: class, persistent coins, clears, best floor, kills. Items bought with persistent coins
-  (e.g. `/dung give rareweapon`) are never destroyed.
-- Lost: run coins and run gear (left behind with the run).
+- Kept: class, persistent coins, **shards**, purchased **upgrade levels**, clears, best floor,
+  kills, and any items bought with persistent coins (`/shop`, `/dung give rareweapon`) — these
+  are never destroyed.
+- Lost: run coins and run gear (left behind with the run). Run gear can be converted before a
+  death by breaking it with `/salvage` into permanent shards.
 
 Persistent coins are **banked** on boss defeat from the delta earned that floor (capped at 40),
-so the same run coins aren't re-banked on every floor.
+so the same run coins aren't re-banked on every floor. Shards earned via `/salvage` are added
+immediately and spent in `/upgrades`.
 
 ---
 

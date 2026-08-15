@@ -103,6 +103,7 @@ public final class GameManager {
         run = new Run(seed);
         PlayerState ps = new PlayerState(p);
         ps.classId = plugin.meta().profile(p.getUniqueId()).classId;
+        ps.upgrades.putAll(plugin.meta().profile(p.getUniqueId()).upgrades);
         ps.recomputeStats(); // apply held weapon/armor + class passives immediately
         run.setPlayerState(ps);
         GameManagerRef.set(this);

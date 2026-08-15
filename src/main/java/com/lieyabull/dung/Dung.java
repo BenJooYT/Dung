@@ -30,6 +30,9 @@ public final class Dung extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
         getCommand("dung").setExecutor(new DungCommand(this));
         getCommand("dungeon").setExecutor(new DungCommand(this));
+        getCommand("shop").setExecutor(new DungCommand(this));
+        getCommand("upgrades").setExecutor(new DungCommand(this));
+        getCommand("salvage").setExecutor(new DungCommand(this));
         getLogger().info("Dung enabled. World resolved lazily.");
     }
 

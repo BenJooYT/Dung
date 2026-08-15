@@ -41,6 +41,8 @@ public final class PlayerState {
     public int fireRateTicks = 12;
     // class
     public String classId = "warrior";
+    // permanent (shard-bought) upgrades: track id -> owned level
+    public final Map<String, Integer> upgrades = new java.util.HashMap<>();
     // cooldowns (ms remaining) keyed by ability id
     public final Map<String, Long> cooldowns = new ConcurrentHashMap<>();
     // invulnerability timestamp (ms)
@@ -87,17 +89,33 @@ public final class PlayerState {
             if (h != null) healthBonus += h;
         }
         applyClassPassives();
+        applyUpgrades();
         // Apply the health affix to the max-heart pool as a symmetric reservoir so it can't be
         // farmed by swapping gear: growing the pool burst-heals the gained amount (equipping a big
         // chestpiece feels good), and shrinking it refunds exactly that amount (no free healing).
+        int permanentHearts = upgrades.getOrDefault("hearts", 0) * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.HEARTS);
         int oldMax = maxHearts;
-        maxHearts = 100 + healthBonus;
+        maxHearts = 100 + healthBonus + permanentHearts;
         if (maxHearts > oldMax) {
             hearts += (maxHearts - oldMax);
         } else if (maxHearts < oldMax) {
             hearts -= (oldMax - maxHearts);
         }
         hearts = Math.max(0.0, Math.min(hearts, maxHearts));
+    }
+
+    /** Apply permanent shard-bought upgrades on top of gear + class passives. */
+    private void applyUpgrades() {
+        int dmg = upgrades.getOrDefault("damage", 0);
+        if (dmg > 0) damage += dmg * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.DAMAGE);
+        int def = upgrades.getOrDefault("defense", 0);
+        if (def > 0) defense += def * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.DEFENSE);
+        int crit = upgrades.getOrDefault("crit", 0);
+        if (crit > 0) critChance += crit * 0.01;
+        int spd = upgrades.getOrDefault("speed", 0);
+        if (spd > 0) speedMult += spd * 0.05;
+        int manaUp = upgrades.getOrDefault("mana", 0);
+        if (manaUp > 0) maxMana += manaUp * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.MANA);
     }
 
     public void applyClassPassives() {

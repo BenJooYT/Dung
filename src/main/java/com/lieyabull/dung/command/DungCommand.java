@@ -3,19 +3,21 @@ package com.lieyabull.dung.command;
 import com.lieyabull.dung.Dung;
 import com.lieyabull.dung.game.GameManager;
 import com.lieyabull.dung.items.ItemPool;
+import com.lieyabull.dung.items.ItemTags;
 import com.lieyabull.dung.items.Rarity;
 import com.lieyabull.dung.meta.MetaManager;
+import com.lieyabull.dung.meta.Upgrades;
 import com.lieyabull.dung.ui.ChatUI;
-import net.kyori.adventure.text.Component;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
-import java.util.concurrent.ThreadLocalRandom;
-
 public final class DungCommand implements CommandExecutor {
+    private static final int WEAPON_COST = 20;
+    private static final int ARMOR_COST = 15;
+
     private final Dung plugin;
 
     public DungCommand(Dung plugin) {
@@ -28,6 +30,17 @@ public final class DungCommand implements CommandExecutor {
             sender.sendMessage("§cOnly players can use Dung.");
             return true;
         }
+        switch (label.toLowerCase()) {
+            case "shop": return shopCmd(p, args);
+            case "upgrades": return upgradesCmd(p, args);
+            case "salvage": return salvage(p);
+            default: return dungCmd(p, args);
+        }
+    }
+
+    // ---------- /dung <sub> ----------
+
+    private boolean dungCmd(Player p, String[] args) {
         GameManager gm = plugin.game();
         String sub = args.length > 0 ? args[0].toLowerCase() : "help";
         switch (sub) {
@@ -51,16 +64,11 @@ public final class DungCommand implements CommandExecutor {
                     p.sendMessage("§cNo active run.");
                 }
                 return true;
-            case "shop":
-                if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
-                shop(p, gm);
-                return true;
-            case "stats":
-                stats(p);
-                return true;
-            case "class":
-                classCmd(p, args);
-                return true;
+            case "shop": return shopCmd(p, args);
+            case "upgrades": return upgradesCmd(p, args);
+            case "salvage": return salvage(p);
+            case "stats": stats(p); return true;
+            case "class": classCmd(p, args); return true;
             case "give":
                 // cheat/debug command: admin-only so normal players can't spawn items/heal
                 if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
@@ -73,22 +81,137 @@ public final class DungCommand implements CommandExecutor {
         }
     }
 
-    private void shop(Player p, GameManager gm) {
+    // ---------- /shop ----------
+
+    private boolean shopCmd(Player p, String[] args) {
+        if (args.length == 0) { showShop(p); return true; }
+        switch (args[0].toLowerCase()) {
+            case "weapon": return buyGear(p, true);
+            case "armor": return buyGear(p, false);
+            default: showShop(p); return true;
+        }
+    }
+
+    /** Between-run shop: spend persistent coins on gear that carries into your next run. */
+    private void showShop(Player p) {
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
         p.sendMessage("§6--- Dung Shop ---");
-        p.sendMessage("§7You have §6" + prof.persistentCoins + " persistent coins§7.");
-        if (prof.persistentCoins < 20) {
-            p.sendMessage("§cYou need at least 20 coins. Earn them by clearing floors.");
-            return;
-        }
-        p.sendMessage(ChatUI.command("[ Buy a RARE weapon (§620 coins§6) ]", "/dung give rareweapon", "Spend 20 persistent coins"));
+        p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins + " §8(earned by beating bosses, survives death)");
+        p.sendMessage("§7Shards: §b" + prof.shards + " §8(from salvaging armor in a run — /salvage)");
+        p.sendMessage("");
+        p.sendMessage("§7Buy gear that persists between runs:");
+        p.sendMessage(ChatUI.command("  [ RANDOM WEAPON — §6" + WEAPON_COST + " coins§6 ]", "/shop weapon", "Buy a random weapon (rarity up-weighted)"));
+        p.sendMessage(ChatUI.command("  [ RANDOM ARMOR — §6" + ARMOR_COST + " coins§6 ]", "/shop armor", "Buy a random armor piece"));
+        p.sendMessage(ChatUI.command("  [ Permanent Upgrades ]", "/upgrades", "Spend shards on permanent stat upgrades"));
     }
+
+    private boolean buyGear(Player p, boolean weapon) {
+        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+        int cost = weapon ? WEAPON_COST : ARMOR_COST;
+        if (prof.persistentCoins < cost) {
+            p.sendMessage("§cYou need " + cost + " coins. Earn them by beating bosses.");
+            return true;
+        }
+        prof.persistentCoins -= cost;
+        plugin.meta().save(); // persist the spend so a restart can't duplicate the item
+        ItemStack item = weapon ? ItemPool.randomWeapon(2) : ItemPool.randomArmor(2, (int) (Math.random() * 4));
+        p.getInventory().addItem(item);
+        p.sendMessage("§aPurchased! " + item.getItemMeta().getDisplayName() + " §7(-§6" + cost + " coins§7)");
+        return true;
+    }
+
+    // ---------- /upgrades ----------
+
+    private boolean upgradesCmd(Player p, String[] args) {
+        if (args.length >= 2 && args[0].equalsIgnoreCase("buy")) {
+            return buyUpgrade(p, args[1].toLowerCase());
+        }
+        showUpgrades(p);
+        return true;
+    }
+
+    /** Between-run menu: spend shards on permanent stat upgrades. */
+    private void showUpgrades(Player p) {
+        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+        p.sendMessage("§b--- Permanent Upgrades ---");
+        p.sendMessage("§7You have §b" + prof.shards + " shards§7. Earn them with §f/salvage§7 in a run.");
+        p.sendMessage("");
+        for (Upgrades.Track t : Upgrades.ALL) {
+            int owned = prof.upgrades.getOrDefault(t.id(), 0);
+            String line = "§7" + t.label() + "  §8Lv §f" + owned;
+            if (owned >= t.maxLevel()) {
+                p.sendMessage("  " + line + "  §8MAXED");
+            } else {
+                int cost = Upgrades.cost(t, owned);
+                p.sendMessage(ChatUI.command("  " + line + "  §8→ §6" + cost + " shards§8 " + effect(t, owned), "/upgrades buy " + t.id(), "Spend " + cost + " shards"));
+            }
+        }
+    }
+
+    private boolean buyUpgrade(Player p, String id) {
+        Upgrades.Track t = Upgrades.byId(id);
+        if (t == null) { p.sendMessage("§cUnknown upgrade."); return true; }
+        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+        int owned = prof.upgrades.getOrDefault(t.id(), 0);
+        if (owned >= t.maxLevel()) { p.sendMessage("§8That upgrade is already maxed."); return true; }
+        int cost = Upgrades.cost(t, owned);
+        if (prof.shards < cost) {
+            p.sendMessage("§cYou need " + cost + " shards (have " + prof.shards + "). Salvage armor with /salvage in a run.");
+            return true;
+        }
+        prof.shards -= cost;
+        prof.upgrades.put(t.id(), owned + 1);
+        plugin.meta().save();
+        p.sendMessage("§a" + t.label() + " §7is now §fLv " + (owned + 1) + "§7. §8(Effect: " + effect(t, owned + 1) + ")");
+        return true;
+    }
+
+    private String effect(Upgrades.Track t, int level) {
+        return switch (t.id()) {
+            case "damage" -> "+" + (level * 2) + " damage";
+            case "hearts" -> "+" + (level * 10) + " max HP";
+            case "defense" -> "+" + level + " defense";
+            case "crit" -> "+" + level + "% crit chance";
+            case "speed" -> "+" + (level * 5) + "% move speed";
+            case "mana" -> "+" + (level * 10) + " max mana";
+            default -> "";
+        };
+    }
+
+    // ---------- /salvage ----------
+
+    /** Break the held Dung armor piece into permanent shards (only during a run). */
+    private boolean salvage(Player p) {
+        GameManager gm = plugin.game();
+        if (!gm.isRunning() || !gm.player().equals(p)) {
+            p.sendMessage("§cSalvage only works while inside a run. Start one with /dung start.");
+            return true;
+        }
+        ItemStack held = p.getInventory().getItemInMainHand();
+        String kind = tag(held, ItemTags.KIND);
+        if (!"armor".equals(kind)) {
+            p.sendMessage("§cHold a Dung armor piece in your main hand to salvage it.");
+            return true;
+        }
+        String rarityStr = tag(held, ItemTags.RARITY);
+        Rarity r = Rarity.valueOf(rarityStr);
+        int def = intTag(held, ItemTags.DEFENSE);
+        int shards = Math.max(1, (r.ordinal() + 1) * 2 + def / 10);
+        held.setAmount(held.getAmount() - 1);
+        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+        prof.shards += shards;
+        plugin.meta().save();
+        p.sendMessage("§bSalvaged " + r.legacy + held.getItemMeta().getDisplayName() + "§b → §b+" + shards + " shards§7 (total §b" + prof.shards + "§7). Spend them with /upgrades.");
+        return true;
+    }
+
+    // ---------- existing: stats / class / give ----------
 
     private void stats(Player p) {
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
         p.sendMessage("§6--- " + p.getName() + " ---");
         p.sendMessage("§7Class: §f" + capital(prof.classId));
-        p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins);
+        p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins + "   §7Shards: §b" + prof.shards);
         p.sendMessage("§7Deaths: §c" + prof.deaths + "   §7Best floor: §f" + prof.bestFloor + "   §7Kills: §f" + prof.kills);
         p.sendMessage("§7Floors cleared: §f" + prof.clears);
     }
@@ -130,6 +253,20 @@ public final class DungCommand implements CommandExecutor {
             default:
                 p.sendMessage("§7Unknown give target.");
         }
+    }
+
+    private String tag(ItemStack s, String key) {
+        if (s == null || s.getType() == org.bukkit.Material.AIR || s.getItemMeta() == null) return null;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        String v = pdc.get(org.bukkit.NamespacedKey.minecraft(key), org.bukkit.persistence.PersistentDataType.STRING);
+        return v;
+    }
+
+    private int intTag(ItemStack s, String key) {
+        if (s == null || s.getType() == org.bukkit.Material.AIR || s.getItemMeta() == null) return 0;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        Integer v = pdc.get(org.bukkit.NamespacedKey.minecraft(key), org.bukkit.persistence.PersistentDataType.INTEGER);
+        return v == null ? 0 : v;
     }
 
     private String capital(String s) {

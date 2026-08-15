@@ -7,10 +7,19 @@ description: Room-based dungeon roguelite with MMORPG-style combat and progressi
 commands:
   dung:
     description: Dung game commands
-    usage: /dung <start|join|shop|stats|inventory|class|give|help>
+    usage: /dung <start|shop|upgrades|salvage|stats|class|give|help>
   dungeon:
     description: Alias for /dung
     usage: /dungeon <...>
+  shop:
+    description: Spend persistent coins on gear between runs
+    usage: /shop [weapon|armor]
+  upgrades:
+    description: Spend shards on permanent stat upgrades
+    usage: /upgrades [buy <id>]
+  salvage:
+    description: Break held Dung armor into permanent shards (in a run)
+    usage: /salvage
 permissions:
   dung.admin:
     description: Admin debug commands
