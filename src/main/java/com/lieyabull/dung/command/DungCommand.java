@@ -34,7 +34,7 @@ public final class DungCommand implements CommandExecutor {
         switch (label.toLowerCase()) {
             case "shop": return shopCmd(p, args);
             case "upgrades": return upgradesCmd(p, args);
-            case "salvage": return salvage(p);
+            case "salvage": return salvageCmd(p, args);
             default: return dungCmd(p, args);
         }
     }
@@ -67,7 +67,7 @@ public final class DungCommand implements CommandExecutor {
                 return true;
             case "shop": return shopCmd(p, args);
             case "upgrades": return upgradesCmd(p, args);
-            case "salvage": return salvage(p);
+            case "salvage": return salvageCmd(p, args);
             case "stats": stats(p); return true;
             case "class": classCmd(p, args); return true;
             case "give":
@@ -182,8 +182,16 @@ public final class DungCommand implements CommandExecutor {
 
     // ---------- /salvage ----------
 
+    private boolean salvageCmd(Player p, String[] args) {
+        if (args.length > 0 && args[0].equalsIgnoreCase("all")) return salvageAll(p);
+        if (args.length > 0 && (args[0].equalsIgnoreCase("fav") || args[0].equalsIgnoreCase("favorite"))) {
+            return toggleFavorite(p);
+        }
+        return salvageHeld(p);
+    }
+
     /** Break the held Dung armor piece into permanent shards (only during a run). */
-    private boolean salvage(Player p) {
+    private boolean salvageHeld(Player p) {
         GameManager gm = plugin.game();
         if (!gm.isRunning() || !gm.player().equals(p)) {
             p.sendMessage("§cSalvage only works while inside a run. Start one with /dung start.");
@@ -195,16 +203,100 @@ public final class DungCommand implements CommandExecutor {
             p.sendMessage("§cHold a Dung armor piece in your main hand to salvage it.");
             return true;
         }
-        String rarityStr = tag(held, ItemTags.RARITY);
-        Rarity r = Rarity.valueOf(rarityStr);
-        int def = intTag(held, ItemTags.DEFENSE);
-        int shards = Math.max(1, (r.ordinal() + 1) * 2 + def / 10);
+        if (com.lieyabull.dung.items.GearFactory.isFavorite(held)) {
+            p.sendMessage("§8That armor is §bfavorited§8. Run §f/salvage favorite§8 to un-favorite it first.");
+            return true;
+        }
+        int shards = salvageValue(held);
         held.setAmount(held.getAmount() - 1);
-        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
-        prof.shards += shards;
-        plugin.meta().save();
-        p.sendMessage("§bSalvaged " + r.legacy + held.getItemMeta().getDisplayName() + "§b → §b+" + shards + " shards§7 (total §b" + prof.shards + "§7). Spend them with /upgrades.");
+        addShards(p, shards);
+        p.sendMessage("§bSalvaged " + rarityColor(held) + held.getItemMeta().getDisplayName()
+                + "§b → §b+" + shards + " shards§7 (total §b" + plugin.meta().profile(p.getUniqueId()).shards + "§7). Spend them with /upgrades.");
         return true;
+    }
+
+    /** Toggle the favorite flag on the held armor piece (works anywhere, protects from salvage). */
+    private boolean toggleFavorite(Player p) {
+        ItemStack held = p.getInventory().getItemInMainHand();
+        if (!"armor".equals(tag(held, ItemTags.KIND))) {
+            p.sendMessage("§cHold a Dung armor piece to favorite/un-favorite it.");
+            return true;
+        }
+        boolean now = com.lieyabull.dung.items.GearFactory.toggleFavorite(held);
+        p.sendMessage(now
+                ? "§bFavorited — §f/salvage§b and §f/salvage all§b will skip this piece."
+                : "§7Un-favorited — this piece can be salvaged again.");
+        return true;
+    }
+
+    /** Salvage every salvable armor piece in the main inventory OUTSIDE the hotbar, armor slots,
+     *  and offhand. Favorited pieces are always skipped. */
+    private boolean salvageAll(Player p) {
+        GameManager gm = plugin.game();
+        if (!gm.isRunning() || !gm.player().equals(p)) {
+            p.sendMessage("§cSalvage only works while inside a run. Start one with /dung start.");
+            return true;
+        }
+        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+        int pieces = 0, shards = 0;
+        for (int slot = 9; slot < inv.getSize(); slot++) { // 9..35 = non-hotbar main storage
+            org.bukkit.inventory.ItemStack s = inv.getItem(slot);
+            if (!isSalvableArmor(s)) continue;
+            pieces++;
+            shards += salvageValue(s);
+            inv.setItem(slot, null);
+        }
+        if (pieces == 0) {
+            p.sendMessage("§7Nothing to salvage — no Dung armor in your bag that isn't favorited, hotbar, or equipped.");
+            return true;
+        }
+        addShards(p, shards);
+        p.sendMessage("§bSalvaged §f" + pieces + "§b armor pieces §b→ §b+" + shards
+                + " shards§7 (total §b" + plugin.meta().profile(p.getUniqueId()).shards + "§7). Spend them with /upgrades.");
+        return true;
+    }
+
+    private static boolean isSalvableArmor(org.bukkit.inventory.ItemStack s) {
+        if (s == null || s.getType() == org.bukkit.Material.AIR) return false;
+        if (com.lieyabull.dung.items.GearFactory.isFavorite(s)) return false;
+        return "armor".equals(pdcString(s, ItemTags.KIND));
+    }
+
+    /** Shard value of one armor piece: rarity-scaled + defense. */
+    private static int salvageValue(org.bukkit.inventory.ItemStack s) {
+        String rs = pdcString(s, ItemTags.RARITY);
+        Rarity r = rs == null ? Rarity.COMMON : Rarity.valueOf(rs);
+        int def = pdcInt(s, ItemTags.DEFENSE);
+        return Math.max(1, (r.ordinal() + 1) * 2 + def / 10);
+    }
+
+    private static String pdcString(org.bukkit.inventory.ItemStack s, String key) {
+        if (s == null || s.getItemMeta() == null) return null;
+        return s.getItemMeta().getPersistentDataContainer().get(
+                org.bukkit.NamespacedKey.minecraft(key), org.bukkit.persistence.PersistentDataType.STRING);
+    }
+
+    private static int pdcInt(org.bukkit.inventory.ItemStack s, String key) {
+        if (s == null || s.getItemMeta() == null) return 0;
+        Integer v = s.getItemMeta().getPersistentDataContainer().get(
+                org.bukkit.NamespacedKey.minecraft(key), org.bukkit.persistence.PersistentDataType.INTEGER);
+        return v == null ? 0 : v;
+    }
+
+    private void addShards(Player p, int amount) {
+        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+        prof.shards += amount;
+        plugin.meta().save();
+    }
+
+    private String rarityColor(org.bukkit.inventory.ItemStack s) {
+        String rs = pdcString(s, ItemTags.RARITY);
+        if (rs == null) return "";
+        try {
+            return Rarity.valueOf(rs).legacy;
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
     }
 
     // ---------- existing: stats / class / give ----------
@@ -259,13 +351,6 @@ public final class DungCommand implements CommandExecutor {
         var pdc = s.getItemMeta().getPersistentDataContainer();
         String v = pdc.get(org.bukkit.NamespacedKey.minecraft(key), org.bukkit.persistence.PersistentDataType.STRING);
         return v;
-    }
-
-    private int intTag(ItemStack s, String key) {
-        if (s == null || s.getType() == org.bukkit.Material.AIR || s.getItemMeta() == null) return 0;
-        var pdc = s.getItemMeta().getPersistentDataContainer();
-        Integer v = pdc.get(org.bukkit.NamespacedKey.minecraft(key), org.bukkit.persistence.PersistentDataType.INTEGER);
-        return v == null ? 0 : v;
     }
 
     private String capital(String s) {

@@ -102,6 +102,8 @@ fixed `BASE_Y = 80` in the resolved non-End world.
 | `/upgrades` | all | Between-run menu: spend shards on permanent stat upgrades. |
 | `/upgrades buy <id>` | all | Purchase a level of an upgrade track. |
 | `/salvage` | all | Break the held Dung armor piece into permanent shards (in a run). |
+| `/salvage all` | all | Salvage every Dung armor piece in your bag outside the hotbar, equipped slots, and offhand — favorites are skipped. |
+| `/salvage favorite` | all | Toggle the favorite flag on the held armor piece (favorited gear can never be salvaged). |
 | `/dung stats` | all | Prints the profile: class, coins, shards, deaths, best floor, kills, clears. |
 | `/dung class <w\|m\|r>` | all | Sets the class for the next run; persists immediately. |
 | `/dung give <t>` | `dung.admin` | Debug: `rareweapon`, `heal`, `coins`. |
@@ -115,8 +117,10 @@ run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
 
 - **Persistent coins** — earned by beating bosses (banked each floor), survive death, and are
   spent in `/shop` on gear that persists between runs.
-- **Shards** — earned in a run by breaking held armor with `/salvage` (value scales with rarity
-  and defense). Spent in `/upgrades` on permanent stat upgrades: **Permanent Damage** (+2/lv),
+- **Shards** — earned in a run by breaking armor with `/salvage` (held piece) or `/salvage all`
+  (every armor piece in the bag outside hotbar/equipment). Value scales with rarity and defense.
+  Favorited pieces (`/salvage favorite`) are always skipped by salvage. Spent in `/upgrades` on
+  permanent stat upgrades: **Permanent Damage** (+2/lv),
   **Max Hearts** (+10/lv), **Defense** (+1/lv), **Crit Chance** (+1%/lv), **Move Speed**
   (+5%/lv), **Max Mana** (+10/lv). Each has a rising cost and a level cap.
 
@@ -215,6 +219,7 @@ typos into compile errors instead of silent save incompatibility. All tags live 
 |---|---|---|
 | `dung.gear` | string | `"true"` — marks an item as Dung gear |
 | `dung.persistent` | string | `"true"` — bought with persistent currency; survives death |
+| `dung.favorite` | string | `"true"` — protected from salvage |
 | `dung.kind` | string | `"weapon"` or `"armor"` |
 | `dung.base` | string | base id (e.g. `longsword`, `iron_2`) |
 | `dung.rarity` | string | `Rarity.name()` |

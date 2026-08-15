@@ -7,6 +7,7 @@ package com.lieyabull.dung.items;
 public final class ItemTags {
     public static final String GEAR = "dung.gear";
     public static final String PERSISTENT = "dung.persistent";
+    public static final String FAVORITE = "dung.favorite";
     public static final String KIND = "dung.kind";     // weapon|armor
     public static final String BASE = "dung.base";     // weapon/armor base id
     public static final String RARITY = "dung.rarity";

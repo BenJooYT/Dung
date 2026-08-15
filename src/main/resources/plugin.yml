@@ -18,8 +18,8 @@ commands:
     description: Spend shards on permanent stat upgrades
     usage: /upgrades [buy <id>]
   salvage:
-    description: Break held Dung armor into permanent shards (in a run)
-    usage: /salvage
+    description: Break held/favorited Dung armor into permanent shards (in a run)
+    usage: /salvage [all|favorite]
 permissions:
   dung.admin:
     description: Admin debug commands

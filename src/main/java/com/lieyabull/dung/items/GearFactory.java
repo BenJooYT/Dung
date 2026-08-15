@@ -69,6 +69,28 @@ public final class GearFactory {
         return s;
     }
 
+    /** True if the item is marked favorite (skipped by salvage). */
+    public static boolean isFavorite(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return false;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        return pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.FAVORITE),
+                org.bukkit.persistence.PersistentDataType.STRING);
+    }
+
+    /** Toggle the favorite flag; returns the new state (true = now favorited). */
+    public static boolean toggleFavorite(ItemStack s) {
+        final boolean[] state = {false};
+        s.editMeta(meta -> {
+            var pdc = meta.getPersistentDataContainer();
+            var key = org.bukkit.NamespacedKey.minecraft(ItemTags.FAVORITE);
+            boolean fav = pdc.has(key, org.bukkit.persistence.PersistentDataType.STRING);
+            if (fav) pdc.remove(key);
+            else pdc.set(key, org.bukkit.persistence.PersistentDataType.STRING, "true");
+            state[0] = !fav;
+        });
+        return state[0];
+    }
+
     /** First-run kit: a Frayed Blade + a full Cloth set, so a new player can fight immediately.
      *  Order: [0]=weapon, [1..4]=helmet, chestplate, leggings, boots. Run gear (not persistent). */
     public static ItemStack[] starter() {
