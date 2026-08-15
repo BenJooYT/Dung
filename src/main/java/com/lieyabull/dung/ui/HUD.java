@@ -64,7 +64,8 @@ public final class HUD {
 
     /** Action bar above the hotbar: red hearts + blue mana with current/max amounts (integer counts). */
     public void sendBar(Player p, PlayerState st) {
-        String hearts = "§c♥ " + (int) st.hearts + "§8/" + (int) st.maxHearts;
+        String pct = String.format("%.0f%%", st.maxHearts <= 0 ? 100 : st.hearts / st.maxHearts * 100);
+        String hearts = "§c♥ " + (int) st.hearts + "§8/" + (int) st.maxHearts + " §8(" + pct + ")";
         String mana = "§b✦ " + (int) st.mana + "§8/" + (int) st.maxMana;
         p.sendActionBar(LegacyComponentSerializer.legacySection().deserialize(hearts + "   " + mana));
     }

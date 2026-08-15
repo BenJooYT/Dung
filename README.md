@@ -107,8 +107,9 @@ fixed `BASE_Y = 80` in the resolved non-End world.
 | `/dung give <t>` | `dung.admin` | Debug: `rareweapon`, `heal`, `coins`. |
 | `/dung help` | all | Shows clickable chat actions (`ChatUI.startPrompt`). |
 
-`/dung give rareweapon` spends 20 persistent coins (the in-run shop equivalent); `/dung give
-coins` drops 10 gold-nugget run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
+`/dung give` is a free admin debug surface: `rareweapon` now spawns a persistent weapon at no
+coin cost (real purchases go through `/shop weapon`); `/dung give coins` drops 10 gold-nugget
+run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
 
 ### Persistent economy
 
@@ -178,7 +179,7 @@ and an `id`. Elite variants use `id >= 100`.
 
 - `isElite()` — `id >= 100`.
 - `hpAt(floor)` — `baseHp * (1 + floor*0.5)`.
-- `damageAt(floor)` — `baseDamage * (1 + floor*0.15) * 10` (the ×10 matches the 100-HP pool).
+- `damageAt(floor)` — `baseDamage * (1 + floor*0.15) * 5` (the ×5 matches the 100-HP pool; was ×10).
 
 | Mob | AI kind | Behavior |
 |---|---|---|
@@ -197,11 +198,12 @@ and an `id`. Elite variants use `id >= 100`.
 - `tick(p, deltaMs)` — per-tick steering: knockback, post-attack freeze, charger dash
   (windup → lunge → cooldown), then homing movement toward the player. Incremental movement
   (small capped steps) so mobs can't teleport through walls. Attacks only when in range and off
-  cooldown, then freezes ~0.5s to give a dodge window.
+  cooldown, then freezes ~0.5s to give a dodge window. Knockback freezes ~0.4s and zeroes any
+  residual velocity before homing resumes, so the physics push doesn't snap into teleporting.
 - `damage(dmg, source, dx, dz)` — applies damage, knockback, updates the name bar, and triggers
   the death poof + sound when defeated.
 - `alive()`, `despawn()`, `playDeathAnimation()`, `deathSound()`, `faceTarget()`,
-  `isWalkable()`.
+  `isWalkable()` (walls include boss-room deepslate; floors stay walkable).
 
 ### `items` — gear, rarity & loot
 
@@ -212,6 +214,7 @@ typos into compile errors instead of silent save incompatibility. All tags live 
 | Key | Type | Meaning |
 |---|---|---|
 | `dung.gear` | string | `"true"` — marks an item as Dung gear |
+| `dung.persistent` | string | `"true"` — bought with persistent currency; survives death |
 | `dung.kind` | string | `"weapon"` or `"armor"` |
 | `dung.base` | string | base id (e.g. `longsword`, `iron_2`) |
 | `dung.rarity` | string | `Rarity.name()` |
@@ -274,7 +277,7 @@ combat stats (`damage`, `defense`, `reach`, `critChance`, `critMult`, `speedMult
   from meta at run start) on top of gear + class passives: damage, defense, crit, speed, and max
   mana; the hearts upgrade feeds into the max-heart reservoir.
 - `isInvuln()`, `hurt(dmg)` — invuln check; damage mitigated by defense
-  (`dmg * 100/(100+def)`, min 1), 1s i-frame after each hit, records `lastDamageTime` (gates
+  (`dmg * 100/(100+def)`, min 1), 500ms i-frame after each hit, records `lastDamageTime` (gates
   natural regen), sets `dead` at ≤0.
 - `heal(amount)` — clamp to max.
 - `regenMana()` — per-tick mana regen (rate/20).
@@ -288,12 +291,14 @@ combat stats (`damage`, `defense`, `reach`, `critChance`, `critMult`, `speedMult
 Lifecycle:
 - `startRun(p, seed)` — resets per-run state, resolves world, creates `Run` + `PlayerState`
   (loads the class + permanent upgrades, applies held gear immediately), sets up a fresh
-  scoreboard, then `enterFloor(0)`.
+  scoreboard, grants a starter kit to empty-handed players, fires a one-time tutorial for new
+  profiles, then `enterFloor(0)`.
 - `enterFloor(i)` — randomizes spacing (22–28), generates + builds the floor, teleports the
   player to the START room.
-- `enterRoom(n)` — marks visited, applies a 2.5s spawn-grace invuln, spawns enemies for
-  un-cleared COMBAT/ELITE rooms (and locks doors), spawns room pickups, places the SHOP
-  emerald block, and checks the boss on BOSS rooms.
+- `enterRoom(n)` — marks visited, applies a spawn-grace invuln (2.5s on each floor's first room,
+  ~1s elsewhere), spawns enemies for un-cleared COMBAT/ELITE rooms (and locks doors, with
+  feedback), spawns room pickups, places the SHOP emerald block, and checks the boss on BOSS
+  rooms.
 - `onPlayerMoved(loc)` — room-crossing detection from movement (only when physically inside a
   real door opening), preventing door-snap.
 - `descend()` / `endRun(quit)` / `onDeath()` / `resetPlayerToSpawn()` — see the
@@ -302,22 +307,27 @@ Lifecycle:
 Combat:
 - `tick()` (per game tick): checks death, syncs stats from real gear, drains melee cooldown,
   applies speed, clears rooms when all enemies die (and counts kills), ticks the current room's
-  enemies + boss, regens mana/HP, syncs the real HP bar (`hearts/5` clamped to the vanilla
-  `20.0` cap), keeps food low to suppress vanilla hunger-regen, and throttles the action bar.
+  enemies + boss, regens mana/HP, syncs the real HP bar **proportionally** (`hearts/maxHearts ×
+  20` so full bar always means full pool), keeps food low to suppress vanilla hunger-regen, and
+  throttles the action bar.
 - `registerAttack()` — melee arc: damages enemies within `reach` (horizontal + vertical), with
   a wider arc on the boss.
 - `tryCastAbility(p, item)` / `dispatchAbility(id, st)` — casts the held weapon's stored ability
-  if mana + cooldown allow. Abilities (with `[cost, cdMs]`): **Rush** `[5,1000]` (dash + brief
-  invuln), **Slash** `[12,2500]`, **Cleave** `[15,3000]`, **Smash** `[18,3500]`, **Blade Storm**
-  `[25,4500]`, **Arcane Bolt** `[20,3500]`, **Ravage** `[40,8000]`. AOE abilities also hit the
-  boss in range so it is never ability-immune.
+  if mana + cooldown allow. The listener gates casting on the held item carrying `dung.ability`,
+  so vanilla sneak+RMB keeps working for non-weapons. Abilities (with `[cost, cdMs]`): **Rush**
+  `[5,1000]` (dash + brief invuln), **Slash** `[12,2500]`, **Cleave** `[15,3000]`, **Smash**
+  `[18,3500]`, **Blade Storm** `[25,4500]`, **Arcane Bolt** `[20,3500]`, **Ravage** `[40,8000]`.
+  AOE abilities also hit the boss in range so it is never ability-immune.
 - `openShop()` — in-room shop (8 run coins) that drops random gear; one purchase per room.
 
 Rooms/rewards:
-- `onRoomClear(n, k)` — clears the room, opens doors, awards coins (`2 + floorIndex`) + gear.
+- `onRoomClear(n, k)` — clears the room, opens doors (with unlock feedback), awards coins
+  (`2 + floorIndex`) + gear.
 - `onRoomEnterBossCheck()` / `onBossDefeated()` — spawn/despawn the Warden, open doors, drop
   guaranteed rare+ loot, and **bank coins** into the persistent wallet (delta since last bank,
   capped at 40) + increment `clears`/`bestFloor`.
+- `stripRunGear(p)` — removes run loot (Dung gear without `dung.persistent` + coin nuggets)
+  from storage/armor/offhand; permanent purchases survive. Runs on death and quit.
 
 Utilities:
 - `playerHurt(p, dmg)` (static) — applies `PlayerState.hurt` + a red-hurt animation/sound
@@ -400,7 +410,7 @@ damage +2/lv, max hearts +10/lv, defense +1/lv, crit +1%/lv, move speed +5%/lv, 
 
 **`HUD`** — sidebar scoreboard with combat stats, run consumables, current room, boss status,
 class, and the longest running ability cooldown. `sendBar` paints the action bar:
-`♥ <hearts>/<maxHearts>   ✦ <mana>/<maxMana>` (integer counts).
+`♥ <hearts>/<maxHearts> (<pct>)   ✦ <mana>/<maxMana>` (integer counts + percent).
 
 **`TabUI`** — tab menu (player-list slot) with layered detail: header (floor + class), combat
 stats, mana/speed/fire-rate, equipment (mainhand + 4 armor slots), and dungeon exploration
@@ -413,9 +423,11 @@ status (rooms explored/cleared, boss state).
 
 ## Combat & stats model
 
-- **HP** — a 100-HP pool tracked in `PlayerState.hearts`; the vanilla heart bar is a projection
-  (`hearts/5`) clamped to the 20-HP cap, so a gear-boosted pool above 100 shows in the numeric
-  HUD rather than extra vanilla hearts.
+- **HP** — a 100-HP base pool tracked in `PlayerState.hearts`, raised by gear health affixes and
+  the hearts upgrade. The vanilla heart bar is a **proportional projection**
+  (`hearts/maxHearts × 20`), so a full bar always means full health regardless of pool size
+  (earlier builds mapped absolute hearts/5, which showed a full bar at 40% once the pool passed
+  100). The action bar adds an exact numeric + percent readout.
 - **Damage** — melee arc damages enemies within `reach` (horizontal) and 2 blocks (vertical).
 - **Defense** — reduces incoming damage: `dmg * 100/(100+defense)`, minimum 1.
 - **Critical hits** — `critChance` chance of `critMult` damage (rarity pushes both).
@@ -454,14 +466,22 @@ the vanilla death screen:
 
 **What's kept vs. lost:**
 - Kept: class, persistent coins, **shards**, purchased **upgrade levels**, clears, best floor,
-  kills, and any items bought with persistent coins (`/shop`, `/dung give rareweapon`) — these
-  are never destroyed.
-- Lost: run coins and run gear (left behind with the run). Run gear can be converted before a
-  death by breaking it with `/salvage` into permanent shards.
+  kills, and any items bought with persistent coins (stamped `dung.persistent` by `/shop` or
+  `give`) — these are never destroyed, and they survive `/dung leave` too.
+- Lost: run coins and run gear. On death or quit, `stripRunGear()` physically removes every
+  Dung item **without** `dung.persistent` plus the run's coin nuggets — so a death really
+  restarts you (and the message is true). Run gear can be converted before a death by breaking
+  it with `/salvage` into permanent shards.
 
 Persistent coins are **banked** on boss defeat from the delta earned that floor (capped at 40),
 so the same run coins aren't re-banked on every floor. Shards earned via `/salvage` are added
 immediately and spent in `/upgrades`.
+
+**Onboarding:**
+- Empty-handed players get a **starter kit** (Frayed Blade + cloth set) each new run — it's run
+  loot, so death-strip reclaims it and it never duplicates.
+- First-run profiles (`hasSeenTutorial`) get a one-time title + chat tutorial covering attack,
+  ability input (sneak + right-click), heart pickups, `/salvage`, and `/dung leave`.
 
 ---
 

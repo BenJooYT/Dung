@@ -38,7 +38,8 @@ public enum MobType {
     }
 
     public double damageAt(int floor) {
-        // x10 to match the 100HP player pool (was balanced around 10 HP)
-        return baseDamage * (1 + floor * 0.15) * 10;
+        // x5 to match the 100HP player pool (was x10); combined with 500ms i-frames this reads as
+        // chunky-but-fair hits instead of binary spikes.
+        return baseDamage * (1 + floor * 0.15) * 5;
     }
 }

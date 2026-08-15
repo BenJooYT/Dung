@@ -56,6 +56,7 @@ public final class MetaManager {
                 data.set(key + ".kills", prof.kills);
                 data.set(key + ".bestsFloor", prof.bestFloor);
                 data.set(key + ".shards", prof.shards);
+                data.set(key + ".tutorial", prof.hasSeenTutorial);
                 for (java.util.Map.Entry<String, Integer> u : prof.upgrades.entrySet()) {
                     data.set(key + ".upgrades." + u.getKey(), u.getValue());
                 }
@@ -87,6 +88,7 @@ public final class MetaManager {
             p.kills = data.getInt(key + ".kills", 0);
             p.bestFloor = data.getInt(key + ".bestsFloor", 0);
             p.shards = data.getInt(key + ".shards", 0);
+            p.hasSeenTutorial = data.getBoolean(key + ".tutorial", false);
             if (data.contains(key + ".upgrades")) {
                 for (String u : data.getConfigurationSection(key + ".upgrades").getKeys(false)) {
                     p.upgrades.put(u, data.getInt(key + ".upgrades." + u, 0));
@@ -105,6 +107,7 @@ public final class MetaManager {
         public int persistentCoins;
         public int shards;
         public final Map<String, Integer> upgrades = new LinkedHashMap<>();
+        public boolean hasSeenTutorial;
         public int deaths;
         public int clears;
         public String classId = "warrior";

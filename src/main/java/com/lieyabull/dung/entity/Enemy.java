@@ -78,6 +78,9 @@ public final class Enemy {
         if (attackCd > 0) attackCd--;
         if (knockTicks > 0) {      // while being knocked back, let physics carry them, no homing
             knockTicks--;
+            if (knockTicks == 0) { // zero residual velocity so the push doesn't snap back into teleports
+                if (entity instanceof org.bukkit.entity.LivingEntity le) le.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
+            }
             return;
         }
         if (movePause > 0) {
@@ -155,15 +158,19 @@ public final class Enemy {
             }
         }
         if (attacked) {
-            attackCd = 24 + type.id % 8;   // ~1.2s between hits
+            attackCd = 20 + type.id % 6;   // ~1.0-1.3s between hits (slightly faster cadence)
             movePause = 10;                // freeze ~0.5s so the player can sidestep
         }
     }
 
-    private boolean isWalkable(Location l) {
+private boolean isWalkable(Location l) {
         Material m = l.getWorld().getBlockAt(l).getType();
         Material up = l.getWorld().getBlockAt(l.clone().add(0, 1, 0)).getType();
-        return m != Material.STONE_BRICKS && up != Material.STONE_BRICKS && m != Material.BEDROCK;
+        // walls include boss-arena deepslate (RoomGen), not just the standard stone bricks.
+        // NOTE: floor/corridor materials (POLISHED_ANDESITE etc.) must stay walkable.
+        return m != Material.STONE_BRICKS && up != Material.STONE_BRICKS
+                && m != Material.DEEPSLATE_BRICKS && up != Material.DEEPSLATE_BRICKS
+                && m != Material.BEDROCK;
     }
 
     private void faceTarget(Player p) {
@@ -185,8 +192,8 @@ public final class Enemy {
         hp -= dmg;
         if (knockDirX != 0 || knockDirZ != 0) {
             entity.setVelocity(entity.getVelocity().add(new org.bukkit.util.Vector(
-                    knockDirX * knockback * 0.3, 0.3, knockDirZ * knockback * 0.3)));
-            knockTicks = 4; // ~0.2s of knockback before they resume homing
+                    knockDirX * knockback * 0.2, 0.25, knockDirZ * knockback * 0.2)));
+            knockTicks = 8; // ~0.4s of knockback before they resume homing (softer, unified window)
         }
         if (hp <= 0) {
             dead = true;

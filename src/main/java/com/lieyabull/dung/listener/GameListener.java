@@ -5,6 +5,7 @@ import com.lieyabull.dung.game.GameManager;
 import com.lieyabull.dung.game.PlayerState;
 import com.lieyabull.dung.game.Run;
 import com.lieyabull.dung.pickup.Pickup;
+import com.lieyabull.dung.items.ItemTags;
 import com.lieyabull.dung.ui.ChatUI;
 import com.lieyabull.dung.dungeon.Floor;
 import com.lieyabull.dung.dungeon.RoomGen;
@@ -26,6 +27,7 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.ItemStack;
 
 /** Wires Paper events to the game. Only the active run's player is affected. */
 public final class GameListener implements Listener {
@@ -168,11 +170,18 @@ public final class GameListener implements Listener {
                 && (e.getItem().getType().isBlock() || e.getItem().getType() == Material.TNT)) {
             // allow? bombs are consumables used via sneak; block block-placing
         }
-        // ability: sneak + right-click with a weapon in main hand casts its stored ability
-        if ((e.getAction() == Action.RIGHT_CLICK_AIR || e.getAction() == Action.RIGHT_CLICK_BLOCK)
+        // ability: sneak + right-click casts the held weapon's stored ability. Gated on the held
+        // item carrying a dung.ability tag so vanilla sneak+RMB (place block, eat, offhand) keeps
+        // working for everything else — and non-weapon sneaky clicks never spam "no ability".
+        ItemStack held = p.getInventory().getItemInMainHand();
+        boolean hasAbility = held != null && !held.getType().isAir() && held.getItemMeta() != null
+                && held.getItemMeta().getPersistentDataContainer()
+                        .has(org.bukkit.NamespacedKey.minecraft(ItemTags.ABILITY),
+                             org.bukkit.persistence.PersistentDataType.STRING);
+        if (hasAbility && (e.getAction() == Action.RIGHT_CLICK_AIR || e.getAction() == Action.RIGHT_CLICK_BLOCK)
                 && p.isSneaking()) {
             e.setCancelled(true);
-            plugin.game().tryCastAbility(p, p.getInventory().getItemInMainHand());
+            plugin.game().tryCastAbility(p, held);
         }
         if (e.getItem() != null) {
             String en = e.getItem().getType().name();

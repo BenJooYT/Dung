@@ -169,7 +169,7 @@ public final class PlayerState {
         if (isInvuln() || dead) return;
         double mitigated = Math.max(1.0, dmg * (100.0 / (100.0 + defense)));
         hearts -= mitigated;
-        invulnUntil = System.currentTimeMillis() + 1000;
+        invulnUntil = System.currentTimeMillis() + 500; // short i-frame: dodges stunlock, keeps the pressure on
         lastDamageTime = System.currentTimeMillis();
         if (hearts <= 0) dead = true;
     }

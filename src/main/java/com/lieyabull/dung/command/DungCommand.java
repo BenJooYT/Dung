@@ -2,6 +2,7 @@ package com.lieyabull.dung.command;
 
 import com.lieyabull.dung.Dung;
 import com.lieyabull.dung.game.GameManager;
+import com.lieyabull.dung.items.GearFactory;
 import com.lieyabull.dung.items.ItemPool;
 import com.lieyabull.dung.items.ItemTags;
 import com.lieyabull.dung.items.Rarity;
@@ -114,7 +115,8 @@ public final class DungCommand implements CommandExecutor {
         }
         prof.persistentCoins -= cost;
         plugin.meta().save(); // persist the spend so a restart can't duplicate the item
-        ItemStack item = weapon ? ItemPool.randomWeapon(2) : ItemPool.randomArmor(2, (int) (Math.random() * 4));
+        ItemStack item = (weapon ? ItemPool.randomWeapon(2) : ItemPool.randomArmor(2, (int) (Math.random() * 4)));
+        GearFactory.markPersistent(item); // bought with persistent coins -> survives death
         p.getInventory().addItem(item);
         p.sendMessage("§aPurchased! " + item.getItemMeta().getDisplayName() + " §7(-§6" + cost + " coins§7)");
         return true;
@@ -235,12 +237,9 @@ public final class DungCommand implements CommandExecutor {
         if (args.length < 2) { p.sendMessage("§7Usage: /dung give <rareweapon|heal|coins>"); return; }
         switch (args[1].toLowerCase()) {
             case "rareweapon":
-                MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
-                if (prof.persistentCoins < 20) { p.sendMessage("§cNot enough coins."); return; }
-                prof.persistentCoins -= 20;
-                plugin.meta().save(); // persist the spend so a restart can't duplicate the item
-                p.getInventory().addItem(ItemPool.randomWeapon(2));
-                p.sendMessage("§aPurchased! (Rarity up-weighted)");
+                // free debug spawn (no coin cost): real purchases go through /shop
+                p.getInventory().addItem(GearFactory.markPersistent(ItemPool.randomWeapon(2)));
+                p.sendMessage("§aDebug: spawned a weapon (persists through death).");
                 break;
             case "heal":
                 p.setHealth(20);

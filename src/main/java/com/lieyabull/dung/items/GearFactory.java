@@ -59,6 +59,28 @@ public final class GearFactory {
         return s;
     }
 
+    /** Flag gear bought with persistent currency: it survives death (run gear is stripped). */
+    public static ItemStack markPersistent(ItemStack s) {
+        s.editMeta(meta -> {
+            meta.getPersistentDataContainer().set(
+                    org.bukkit.NamespacedKey.minecraft(ItemTags.PERSISTENT),
+                    org.bukkit.persistence.PersistentDataType.STRING, "true");
+        });
+        return s;
+    }
+
+    /** First-run kit: a Frayed Blade + a full Cloth set, so a new player can fight immediately.
+     *  Order: [0]=weapon, [1..4]=helmet, chestplate, leggings, boots. Run gear (not persistent). */
+    public static ItemStack[] starter() {
+        return new ItemStack[]{
+                weapon("frayed_blade", "Frayed Blade", Material.IRON_SWORD, Rarity.COMMON, 5, 0, "Rush", 15),
+                armor("cloth_0", "Cloth", Material.LEATHER_HELMET, Rarity.COMMON, 1, 0),
+                armor("cloth_1", "Cloth", Material.LEATHER_CHESTPLATE, Rarity.COMMON, 1, 0),
+                armor("cloth_2", "Cloth", Material.LEATHER_LEGGINGS, Rarity.COMMON, 1, 0),
+                armor("cloth_3", "Cloth", Material.LEATHER_BOOTS, Rarity.COMMON, 1, 0),
+        };
+    }
+
     public static ItemStack armor(String id, String name, Material mat, Rarity r, int defense, int health) {
         ItemStack s = new ItemStack(mat);
         s.editMeta(meta -> {

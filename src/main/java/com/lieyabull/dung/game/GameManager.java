@@ -8,6 +8,7 @@ import com.lieyabull.dung.dungeon.RoomType;
 import com.lieyabull.dung.entity.Enemy;
 import com.lieyabull.dung.entity.MobType;
 import com.lieyabull.dung.items.ItemPool;
+import com.lieyabull.dung.items.ItemTags;
 import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.ui.HUD;
 import com.lieyabull.dung.ui.TabUI;
@@ -115,7 +116,56 @@ public final class GameManager {
         player.setHealth(20);
         player.setFoodLevel(20);
         running = true;
+        MetaManager.MetaProfile prof = plugin.meta().profile(player.getUniqueId());
+        grantStarterIfNeeded(player);
+        showTutorialIfNew(player, prof);
         enterFloor(0);
+    }
+
+    /** Give a first-run/empty-handed player a starter kit so the first minute is playable.
+     *  Skips anyone already carrying Dung gear (kept inventory, shop purchases, etc.) so the
+     *  kit never duplicates. Starter gear is run loot, so it is stripped on death automatically. */
+    private void grantStarterIfNeeded(Player p) {
+        if (hasDungGear(p)) return;
+        ItemStack[] kit = com.lieyabull.dung.items.GearFactory.starter();
+        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+        inv.addItem(kit[0]); // weapon
+        org.bukkit.inventory.EquipmentSlot[] slots = {
+                org.bukkit.inventory.EquipmentSlot.HEAD,
+                org.bukkit.inventory.EquipmentSlot.CHEST,
+                org.bukkit.inventory.EquipmentSlot.LEGS,
+                org.bukkit.inventory.EquipmentSlot.FEET
+        };
+        org.bukkit.inventory.ItemStack[] armor = inv.getArmorContents();
+        for (int i = 0; i < 4; i++) {
+            if (armor[i] == null || armor[i].getType().isAir()) inv.setItem(slots[i], kit[i + 1]);
+        }
+        p.sendMessage("§7You were given a starter kit: §fFrayed Blade§7 + cloth armor.");
+    }
+
+    private boolean hasDungGear(Player p) {
+        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+        for (org.bukkit.inventory.ItemStack s : inv.getContents()) if (isDungGear(s)) return true;
+        for (org.bukkit.inventory.ItemStack s : inv.getArmorContents()) if (isDungGear(s)) return true;
+        return isDungGear(inv.getItemInOffHand());
+    }
+
+    private static boolean isDungGear(ItemStack s) {
+        if (s == null || s.getType() == org.bukkit.Material.AIR || s.getItemMeta() == null) return false;
+        return s.getItemMeta().getPersistentDataContainer().has(
+                org.bukkit.NamespacedKey.minecraft(ItemTags.GEAR),
+                org.bukkit.persistence.PersistentDataType.STRING);
+    }
+
+    /** First-ever run: teach controls with a title + chat lines, then never again. */
+    private void showTutorialIfNew(Player p, MetaManager.MetaProfile prof) {
+        if (prof.hasSeenTutorial) return;
+        prof.hasSeenTutorial = true;
+        plugin.meta().save();
+        p.sendTitle("§cDUNGEON", "§7Clear every room. Find the Warden. Descend deeper.", 10, 70, 10);
+        p.sendMessage("§6Clear rooms to earn coins and gear. Find the boss room to go deeper.");
+        p.sendMessage("§7Attack: §fLeft-Click    §7Ability: §fSneak + Right-Click");
+        p.sendMessage("§7Heal: pick up §c♥§7 hearts. Salvage spare armor: §f/salvage§7. Exit: §f/dung leave");
     }
 
     public void enterFloor(int floorIndex) {
@@ -149,8 +199,9 @@ public final class GameManager {
         n.visited = true;
         run.floor.visited.add(n);
         roomLocked.put(run.floor.key(n.x, n.z), false);
-        // 2.5s grace period on entering a room so spawns never instantly clip you
-        run.playerState().invulnUntil = System.currentTimeMillis() + 2500;
+        // 2.5s grace on each floor's FIRST room so spawns never instantly clip you; ~1s elsewhere
+        run.playerState().invulnUntil = System.currentTimeMillis()
+                + (n == run.floor.start ? 2500 : 1000);
         // spawn enemies for combat rooms not yet cleared (secret rooms are reward alcoves)
         if (!n.cleared && (n.type == RoomType.COMBAT || n.type == RoomType.ELITE)) {
             spawnEnemies(n);
@@ -288,6 +339,11 @@ public final class GameManager {
         long k = run.floor.key(n.x, n.z);
         roomLocked.put(k, true);
         sealDoors(n, true);
+        // Feedback so the invisible barrier reads as "the room has locked", not a bug.
+        Location c = RoomGen.center(world, n, BASE_Y, spacing);
+        world.playSound(c, org.bukkit.Sound.BLOCK_IRON_DOOR_CLOSE, 1.0f, 0.9f);
+        world.spawnParticle(org.bukkit.Particle.CRIT, c.clone().add(0, 1.5, 0), 24, 8, 1.5, 8);
+        player.sendActionBar("§cRoom locked — defeat all enemies!");
     }
 
     /** Seal (true) or open (false) every outward door of a room with a barrier wall. The barrier
@@ -414,9 +470,10 @@ public final class GameManager {
 // Sync real HP into the vanilla heart bar so it reflects PlayerState (the single source
         // of truth): 100 hearts -> the full 20-point bar, so bar = hearts/5. Keep food high with
         // no saturation so Minecraft's natural hunger-regen never fights our value.
-        // Sync real HP. The vanilla bar maxes at 20.0 HP, so clamp to that even when gear grants
-        // more max hearts (the extra pool is tracked in the numeric HUD, not extra vanilla hearts).
-        final double real = Math.min(20.0, Math.max(0.5, st.hearts / 5.0));
+        // Sync real HP. The vanilla bar maxes at 20.0 HP; map it PROPORTIONALLY to the pool so
+        // a full bar always means full health no matter the maxHearts (gear health affix / hearts
+        // upgrade push the pool past 100, where the old absolute mapping showed a full bar at 40%).
+        final double real = Math.min(20.0, Math.max(0.1, st.hearts / st.maxHearts * 20.0));
         if (Math.abs(player.getHealth() - real) > 1.0E-4) player.setHealth(real);
         player.setSaturation(0);
         player.setFoodLevel(10);
@@ -650,6 +707,10 @@ public final class GameManager {
 
     private void openDoors(Floor.RoomNode n) {
         sealDoors(n, false);
+        Location c = RoomGen.center(world, n, BASE_Y, spacing);
+        world.playSound(c, org.bukkit.Sound.BLOCK_IRON_DOOR_OPEN, 1.0f, 1.2f);
+        world.spawnParticle(org.bukkit.Particle.CRIT, c.clone().add(0, 1.5, 0), 12, 8, 1.5, 8);
+        player.sendActionBar("§aDoors opened!");
     }
 
     // ---------- boss ----------
@@ -723,6 +784,7 @@ public final class GameManager {
     public void onDeath() {
         if (!running) return;
         running = false;
+        stripRunGear(player); // run gear + coins lost for real; permanent shop gear survives
         int floorReached = run.floorIndex + 1;
         int kills = run.kills;
         int runCoins = run.playerState() != null ? run.playerState().coins : 0;
@@ -745,11 +807,11 @@ public final class GameManager {
         player.sendMessage("§7  Persistent coins: §6" + prof.persistentCoins);
         player.sendMessage("§7  Progress: §f" + prof.clears + "§7 floors cleared, best §f" + prof.bestFloor + "§7, §f" + prof.kills + "§7 kills");
         if (prof.persistentCoins >= 20) {
-            player.sendMessage("§a  You have enough for: §f/dung give rareweapon");
+            player.sendMessage("§a  You have enough for: §f/shop weapon");
         } else {
-            player.sendMessage("§8  Need §6" + (20 - prof.persistentCoins) + "§8 more coins for a RARE weapon (/dung give rareweapon)");
+            player.sendMessage("§8  Need §6" + (20 - prof.persistentCoins) + "§8 more coins for a weapon (/shop weapon)");
         }
-        player.sendMessage("§7  Try /dung shop, /dung class, /dung start to go again.");
+        player.sendMessage("§7  Try /shop, /upgrades, or /dung start to go again.");
         hud.reset(player, board);
         tab.reset(board);
         clearRoomEntities();
@@ -767,16 +829,53 @@ public final class GameManager {
         player.teleport(world.getSpawnLocation());
     }
 
+    /** Strip run-earned gear (dung.gear WITHOUT dung.persistent) + run coin nuggets from the
+     *  inventory so a death really is a reset. Permanent shop-bought gear survives.
+     *  Idempotent and CME-safe: reads each slot, writes only that slot. */
+    private static void stripRunGear(Player p) {
+        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+        for (int slot = 0; slot < inv.getSize(); slot++) {
+            org.bukkit.inventory.ItemStack s = inv.getItem(slot);
+            if (s != null && isRunOnly(s)) inv.setItem(slot, null);
+        }
+        org.bukkit.inventory.ItemStack off = inv.getItemInOffHand();
+        if (off != null && isRunOnly(off)) inv.setItemInOffHand(null);
+        // armor contents order: boots, leggings, chestplate, helmet (indices 0..3)
+        org.bukkit.inventory.EquipmentSlot[] slots = {
+                org.bukkit.inventory.EquipmentSlot.FEET,
+                org.bukkit.inventory.EquipmentSlot.LEGS,
+                org.bukkit.inventory.EquipmentSlot.CHEST,
+                org.bukkit.inventory.EquipmentSlot.HEAD
+        };
+        org.bukkit.inventory.ItemStack[] armor = inv.getArmorContents();
+        for (int i = 0; i < armor.length; i++) {
+            if (armor[i] != null && isRunOnly(armor[i])) inv.setItem(slots[i], null);
+        }
+    }
+
+    /** True if an item is run-only loot: the run's gold coin nuggets, or Dung gear that was not
+     *  bought with persistent currency. Vanilla items (tools, food, blocks) always survive. */
+    private static boolean isRunOnly(ItemStack s) {
+        if (s == null || s.getType() == org.bukkit.Material.AIR) return false;
+        if (s.getType() == org.bukkit.Material.GOLD_NUGGET) return true;
+        if (s.getItemMeta() == null) return false;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        boolean isGear = pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.GEAR),
+                org.bukkit.persistence.PersistentDataType.STRING);
+        boolean persistent = pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.PERSISTENT),
+                org.bukkit.persistence.PersistentDataType.STRING);
+        return isGear && !persistent;
+    }
+
     public void endRun(boolean playerQuit) {
         running = false;
         if (player != null && player.isOnline()) {
             hud.reset(player, board);
             tab.reset(board);
-            // Only clear the inventory when the run ENDS by the player quitting intentionally
-            // (or /dung leave). On death we keep the inventory so items bought with permanent
-            // coins (/dung give rareweapon) are never destroyed; run gear/coins are lost to the
-            // run itself rather than wiped out of the persistent inventory.
-            if (playerQuit) player.getInventory().clear();
+            // On run END (quit or /dung leave) strip only run loot — permanent gear bought with
+            // persistent coins survives, so a leave never destroys a purchase. On death the same
+            // strip already ran in onDeath().
+            stripRunGear(player);
         }
         clearRoomEntities();
         if (boss != null) { boss.despawn(); boss = null; }
