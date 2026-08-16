@@ -11,9 +11,11 @@ import com.lieyabull.dung.ui.ChatUI;
 import com.lieyabull.dung.dungeon.Floor;
 import com.lieyabull.dung.dungeon.RoomGen;
 import org.bukkit.GameMode;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
+import org.bukkit.entity.ItemFrame;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -24,6 +26,7 @@ import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason;
 import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
@@ -211,10 +214,38 @@ public final class GameListener implements Listener {
                 di.recomputeStats();
             }
         }
+        // pedestal: right-click a pedestal slab to claim the item
+        if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getClickedBlock() != null
+                && e.getClickedBlock().getType() == Material.POLISHED_BLACKSTONE_SLAB) {
+            if (di.claimPedestal(p, e.getClickedBlock().getLocation())) {
+                e.setCancelled(true);
+                return;
+            }
+        }
         // shop: right-click the shop block in a SHOP room
         if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getClickedBlock() != null
                 && e.getClickedBlock().getType() == Material.EMERALD_BLOCK) {
             di.openShop(p);
+        }
+        // bomb wall: right-click a destructible wall (CRACKED_STONE_BRICKS)
+        if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getClickedBlock() != null
+                && e.getClickedBlock().getType() == Material.CRACKED_STONE_BRICKS) {
+            di.tryBombWall(p, e.getClickedBlock().getLocation());
+        }
+    }
+
+    /** Right-click an item frame on a pedestal to claim the item. */
+    @EventHandler
+    public void onInteractEntity(PlayerInteractEntityEvent e) {
+        Player p = e.getPlayer();
+        DungeonInstance di = instanceOf(p);
+        if (di == null) return;
+        if (e.getRightClicked() instanceof ItemFrame frame) {
+            Location frameLoc = frame.getLocation();
+            Location slabLoc = new Location(frameLoc.getWorld(), frameLoc.getBlockX(), frameLoc.getBlockY() - 1, frameLoc.getBlockZ());
+            if (di.claimPedestal(p, slabLoc)) {
+                e.setCancelled(true);
+            }
         }
     }
 

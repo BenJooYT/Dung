@@ -40,7 +40,7 @@ tab = detailed build/run/progression).
 - [x] **Boss telegraphs:** dash + slam now wind up 12/14 ticks with particles before damaging.
 - [x] **Branching floors:** added fork/dead-end pass; floor-gen verified 500/500 floors connected,
       boss reachable, treasure/shop/elite guaranteed (offline JVM harness).
-- [x] **In-room shop:** emerald block spends run coins on gear (per-floor cap).
+- [x] **In-room shop:** chest GUI with weapons, armor, consumables (hearts, mana, keys, bombs), and floor buffs.
 
 ### Iteration 3 — build depth + multi-phase boss + secrets
 - [x] **Build depth:** rarity now adds crit chance and crit damage (weapon + armor); gear/class
@@ -88,6 +88,30 @@ tab = detailed build/run/progression).
 - [x] **Death handling:** A player dying in a party removes them from the instance.
       If the party becomes empty, the instance ends.
 
+### Iteration 6 — hidden secrets, locked rooms, pedestals & gear durability
+- [x] **Bomb-through-wall secrets:** SECRET rooms are now fully disconnected from the door graph —
+      a `secretParent` combat room gains a visible `CRACKED_STONE_BRICKS` destructible wall; a
+      player right-clicks it (using 1 bomb) to blow a 3-wide hole and reveal the hidden loot.
+      Floor-gen re-verified with the headless harness (simulated player clears every non-secret
+      room; secrets excluded from door reachability + each wired to a parent).
+- [x] **Locked rooms:** `LOCKED` rooms sit on dead-ends with an `IRON_BLOCK` door barrier; entering
+      consumes 1 key from `PlayerState`, unlocks + clears the room, and spawns pedestal loot.
+- [x] **Real pedestal presentation:** treasure/locked/room-clear loot now spawns on a
+      `POLISHED_BLACKSTONE_SLAB` pedestal with an invulnerable, invisible item frame — claim by
+      right-click (no more loose item drops). Pedestals are torn down with the run.
+- [x] **Persistent gear durability:** on death, every `dung.persistent` item takes 10% max
+      durability damage (min 1); a piece that breaks is removed from the inventory. Gives death a
+      real persistent cost beyond losing the run.
+- [x] **Tab refresh throttled:** `TabUI.refresh` now runs every 10 ticks (only the HUD action bar
+      keeps a per-tick cadence) — cuts per-tick component work.
+- [x] **Keys/bombs finally have sinks:** keys unlock `LOCKED` rooms; bombs blow through secret walls
+      (both purchasable in the shop GUI).
+- [x] **Room variety:** 3 new room shapes (L-shaped, pillar, split) with per-type visual themes
+      (nether for ELITE, quartz for TREASURE, wood for SHOP, mossy for SECRET).
+- [x] **Melee reach aligned:** reach is now 3.0 (matching MC swing range) — was 2.2.
+- [x] **Unit tests added:** `PlayerStateTest`, `PartyManagerTest`, `ItemPoolTest`, `UpgradesTest` —
+      129 total tests, all passing.
+
 ### Remaining candidate work
 - [x] **Log flood / "stall" root cause:** `TabUI.team` passed legacy `§`-coded strings to Adventure's
       `Component.text()`, which throws `LegacyFormattingDetected` + a 60-line stacktrace for every
@@ -96,16 +120,16 @@ tab = detailed build/run/progression).
       log, plus colors were never applied. Fixed via `LegacyComponentSerializer.legacySection()`.
 - [x] **Restart hygiene:** `fireCd`/`tick`/`curRoom` reset in `startRun`; sealed barriers from a
       prior run are stripped on teardown so a new run (reused fixed grid coords) can't be
-      ghost-softlocked. Notes: old-floor wall/floor blocks left stale (cosmetic overlap only);
-      rooms small for the multi-phase boss; melee reach probe (2.2) narrower than MC swing (~3.0);
-      `tab.refresh` every tick is wasteful (only HUD needs per-tick cadence).
-- [ ] Truly wall-hidden secrets (bomb-through-wall) vs connected room marked secret.
+      ghost-softlocked. Notes: rooms small for the multi-phase boss.
+- [x] **Truly wall-hidden secrets** (bomb-through-wall) vs connected room marked secret — done in Iteration 6.
+- [x] **Real pedestal presentation** for treasure/shop loot — done in Iteration 6.
 - [x] **Chest GUI shop:** In-run shop rooms and the between-run `/shop` command now open a chest GUI with multiple items (weapons, armor, hearts, mana potions, keys, bombs, floor buffs). `/upgrades` also opens a GUI with a back button to the main shop.
 - [x] **Class-specific active abilities:** Warrior (War Cry — party damage boost + invuln), Mage (Arcane Nova — AoE 2x damage), Ranger (Shadow Step — teleport behind enemy + guaranteed crit). Triggered by sneak+drop (Q).
+- [ ] Class-specific passives/active balance beyond the three defaults.
 
 ## Build / run
 ```
 gradlew build            # compiles + jars
 gradlew runServer        # boots a Paper 1.21.11 server with the plugin
 ```
-Commands: `/dung start|descend|leave|shop|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop [weapon|armor]` `/upgrades [buy <id>]` `/salvage [all|favorite]`
+Commands: `/dung start|descend|leave|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop` (opens GUI) `/upgrades` (opens GUI) `/salvage [all|favorite]`

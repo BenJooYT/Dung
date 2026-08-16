@@ -52,6 +52,7 @@ public final class ShopUI implements Listener {
     // Persistent shop prices (persistent coins)
     private static final int PERSISTENT_WEAPON_COST = 20;
     private static final int PERSISTENT_ARMOR_COST = 15;
+    private static final int REPAIR_COST_PER_10 = 5; // 5 coins per 10 durability restored
 
     // GUI identifiers stored in inventory ItemMeta
     private static final String GUI_KEY = "dung_gui";
@@ -146,6 +147,15 @@ public final class ShopUI implements Listener {
         inv.setItem(1, makeShopItem(Material.DIAMOND_CHESTPLATE, "§fRandom Armor",
                 List.of("§7Buy a random armor piece", "§7(persists through death)", "", "§6" + PERSISTENT_ARMOR_COST + " coins"),
                 GUI_PERSISTENT_SHOP, "armor"));
+
+        // Slot 2: Repair Item (repair first damaged persistent item in inventory)
+        inv.setItem(2, makeShopItem(Material.ANVIL, "§aRepair Item",
+                List.of("§7Repair a damaged persistent item", "§7Cost: §6" + REPAIR_COST_PER_10 + " coins§7 per 10 durability"),
+                GUI_PERSISTENT_SHOP, "repair"));
+        // Slot 3: Repair All
+        inv.setItem(3, makeShopItem(Material.DIAMOND, "§bRepair All",
+                List.of("§7Repair all damaged persistent gear", "§7Cost: §6" + REPAIR_COST_PER_10 + " coins§7 per 10 durability each"),
+                GUI_PERSISTENT_SHOP, "repair_all"));
 
         // Slot 4: Upgrades (opens upgrades GUI)
         inv.setItem(4, makeShopItem(Material.NETHER_STAR, "§bPermanent Upgrades",
@@ -311,6 +321,7 @@ public final class ShopUI implements Listener {
                 prof.persistentCoins -= PERSISTENT_WEAPON_COST;
                 plugin.meta().save();
                 ItemStack s = GearFactory.markPersistent(ItemPool.randomWeapon(2));
+                GearFactory.initDurability(s);
                 p.getInventory().addItem(s);
                 p.sendMessage("§aPurchased weapon! §7(-§6" + PERSISTENT_WEAPON_COST + " coins§7)");
                 openPersistentShop(p); // refresh
@@ -323,8 +334,120 @@ public final class ShopUI implements Listener {
                 prof.persistentCoins -= PERSISTENT_ARMOR_COST;
                 plugin.meta().save();
                 ItemStack s = GearFactory.markPersistent(ItemPool.randomArmor(2, ThreadLocalRandom.current().nextInt(4)));
+                GearFactory.initDurability(s);
                 p.getInventory().addItem(s);
                 p.sendMessage("§aPurchased armor! §7(-§6" + PERSISTENT_ARMOR_COST + " coins§7)");
+                openPersistentShop(p); // refresh
+            }
+            case "repair" -> {
+                // Find the first damaged persistent item in the player's inventory
+                ItemStack target = null;
+                int targetSlot = -1;
+                for (int slot = 0; slot < p.getInventory().getSize(); slot++) {
+                    ItemStack s = p.getInventory().getItem(slot);
+                    if (s == null || s.getType() == Material.AIR) continue;
+                    int dur = GearFactory.getDurability(s);
+                    int max = GearFactory.getMaxDurability(s);
+                    if (dur >= 0 && max > 0 && dur < max) {
+                        target = s;
+                        targetSlot = slot;
+                        break;
+                    }
+                }
+                // Also check armor
+                if (target == null) {
+                    org.bukkit.inventory.EquipmentSlot[] armorSlots = {
+                            org.bukkit.inventory.EquipmentSlot.HEAD,
+                            org.bukkit.inventory.EquipmentSlot.CHEST,
+                            org.bukkit.inventory.EquipmentSlot.LEGS,
+                            org.bukkit.inventory.EquipmentSlot.FEET
+                    };
+                    for (org.bukkit.inventory.EquipmentSlot slot : armorSlots) {
+                        ItemStack s = p.getInventory().getItem(slot);
+                        if (s == null || s.getType() == Material.AIR) continue;
+                        int dur = GearFactory.getDurability(s);
+                        int max = GearFactory.getMaxDurability(s);
+                        if (dur >= 0 && max > 0 && dur < max) {
+                            target = s;
+                            break;
+                        }
+                    }
+                }
+                if (target == null) {
+                    p.sendMessage("§cYou have no damaged persistent gear to repair.");
+                    return;
+                }
+                int dur = GearFactory.getDurability(target);
+                int max = GearFactory.getMaxDurability(target);
+                int missing = max - dur;
+                int repairAmt = Math.min(missing, 10);
+                int cost = (repairAmt / 10) * REPAIR_COST_PER_10;
+                if (repairAmt % 10 != 0) cost += REPAIR_COST_PER_10; // round up
+                if (prof.persistentCoins < cost) {
+                    p.sendMessage("§cYou need " + cost + " coins to repair this item.");
+                    return;
+                }
+                prof.persistentCoins -= cost;
+                GearFactory.repairItem(target, repairAmt);
+                plugin.meta().save();
+                p.sendMessage("§aRepaired item! §7(-§6" + cost + " coins§7)");
+                openPersistentShop(p); // refresh
+            }
+            case "repair_all" -> {
+                int totalCost = 0;
+                java.util.List<ItemStack> toRepair = new java.util.ArrayList<>();
+                // Collect all persistent items with missing durability
+                for (int slot = 0; slot < p.getInventory().getSize(); slot++) {
+                    ItemStack s = p.getInventory().getItem(slot);
+                    if (s == null || s.getType() == Material.AIR) continue;
+                    int d = GearFactory.getDurability(s);
+                    int m = GearFactory.getMaxDurability(s);
+                    if (d >= 0 && m > 0 && d < m) {
+                        toRepair.add(s);
+                    }
+                }
+                org.bukkit.inventory.EquipmentSlot[] armorSlots = {
+                        org.bukkit.inventory.EquipmentSlot.HEAD,
+                        org.bukkit.inventory.EquipmentSlot.CHEST,
+                        org.bukkit.inventory.EquipmentSlot.LEGS,
+                        org.bukkit.inventory.EquipmentSlot.FEET
+                };
+                for (org.bukkit.inventory.EquipmentSlot slot : armorSlots) {
+                    ItemStack s = p.getInventory().getItem(slot);
+                    if (s == null || s.getType() == Material.AIR) continue;
+                    int d = GearFactory.getDurability(s);
+                    int m = GearFactory.getMaxDurability(s);
+                    if (d >= 0 && m > 0 && d < m) {
+                        toRepair.add(s);
+                    }
+                }
+                if (toRepair.isEmpty()) {
+                    p.sendMessage("§cYou have no damaged persistent gear to repair.");
+                    return;
+                }
+                for (ItemStack s : toRepair) {
+                    int d = GearFactory.getDurability(s);
+                    int m = GearFactory.getMaxDurability(s);
+                    int missing = m - d;
+                    int repairAmt = Math.min(missing, 10);
+                    int itemCost = (repairAmt / 10) * REPAIR_COST_PER_10;
+                    if (repairAmt % 10 != 0) itemCost += REPAIR_COST_PER_10;
+                    totalCost += itemCost;
+                }
+                if (prof.persistentCoins < totalCost) {
+                    p.sendMessage("§cYou need " + totalCost + " coins to repair all items.");
+                    return;
+                }
+                prof.persistentCoins -= totalCost;
+                for (ItemStack s : toRepair) {
+                    int d = GearFactory.getDurability(s);
+                    int m = GearFactory.getMaxDurability(s);
+                    int missing = m - d;
+                    int repairAmt = Math.min(missing, 10);
+                    GearFactory.repairItem(s, repairAmt);
+                }
+                plugin.meta().save();
+                p.sendMessage("§aRepaired " + toRepair.size() + " item(s)! §7(-§6" + totalCost + " coins§7)");
                 openPersistentShop(p); // refresh
             }
             case "upgrades" -> openUpgrades(p);

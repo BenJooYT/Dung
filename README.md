@@ -101,11 +101,9 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 |---|---|---|
 | `/dung start` | all | Begins a new run (errors if one is active). |
 | `/dung descend` | all | After beating the boss, generates and enters the next floor. |
-| `/dung leave` | all | Ends the current run (clears inventory). |
-| `/shop` | all | Between-run shop: spend persistent coins on persistent gear. |
-| `/shop weapon` · `/shop armor` | all | Buy a random weapon (20 coins) or armor piece (15 coins). |
-| `/upgrades` | all | Between-run menu: spend shards on permanent stat upgrades. |
-| `/upgrades buy <id>` | all | Purchase a level of an upgrade track. |
+| `/dung leave` | all | Ends the current run (strips run gear, keeps persistent items). |
+| `/shop` | all | Opens the between-run shop GUI: spend persistent coins on persistent gear. |
+| `/upgrades` | all | Opens the upgrades GUI: spend shards on permanent stat upgrades. |
 | `/salvage` | all | Break the held Dung armor piece into permanent shards (in a run). |
 | `/salvage all` | all | Salvage every Dung armor piece in your bag outside the hotbar, equipped slots, and offhand — favorites are skipped. |
 | `/salvage favorite` | all | Toggle the favorite flag on the held armor piece (favorited gear can never be salvaged). |
@@ -145,7 +143,8 @@ run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
 **`Dung`** (extends `JavaPlugin`) — plugin lifecycle & shared accessors.
 
 - `onEnable()` — saves default config, loads `MetaManager`, builds `GameManager`, registers
-  `GameListener`, and binds `DungCommand` to `/dung` and `/dungeon`.
+  `GameListener` and `ShopUI`, and binds `DungCommand` to `/dung`, `/dungeon`, `/shop`,
+  `/upgrades`, `/salvage`, and `/party`.
 - `onDisable()` — shuts down the run (`game.shutdown()`) and saves meta.
 - `world()` / `resolveWorld()` — **lazy** world resolution: skips the End, falls back to the
   first world. Resolved lazily to avoid NPEs during `onEnable` before worlds load.
@@ -169,11 +168,14 @@ run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
   backtrack escape prevents trapping the walk. A BFS from START finds the **farthest room**,
   which becomes the BOSS. A branching pass forks up to 2 dead-end leaves so the floor is a
   real tree, not a snake. Placement then guarantees exactly one `SHOP` (shallow), `TREASURE`,
-  `SECRET` (a deep single-door dead-end), and `ELITE` (deepest remaining combat room), all
-  distinct, non-boss rooms.
+  `SECRET` (a deep single-door dead-end, then **disconnected** from the door graph and wired to
+  a `secretParent` combat room with a destructible wall), `ELITE` (deepest remaining combat
+  room), and 1–2 `LOCKED` (key-gated dead-ends), all distinct, non-boss rooms.
 
-**`RoomType`** — enum mapping each room to its `kind` (0–6) and label. The kind index drives
-loot-table odds and difficulty.
+**`RoomType`** — enum mapping each room to its `kind` (0–7) and label. The kind index drives
+loot-table odds and difficulty. Kinds: `START` (0), `COMBAT` (1), `TREASURE` (2), `SHOP` (3),
+`SECRET` (4, bomb-through-wall, detached from the door graph), `ELITE` (5), `BOSS` (6), and
+`LOCKED` (7, key-gated behind an iron-block barrier).
 
 **`RoomGen`** — projects a `RoomNode` into the world at `BASE_Y`.
 
@@ -261,7 +263,8 @@ typos into compile errors instead of silent save incompatibility. All tags live 
   Staff, Doomblade) with base damage, ability, and mana cost.
 - Armor base sets (Cloth → Netherite) with per-material defense.
 - `rollRarity(floor)` — rarity is eligible once `floor >= floorUnlock`; weights are
-  `baseChance * (1 + floor*0.05 * ordinal)` so deep floors push toward rarer tiers (uncapped).
+  `baseChance * (1 + floor*0.05 * ordinal * 0.5)` so deep floors push toward rarer tiers (uncapped)
+  while low floors keep COMMON as the most common tier.
 - `randomWeapon(floor)` / `randomArmor(floor, slot)` — roll a template + rarity, scale damage/
   defense by `statMult`, add reach (Longsword 3.8, Arcane Staff 4.5, Doomblade 4.0) and health
   affixes.
@@ -275,8 +278,8 @@ longsword, crude axe) and `rollArmorHealth` (per material-tier × slot weight {h
 ### `game` — run state, combat & lifecycle
 
 **`Run`** — per-run mutable data lost on death: `rng` (seeded), `floorIndex`, `floor`,
-`startNanos`, `runCoinsEarned`, `bankedCoins`, `kills`, and the `PlayerState`. Gear lives in the
-inventory, not here.
+`startNanos`, `runCoinsEarned`, `bankedCoins`, `kills`, and per-player `PlayerState` objects.
+Gear lives in the inventory, not here.
 
 **`PlayerState`** — the live MMORPG stats + resource bars (single source of truth). Fields:
 `maxHearts`/`hearts` (100 base), `mana`/`maxMana`, `manaRegen`, `coins`, `keys`, `bombs`,
@@ -303,55 +306,60 @@ combat stats (`damage`, `defense`, `reach`, `critChance`, `critMult`, `speedMult
 - `canCast(id, cost, cdMs)`, `spendMana`, `startCooldown` — ability resource/cooldown gating.
 - `bestEquipRarity()` — highest rarity across equipped gear.
 
-**`GameManager`** — owns the single live run: lifecycle, tick loop, rooms, combat, boss, HUD.
+**`GameManager`** — registry of `DungeonInstance`s, routes events per player.
+
+- `startRun(party, seed)` — creates a new `DungeonInstance` for the party, generates the first
+  floor, and teleports all party members to the START room.
+- `instanceOf(p)` — returns the `DungeonInstance` the player is currently in, or null.
+- `leaveInstance(p)` — removes the player from their instance (calls `endRun` if party becomes
+  empty).
+- `tick()` — iterates all active instances and ticks each one.
+- `shutdown()` — ends all active instances on plugin disable.
+
+**`DungeonInstance`** — one active dungeon per party. Owns the lifecycle, combat, rooms, enemies,
+boss, HUD, and world cleanup for a single run.
 
 Lifecycle:
-- `startRun(p, seed)` — resets per-run state, resolves world, creates `Run` + `PlayerState`
-  (loads the class + permanent upgrades, applies held gear immediately), sets up a fresh
-  scoreboard, grants a starter kit to empty-handed players, fires a one-time tutorial for new
-  profiles, then `enterFloor(0)`.
-- `enterFloor(i)` — randomizes spacing (22–28), generates + builds the floor, teleports the
-  player to the START room.
-- `enterRoom(n)` — marks visited, applies a spawn-grace invuln (2.5s on each floor's first room,
-  ~1s elsewhere), spawns enemies for un-cleared COMBAT/ELITE rooms (and locks doors, with
-  feedback), spawns room pickups, places the SHOP emerald block, and checks the boss on BOSS
-  rooms.
-- `onPlayerMoved(loc)` — room-crossing detection from movement (only when physically inside a
-  real door opening), preventing door-snap.
-- `descend()` / `endRun(quit)` / `onDeath()` / `resetPlayerToSpawn()` — see the
+- `startRun(party, seed)` — resolves world, creates `Run` + per-player `PlayerState` (loads
+  class + permanent upgrades, applies held gear), sets up scoreboards, grants starter kits,
+  fires tutorial for new profiles, then `enterFloor(0)`.
+- `enterFloor(i)` — randomizes spacing (22–28), generates + builds the floor, teleports all
+  party members to the START room.
+- `enterRoom(n)` — marks visited, applies spawn-grace invuln, spawns enemies for un-cleared
+  COMBAT/ELITE rooms (locks doors), spawns room pickups, opens the shop GUI on SHOP rooms,
+  and checks the boss on BOSS rooms.
+- `onPlayerMoved(loc)` — room-crossing detection from movement.
+- `descend()` / `endRun()` / `onPlayerDeath(p)` / `resetPlayerToSpawn()` — see the
   [death model](#death--persistence-model).
 
 Combat:
 - `tick()` (per game tick): checks death, syncs stats from real gear, drains melee cooldown,
-  applies speed, clears rooms when all enemies die (and counts kills), ticks the current room's
-  enemies + boss, regens mana/HP, syncs the real HP bar **proportionally** (`hearts/maxHearts ×
-  20` so full bar always means full pool), keeps food low to suppress vanilla hunger-regen, and
-  throttles the action bar.
-- `registerAttack()` — melee arc: damages enemies within `reach` (horizontal + vertical), with
-  a wider arc on the boss.
+  applies speed, clears rooms when all enemies die, ticks current room's enemies + boss,
+  regens mana/HP, syncs the real HP bar proportionally, keeps food low, and throttles the
+  action bar.
+- `registerAttack()` — melee arc: damages enemies within reach (horizontal + vertical), with
+  a wider arc on the boss. Applies class ability damage boosts (War Cry) and guaranteed crits
+  (Shadow Step).
 - `tryCastAbility(p, item)` / `dispatchAbility(id, st)` — casts the held weapon's stored ability
-  if mana + cooldown allow. The listener gates casting on the held item carrying `dung.ability`,
-  so vanilla sneak+RMB keeps working for non-weapons. Abilities (with `[cost, cdMs]`): **Rush**
-  `[5,1000]` (dash + brief invuln), **Slash** `[12,2500]`, **Cleave** `[15,3000]`, **Smash**
-  `[18,3500]`, **Blade Storm** `[25,4500]`, **Arcane Bolt** `[20,3500]`, **Ravage** `[40,8000]`.
-  AOE abilities also hit the boss in range so it is never ability-immune.
-- `openShop()` — in-room shop (8 run coins) that drops random gear; one purchase per room.
+  if mana + cooldown allow. Abilities: **Rush** `[5,1000]`, **Slash** `[12,2500]`, **Cleave**
+  `[15,3000]`, **Smash** `[18,3500]`, **Blade Storm** `[25,4500]`, **Arcane Bolt** `[20,3500]`,
+  **Ravage** `[40,8000]`.
+- `tryCastClassAbility(p)` / `dispatchClassAbility(id, st, caster)` — casts the player's
+  class-specific active ability: **Warrior — War Cry** (10 mana, 8s cd: party damage boost +
+  invuln), **Mage — Arcane Nova** (25 mana, 6s cd: AoE 2x damage), **Ranger — Shadow Step**
+  (15 mana, 5s cd: teleport behind nearest enemy + guaranteed crit). Triggered by sneak+drop (Q).
+- `openShop(p)` — opens the chest GUI shop for the player in a SHOP room.
 
 Rooms/rewards:
-- `onRoomClear(n, k)` — clears the room, opens doors (with unlock feedback), awards coins
-  (`2 + floorIndex`) + gear.
+- `onRoomClear(n, k)` — clears the room, opens doors, awards coins + gear.
 - `onRoomEnterBossCheck()` / `onBossDefeated()` — spawn/despawn the Warden, open doors, drop
-  guaranteed rare+ loot, and **bank coins** into the persistent wallet (delta since last bank,
-  capped at 40) + increment `clears`/`bestFloor`.
+  guaranteed rare+ loot, bank coins into persistent wallet (delta capped at 40).
 - `stripRunGear(p)` — removes run loot (Dung gear without `dung.persistent` + coin nuggets)
   from storage/armor/offhand; permanent purchases survive. Runs on death and quit.
 
 Utilities:
-- `playerHurt(p, dmg)` (static) — applies `PlayerState.hurt` + a red-hurt animation/sound
-  without touching the real HP bar; returns true if it connected. Uses `GameManagerRef` to reach
-  the run statically so `Enemy`/`BossController` don't need constructor cycles.
-- `clearRoomEntities()` / `tearDownDungeon()` — despawn mobs, unseal barriers, and reset every
-  built block back to air so an inactive dungeon disappears.
+- `playerHurt(p, dmg)` (static) — applies `PlayerState.hurt` + red-hurt animation/sound.
+- `clearRoomEntities()` / `tearDownDungeon()` — despawn mobs, unseal barriers, reset blocks.
 
 ### `boss` — the Warden
 
@@ -504,8 +512,9 @@ immediately and spent in `/upgrades`.
 
 ## Design notes & known issues
 
-- **Single player, single run.** `GameManager` holds one run; only that player is affected by
-  listeners. Not designed for concurrent players.
+- **Multi-player parties, parallel dungeons.** `GameManager` is a registry of `DungeonInstance`s.
+  Each party gets its own instance with its own floor, enemies, boss, and per-player state.
+  Multiple parties can run dungeons simultaneously in the same world at different coordinates.
 - **Dungeon placement** — everything is built at `BASE_Y = 80` in the first non-End world and
   fully torn down (`tearDownDungeon`) when a run ends, so no persistent world edits remain.
 - **Vanilla mobs as enemies** — Dung mobs/boss are real vanilla entities whose native AI is
@@ -517,10 +526,30 @@ immediately and spent in `/upgrades`.
   corridor for any shape.
 - **Health reservoir** prevents the gear-swap heal exploit; natural healing is out-of-combat
   only.
-- **Placeholder systems** — keys and bombs are tracked but have no sinks yet; intended for
-  future locked doors/chests and destructible walls.
+- **Keys and bombs** — purchasable in the in-run shop GUI for 4 coins each, and tracked in
+  `PlayerState`. Both now have real sinks: **keys** unlock `LOCKED` rooms (dead-end rooms sealed
+  by an iron-block door barrier), and **bombs** blow through the `CRACKED_STONE_BRICKS`
+  destructible wall of a hidden **SECRET** room.
+- **Bomb-through-wall secrets** — a `SECRET` room is fully detached from the door graph. Its
+  `secretParent` combat room gains a visible cracked-wall segment; right-clicking it while holding
+  a bomb consumes 1 bomb, blasts a 3-wide opening, and reveals pedestal loot. This is the "true"
+  hidden secret (no visible doorway).
+- **Locked rooms** — `LOCKED` rooms sit on dead-end branches behind an `IRON_BLOCK` barrier.
+  Crossing the threshold with a key spends 1 key, unlocks + clears the room, and spawns loot.
+- **Pedestal loot** — treasure/locked/clear rewards spawn on a `POLISHED_BLACKSTONE_SLAB`
+  pedestal with an invulnerable, invisible item frame; right-click to claim. Pedestals are torn
+  down with the run (`clearPedestals`).
+- **Persistent gear durability** — on death each `dung.persistent` item loses 10% of max
+  durability (min 1); a piece that breaks is removed from the inventory. Death now costs
+  persistent gear, not just the run.
+- **Tab throttle** — `TabUI.refresh` runs every 10 ticks; only the HUD action bar keeps a
+  per-tick cadence.
 
 ### Tests
 
-Headless JUnit tests under `src/test` cover corridor geometry and simulated floor generation
-(`CorridorGeometryTest`, `SimulatedPlayerFloorTest`). Run with `.\gradlew.bat --offline cleanTest test`.
+Headless JUnit tests under `src/test` cover the pure-logic paths that don't need a live Bukkit
+server: corridor geometry (`CorridorGeometryTest`), simulated floor generation where an agent
+clears every generated floor including the new bomb-disconnected `SECRET` rooms
+(`SimulatedPlayerFloorTest`), rarity distribution across floors (`ItemPoolTest`), per-player
+stats (`PlayerStateTest`), permanent upgrades (`UpgradesTest`), and party lifecycle
+(`PartyManagerTest`). Run with `.\gradlew.bat --offline cleanTest test`.

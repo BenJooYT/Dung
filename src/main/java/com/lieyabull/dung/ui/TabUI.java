@@ -4,11 +4,14 @@ import com.lieyabull.dung.dungeon.Floor;
 import com.lieyabull.dung.game.DungeonInstance;
 import com.lieyabull.dung.game.PlayerState;
 import com.lieyabull.dung.game.Run;
+import com.lieyabull.dung.items.GearFactory;
 import com.lieyabull.dung.util.TextUtil;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
+import org.bukkit.Material;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.scoreboard.*;
 
 /**
@@ -40,6 +43,9 @@ public final class TabUI {
             team(o, i++, "§6Equipment");
             team(o, i++, "   §fMainhand: " + itemName(p.getInventory().getItemInMainHand()));
             for (int a = 0; a < 4; a++) team(o, i++, "   §f" + armorSlot(a) + ": " + itemName(p.getInventory().getArmorContents()[a]));
+            // Durability summary for persistent gear
+            String durSummary = durabilitySummary(p);
+            if (!durSummary.isEmpty()) team(o, i++, "   " + durSummary);
             team(o, i++, "");
             team(o, i++, "§6Dungeon  §7(F" + (run == null ? 0 : run.floorIndex + 1) + ")");
             if (run != null && run.floor != null) {
@@ -80,6 +86,39 @@ public final class TabUI {
     private String itemName(org.bukkit.inventory.ItemStack s) {
         if (s == null || s.getType().isAir()) return "§8(none)";
         return s.hasItemMeta() && s.getItemMeta().hasDisplayName() ? s.getItemMeta().getDisplayName() : s.getType().name();
+    }
+
+    /** Build a durability summary string for the player's persistent gear. */
+    private static String durabilitySummary(Player p) {
+        int total = 0;
+        int totalMax = 0;
+        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+        ItemStack[] hands = {inv.getItemInMainHand(), inv.getItemInOffHand()};
+        for (ItemStack s : hands) {
+            if (s == null || s.getType() == Material.AIR) continue;
+            int d = GearFactory.getDurability(s);
+            int m = GearFactory.getMaxDurability(s);
+            if (d >= 0 && m > 0) { total += d; totalMax += m; }
+        }
+        for (ItemStack s : inv.getArmorContents()) {
+            if (s == null || s.getType() == Material.AIR) continue;
+            int d = GearFactory.getDurability(s);
+            int m = GearFactory.getMaxDurability(s);
+            if (d >= 0 && m > 0) { total += d; totalMax += m; }
+        }
+        if (totalMax <= 0) return "";
+        double pct = (double) total / totalMax;
+        String color;
+        if (pct >= 0.67) color = "§a";
+        else if (pct >= 0.34) color = "§e";
+        else color = "§c";
+        int filled = (int) Math.round(pct * 10);
+        int empty = 10 - filled;
+        StringBuilder bar = new StringBuilder("§7Durability: ").append(color);
+        bar.append("█".repeat(Math.max(0, filled)));
+        bar.append("§8░".repeat(Math.max(0, empty)));
+        bar.append(" §7").append(total).append("/").append(totalMax);
+        return bar.toString();
     }
 
     /** Remove the tab objective and all row teams so stale dungeon stats don't linger after a run. */

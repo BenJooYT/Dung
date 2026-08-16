@@ -81,7 +81,9 @@ public final class ItemPool {
         double total = 0;
         for (int i = 0; i < eligible.size(); i++) {
             Rarity r = eligible.get(i);
-            double w = r.baseChance * (1.0 + push * r.ordinal());
+            // Scale the rarity boost by ordinal but halve it so low floors keep COMMON as the
+            // most common tier; deep floors (large push) still climb toward the rare tiers.
+            double w = r.baseChance * (1.0 + push * r.ordinal() * 0.5);
             weights[i] = w;
             total += w;
         }

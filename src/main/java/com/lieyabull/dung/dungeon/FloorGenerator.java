@@ -170,15 +170,47 @@ public final class FloorGenerator {
         if (shopRoom != null) { shopRoom.type = RoomType.SHOP; combat.remove(shopRoom); }
         // TREASURE: first remaining combat room
         if (!combat.isEmpty()) { combat.get(0).type = RoomType.TREASURE; combat.remove(0); }
-        // SECRET: a deep dead-end leaf (only 1 door) -> hidden bonus loot. Pick before ELITE
-        // so the deepest dead-end isn't consumed by the elite placement.
+        // SECRET: a deep dead-end leaf (only 1 door) -> hidden bonus loot behind a destructible
+        // wall. Pick before ELITE so the deepest dead-end isn't consumed by the elite placement.
+        // The secret room is disconnected from the graph: its single door is removed, and the
+        // adjacent combat room becomes its "secretParent" with a destructible wall on that side.
         Floor.RoomNode secret = null;
         for (Floor.RoomNode n : combat) {
             int doors = 0;
             for (boolean d : n.doors) if (d) doors++;
             if (doors == 1 && dist[n.x + n.z * width] >= 2) { secret = n; break; }
         }
-        if (secret != null) { secret.type = RoomType.SECRET; combat.remove(secret); }
+        if (secret != null) {
+            // Find the adjacent combat room (the one this secret connects to via its single door)
+            Floor.RoomNode secretParent = null;
+            int secretDir = -1;
+            for (int d = 0; d < 4; d++) {
+                if (secret.doors[d]) {
+                    int nx = secret.x + DX[d];
+                    int nz = secret.z + DZ[d];
+                    Floor.RoomNode parent = f.at(nx, nz);
+                    if (parent != null) {
+                        // Only disconnect if the parent has at least 2 doors (so it stays reachable)
+                        int parentDoors = 0;
+                        for (boolean pd : parent.doors) if (pd) parentDoors++;
+                        if (parentDoors >= 2) {
+                            secretParent = parent;
+                            secretDir = d;
+                        }
+                    }
+                    break;
+                }
+            }
+            if (secretParent != null) {
+                secret.type = RoomType.SECRET;
+                combat.remove(secret);
+                secret.secretParent = secretParent;
+                secret.secretWallDir = secretDir;
+                // Remove the door connection so the secret is disconnected
+                secret.doors[secretDir] = false;
+                secretParent.doors[(secretDir + 2) % 4] = false;
+            }
+        }
         // ELITE: a remaining combat room as deep as possible
         if (!combat.isEmpty()) {
             Floor.RoomNode elite = combat.stream()
@@ -186,6 +218,20 @@ public final class FloorGenerator {
                     .orElse(combat.get(0));
             elite.type = RoomType.ELITE;
             combat.remove(elite);
+        }
+        // LOCKED: place 1-2 locked rooms on dead-end branches (rooms with only 1 door).
+        // Pick from remaining combat rooms that are dead-ends and not the boss.
+        List<Floor.RoomNode> deadEnds = new ArrayList<>();
+        for (Floor.RoomNode n : f.rooms()) {
+            if (n.type != RoomType.COMBAT || n == boss) continue;
+            int doors = 0;
+            for (boolean d : n.doors) if (d) doors++;
+            if (doors == 1) deadEnds.add(n);
+        }
+        Collections.shuffle(deadEnds, rng);
+        int lockedCount = Math.min(1 + rng.nextInt(2), deadEnds.size()); // 1 or 2
+        for (int i = 0; i < lockedCount; i++) {
+            deadEnds.get(i).type = RoomType.LOCKED;
         }
         f.boss = boss;
         return f;

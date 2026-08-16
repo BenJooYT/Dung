@@ -7,6 +7,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import org.bukkit.Location;
+import org.bukkit.World;
 
 /** One floor's room grid: nodes at (x,z) with type, connectivity, and clear state. */
 public final class Floor {
@@ -58,12 +60,20 @@ public final class Floor {
         /** interior dimensions (width along x, depth along z); rooms may be square or elongated */
         public int sizeW = RoomGen.SQUARE;
         public int sizeH = RoomGen.SQUARE;
+        /** room shape: 0=rectangle, 1=L-shaped, 2=pillar room, 3=split room */
+        public int shape;
         public boolean cleared;
         public boolean shopBought;
         public boolean visited;
         public boolean looted; // award-only room (treasure/secret) has given its loot once
         // connectors: N,E,S,W
         public boolean[] doors = new boolean[4];
+        // bomb-through-wall secret: which combat room this secret is behind, and the direction
+        // from that combat room toward this secret room
+        public Floor.RoomNode secretParent;
+        public int secretWallDir = -1;
+        // world location of the destructible wall center (set during RoomGen.build)
+        public Location destructibleWallLoc;
 
         public RoomNode(int x, int z, RoomType type) {
             this.x = x;
@@ -77,6 +87,12 @@ public final class Floor {
             if (r == 1) { sizeW = RoomGen.LONG; sizeH = RoomGen.SQUARE; }   // longer along x
             else if (r == 2) { sizeW = RoomGen.SQUARE; sizeH = RoomGen.LONG; } // longer along z
             else { sizeW = RoomGen.SQUARE; sizeH = RoomGen.SQUARE; }         // square (r==0 or 3)
+            // randomize shape type: 60% rectangle, 15% L, 15% pillar, 10% split
+            int s = rng.nextInt(100);
+            if (s < 60)      shape = 0; // rectangle
+            else if (s < 75) shape = 1; // L-shaped
+            else if (s < 90) shape = 2; // pillar room
+            else             shape = 3; // split room
         }
 
         public void open(int dir) {

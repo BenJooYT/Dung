@@ -74,11 +74,31 @@ public class SimulatedPlayerFloorTest {
             Floor f = new FloorGenerator(rng, w, h, rooms).generate();
 
             int total = f.roomCount();
-            // every room reachable from START -> the agent can always make progress
+            // SECRET rooms are intentionally bomb-disconnected (no doors), so they are NOT
+            // reachable through the door graph; everything else must be.
+            int secretCount = 0;
             int[] dist = distances(f, f.start);
             int unreachable = 0;
-            for (Floor.RoomNode n : f.rooms()) if (dist[n.x + n.z * f.width] == Integer.MAX_VALUE) unreachable++;
-            assertEquals(0, unreachable, "seed " + seed + ": all rooms must be reachable");
+            for (Floor.RoomNode n : f.rooms()) {
+                if (n.type == RoomType.SECRET) {
+                    secretCount++;
+                    continue;
+                }
+                if (dist[n.x + n.z * f.width] == Integer.MAX_VALUE) unreachable++;
+            }
+            assertEquals(0, unreachable, "seed " + seed + ": all non-secret rooms must be reachable");
+            // every SECRET room must be bomb-accessible: wired to a parent combat room with a
+            // destructible wall and detached from the door graph (single door removed)
+            for (Floor.RoomNode n : f.rooms()) {
+                if (n.type != RoomType.SECRET) continue;
+                assertTrue(n.secretParent != null && n.secretWallDir >= 0,
+                        "seed " + seed + ": SECRET room must be wired to a secretParent wall side");
+                assertTrue(n.secretParent.type != RoomType.SECRET,
+                        "seed " + seed + ": SECRET room parent must be a combat room");
+                int doors = 0;
+                for (boolean d : n.doors) if (d) doors++;
+                assertEquals(0, doors, "seed " + seed + ": SECRET room must have no doors");
+            }
 
             // exactly one boss, reachable and not the start
             List<Floor.RoomNode> bossRooms = new ArrayList<>();
@@ -99,7 +119,8 @@ public class SimulatedPlayerFloorTest {
             // --- the simulated player clears the floor: greedily walk to the nearest uncleared
             // room, "clear" it (collect loot), and finish by reaching + killing the boss ---
             Set<Floor.RoomNode> uncleared = new HashSet<>();
-            for (Floor.RoomNode n : f.rooms()) if (n.type != RoomType.START) uncleared.add(n);
+            for (Floor.RoomNode n : f.rooms())
+                if (n.type != RoomType.START && n.type != RoomType.SECRET) uncleared.add(n);
             int cleared = 0;
             int steps = 0;
             int guard = total * total; // the agent may backtrack; cap so a broken floor fails fast
@@ -120,7 +141,8 @@ public class SimulatedPlayerFloorTest {
                 cur = nearest;
                 cleared++;
             }
-            assertEquals(total - 1, cleared, "seed " + seed + ": player cleared every non-start room");
+            assertEquals(total - 1 - secretCount, cleared,
+                    "seed " + seed + ": player cleared every non-start, non-secret room");
             assertTrue(bossCleared, "seed " + seed + ": player reached and killed the boss");
         }
     }

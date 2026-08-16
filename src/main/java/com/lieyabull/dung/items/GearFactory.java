@@ -1,5 +1,7 @@
 package com.lieyabull.dung.items;
 
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.ItemFlag;
@@ -89,6 +91,123 @@ public final class GearFactory {
             state[0] = !fav;
         });
         return state[0];
+    }
+
+    // ==================== Durability helpers ====================
+
+    /** Get the current durability from an item's PDC. Returns -1 if not set. */
+    public static int getDurability(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return -1;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        var key = org.bukkit.NamespacedKey.minecraft(ItemTags.DURABILITY);
+        if (!pdc.has(key, org.bukkit.persistence.PersistentDataType.INTEGER)) return -1;
+        return pdc.get(key, org.bukkit.persistence.PersistentDataType.INTEGER);
+    }
+
+    /** Set the current durability on an item's PDC. */
+    public static void setDurability(ItemStack s, int durability) {
+        s.editMeta(meta -> {
+            meta.getPersistentDataContainer().set(
+                    org.bukkit.NamespacedKey.minecraft(ItemTags.DURABILITY),
+                    org.bukkit.persistence.PersistentDataType.INTEGER, durability);
+        });
+    }
+
+    /** Get the max durability from an item's PDC. Returns -1 if not set. */
+    public static int getMaxDurability(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return -1;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        var key = org.bukkit.NamespacedKey.minecraft(ItemTags.MAX_DURABILITY);
+        if (!pdc.has(key, org.bukkit.persistence.PersistentDataType.INTEGER)) return -1;
+        return pdc.get(key, org.bukkit.persistence.PersistentDataType.INTEGER);
+    }
+
+    /** Set the max durability on an item's PDC. */
+    public static void setMaxDurability(ItemStack s, int maxDurability) {
+        s.editMeta(meta -> {
+            meta.getPersistentDataContainer().set(
+                    org.bukkit.NamespacedKey.minecraft(ItemTags.MAX_DURABILITY),
+                    org.bukkit.persistence.PersistentDataType.INTEGER, maxDurability);
+        });
+    }
+
+    /** Reduce durability by the given amount. Returns true if the item is now broken (durability <= 0). */
+    public static boolean damageItem(ItemStack s, int amount) {
+        int dur = getDurability(s);
+        if (dur < 0) return false; // not a durability item
+        dur = Math.max(0, dur - amount);
+        setDurability(s, dur);
+        addDurabilityLore(s);
+        return dur <= 0;
+    }
+
+    /** Restore durability by the given amount (capped at max). */
+    public static void repairItem(ItemStack s, int amount) {
+        int dur = getDurability(s);
+        int max = getMaxDurability(s);
+        if (dur < 0 || max < 0) return;
+        dur = Math.min(max, dur + amount);
+        setDurability(s, dur);
+        addDurabilityLore(s);
+    }
+
+    /** Add or update the durability lore line on an item. */
+    public static void addDurabilityLore(ItemStack s) {
+        int dur = getDurability(s);
+        int max = getMaxDurability(s);
+        if (dur < 0 || max < 0) return;
+        s.editMeta(meta -> {
+            List<Component> lore = meta.lore();
+            if (lore == null) lore = new ArrayList<>();
+            // Build the durability bar
+            double pct = (double) dur / max;
+            String color;
+            if (pct >= 0.67) color = "§a";       // Green
+            else if (pct >= 0.34) color = "§e";   // Yellow
+            else color = "§c";                     // Red
+            int filled = (int) Math.round(pct * 10);
+            int empty = 10 - filled;
+            StringBuilder bar = new StringBuilder("§7Durability: ").append(color);
+            bar.append("█".repeat(Math.max(0, filled)));
+            bar.append("§8░".repeat(Math.max(0, empty)));
+            bar.append(" §7").append(dur).append("/").append(max);
+            String durLine = bar.toString();
+            // Find and replace existing durability line, or add before the rarity line
+            int durIdx = -1;
+            int rarityIdx = -1;
+            for (int i = 0; i < lore.size(); i++) {
+                String text = LegacyComponentSerializer.legacySection().serialize(lore.get(i));
+                if (text.startsWith("§7Durability:")) durIdx = i;
+                if (text.startsWith("§") && !text.startsWith("§7") && !text.startsWith("§8")) {
+                    // This is likely the rarity line (colored rarity name)
+                    rarityIdx = i;
+                }
+            }
+            Component durComponent = LegacyComponentSerializer.legacySection().deserialize(durLine);
+            if (durIdx >= 0) {
+                lore.set(durIdx, durComponent);
+            } else if (rarityIdx >= 0) {
+                lore.add(rarityIdx, durComponent);
+            } else {
+                lore.add(durComponent);
+            }
+            meta.lore(lore);
+        });
+    }
+
+    /** Initialise durability on a persistent item (weapon=100, armor=80). */
+    public static void initDurability(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        boolean isPersistent = pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.PERSISTENT),
+                org.bukkit.persistence.PersistentDataType.STRING);
+        if (!isPersistent) return;
+        String kind = pdc.get(org.bukkit.NamespacedKey.minecraft(ItemTags.KIND),
+                org.bukkit.persistence.PersistentDataType.STRING);
+        int maxDur = "weapon".equals(kind) ? 100 : 80;
+        setMaxDurability(s, maxDur);
+        setDurability(s, maxDur);
+        addDurabilityLore(s);
     }
 
     /** First-run kit: a Frayed Blade + a full Cloth set, so a new player can fight immediately.

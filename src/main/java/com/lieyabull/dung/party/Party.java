@@ -63,8 +63,15 @@ public final class Party {
 
     /** Broadcast a message to all online party members. */
     public void broadcast(String message) {
+        org.bukkit.Server server;
+        try {
+            server = org.bukkit.Bukkit.getServer();
+        } catch (Exception ignored) {
+            return; // Bukkit not initialized (e.g. during testing)
+        }
+        if (server == null) return; // Bukkit not initialized
         for (UUID uid : members) {
-            Player p = org.bukkit.Bukkit.getPlayer(uid);
+            Player p = server.getPlayer(uid);
             if (p != null && p.isOnline()) {
                 p.sendMessage(message);
             }
@@ -73,9 +80,16 @@ public final class Party {
 
     /** Get all online party members. */
     public List<Player> onlineMembers() {
+        org.bukkit.Server server;
+        try {
+            server = org.bukkit.Bukkit.getServer();
+        } catch (Exception ignored) {
+            return new ArrayList<>(); // Bukkit not initialized (e.g. during testing)
+        }
+        if (server == null) return new ArrayList<>();
         List<Player> online = new ArrayList<>();
         for (UUID uid : members) {
-            Player p = org.bukkit.Bukkit.getPlayer(uid);
+            Player p = server.getPlayer(uid);
             if (p != null && p.isOnline()) {
                 online.add(p);
             }

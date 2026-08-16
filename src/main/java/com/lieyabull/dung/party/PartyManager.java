@@ -73,9 +73,13 @@ public final class PartyManager {
         } else {
             party.broadcast("§e" + p.getName() + " left the party.");
             if (party.leader().equals(p.getUniqueId())) {
-                Player newLeader = org.bukkit.Bukkit.getPlayer(party.leader());
-                if (newLeader != null) {
-                    party.broadcast("§e" + newLeader.getName() + " is now the party leader.");
+                try {
+                    Player newLeader = org.bukkit.Bukkit.getPlayer(party.leader());
+                    if (newLeader != null) {
+                        party.broadcast("§e" + newLeader.getName() + " is now the party leader.");
+                    }
+                } catch (Exception ignored) {
+                    // Bukkit not initialized (e.g. during testing)
                 }
             }
         }
@@ -94,9 +98,13 @@ public final class PartyManager {
         if (p.isEmpty()) {
             partyById.remove(p.id());
         } else if (leaderWasKicked) {
-            Player newLeader = org.bukkit.Bukkit.getPlayer(p.leader());
-            if (newLeader != null) {
-                p.broadcast("§e" + newLeader.getName() + " is now the party leader.");
+            try {
+                Player newLeader = org.bukkit.Bukkit.getPlayer(p.leader());
+                if (newLeader != null) {
+                    p.broadcast("§e" + newLeader.getName() + " is now the party leader.");
+                }
+            } catch (Exception ignored) {
+                // Bukkit not initialized (e.g. during testing)
             }
         }
         return true;

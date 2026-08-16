@@ -17,6 +17,8 @@ public final class ItemTags {
     public static final String HEALTH = "dung.health";
     public static final String ABILITY = "dung.ability";
     public static final String COST = "dung.cost";
+    public static final String DURABILITY = "dung.durability";
+    public static final String MAX_DURABILITY = "dung.maxdurability";
 
     private ItemTags() {}
 }
