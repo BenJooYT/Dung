@@ -58,8 +58,8 @@ public final class HUD {
         setLine(o, 3, "§7Reach §f" + TextUtil.fmt(st.reach) + "   §7Spd §f" + TextUtil.fmt(st.speedMult));
         setLine(o, 4, "");
         // consumables / run
-        setLine(o, 5, "§e⛁ Coins §f" + st.coins + "   §9⛂ Keys §f" + st.keys);
-        setLine(o, 6, "§4✹ Bombs §f" + st.bombs + "   §cKills §f" + run.kills);
+        setLine(o, 5, "§e⛁ Coins §f" + st.coins + "   §9⛂ Keys §f" + st.keys + " §7[slot 7]");
+        setLine(o, 6, "§4✹ Bombs §f" + st.bombs + " §7[slot 8]   §cKills §f" + run.kills);
         setLine(o, 7, "");
         setLine(o, 8, "§6Room: §f" + di.curRoom().type.label);
         // Gear condition: show worst durability among persistent gear
@@ -90,6 +90,7 @@ public final class HUD {
         long now = System.currentTimeMillis();
         long rem = 0; String cdName = "";
         for (var e : st.cooldowns.entrySet()) {
+            if (e.getKey().equals(PlayerState.GCD_KEY)) continue;
             long r = e.getValue() - now;
             if (r > 0 && r > rem) { rem = r; cdName = e.getKey(); }
         }
@@ -146,12 +147,15 @@ public final class HUD {
         return bar.toString();
     }
 
-    /** Action bar above the hotbar: red hearts + blue mana with current/max amounts (integer counts). */
-    public void sendBar(Player p, PlayerState st) {
+    /** Action bar above the hotbar: red hearts + blue mana with current/max amounts (integer counts).
+     *  A single writer owns the action bar (the per-tick HUD refresh) so transient hints are appended
+     *  as a suffix here rather than issued from a second cadence, which fought the bar and flickered. */
+    public void sendBar(Player p, PlayerState st, String hint) {
         String pct = String.format("%.0f%%", st.maxHearts <= 0 ? 100 : st.hearts / st.maxHearts * 100);
         String hearts = "§c♥ " + (int) st.hearts + "§8/" + (int) st.maxHearts + " §8(" + pct + ")";
         String mana = "§b✦ " + (int) st.mana + "§8/" + (int) st.maxMana;
-        p.sendActionBar(LegacyComponentSerializer.legacySection().deserialize(hearts + "   " + mana));
+        String suffix = (hint == null || hint.isEmpty()) ? "" : "   " + hint;
+        p.sendActionBar(LegacyComponentSerializer.legacySection().deserialize(hearts + "   " + mana + suffix));
     }
 
     /** Register all rows (team + invisible entry + static score) exactly once per objective so the

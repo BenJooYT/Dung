@@ -35,10 +35,10 @@ public final class Pickup {
                 st.coins++;
                 return true;
             case KEY:
-                st.keys++;   // placeholder: no sink yet; reserved for a future locked-door/chest cost
+                st.keys++;
                 return true;
             case BOMB:
-                st.bombs++;  // placeholder: no sink yet; reserved for a future destructible-wall cost
+                st.bombs++;
                 return true;
         }
         return false;

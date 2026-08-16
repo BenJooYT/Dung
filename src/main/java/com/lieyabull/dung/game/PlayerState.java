@@ -45,6 +45,11 @@ public final class PlayerState {
     public final Map<String, Integer> upgrades = new java.util.HashMap<>();
     // cooldowns (ms remaining) keyed by ability id
     public final Map<String, Long> cooldowns = new ConcurrentHashMap<>();
+
+    /** Global-cooldown key: shared by every ability/class cast so weapon-swap burst-spam is impossible. */
+    public static final String GCD_KEY = "__gcd";
+    /** Global cooldown between any two ability casts, in ms. */
+    public static final long GCD_MS = 400;
     // invulnerability timestamp (ms)
     public long invulnUntil = 0;
     public boolean dead = false;
@@ -116,9 +121,9 @@ public final class PlayerState {
         int def = upgrades.getOrDefault("defense", 0);
         if (def > 0) defense += def * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.DEFENSE);
         int crit = upgrades.getOrDefault("crit", 0);
-        if (crit > 0) critChance += crit * 0.01;
+        if (crit > 0) critChance += crit * 0.005;
         int spd = upgrades.getOrDefault("speed", 0);
-        if (spd > 0) speedMult += spd * 0.05;
+        if (spd > 0) speedMult += spd * 0.03;
         int manaUp = upgrades.getOrDefault("mana", 0);
         if (manaUp > 0) maxMana += manaUp * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.MANA);
     }

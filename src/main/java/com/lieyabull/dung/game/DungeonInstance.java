@@ -19,10 +19,15 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.block.Sign;
 import org.bukkit.entity.ItemFrame;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Villager;
+import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
+
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -68,6 +73,9 @@ public final class DungeonInstance {
     private final Set<Location> destructibleWalls = new HashSet<>();
     // Track which secret rooms have been revealed (by their grid key)
     private final Set<Long> revealedSecrets = new HashSet<>();
+    // Shopkeepers (per SHOP room) + which shop rooms have been spawned this floor
+    private final List<org.bukkit.entity.Villager> shopkeepers = new ArrayList<>();
+    private final Set<Long> shopSpawned = new HashSet<>();
     private boolean running;
 
     public DungeonInstance(Dung plugin, Party party) {
@@ -154,9 +162,9 @@ public final class DungeonInstance {
                         org.bukkit.inventory.EquipmentSlot.LEGS,
                         org.bukkit.inventory.EquipmentSlot.FEET
                 };
-                ItemStack[] armor = inv.getArmorContents();
                 for (int i = 0; i < 4; i++) {
-                    if (armor[i] == null || armor[i].getType().isAir()) inv.setItem(slots[i], kit[i + 1]);
+                    ItemStack cur = inv.getItem(slots[i]);
+                    if (cur == null || cur.getType().isAir()) inv.setItem(slots[i], kit[i + 1]);
                 }
                 p.sendMessage("§7You were given a starter kit: §fFrayed Blade§7 + cloth armor.");
             }
@@ -167,24 +175,30 @@ public final class DungeonInstance {
                 p.sendMessage("§6Clear rooms to earn coins and gear. Find the boss room to go deeper.");
                 p.sendMessage("§7Attack: §fLeft-Click    §7Weapon Ability: §fSneak + Right-Click");
                 p.sendMessage("§7Class Ability: §fSneak + Drop (Q)    §7Heal: pick up §c♥§7 hearts");
+                p.sendMessage("§7Keys & Bombs appear in hotbar slots 7-8. Right-click locked doors with a key, cracked walls with a bomb.");
                 p.sendMessage("§7Salvage spare armor: §f/salvage§7. Exit: §f/dung leave");
             }
         }
         plugin.meta().save();
     }
 
+    /** Whether the player already has run (non-persistent) gear. Persistent gear carried in from
+     *  outside doesn't count — they still get a starter kit so they aren't left weapon-less. */
     private boolean hasDungGear(Player p) {
         PlayerInventory inv = p.getInventory();
-        for (ItemStack s : inv.getContents()) if (isDungGear(s)) return true;
-        for (ItemStack s : inv.getArmorContents()) if (isDungGear(s)) return true;
-        return isDungGear(inv.getItemInOffHand());
+        for (ItemStack s : inv.getContents()) if (isRunDungGear(s)) return true;
+        for (ItemStack s : inv.getArmorContents()) if (isRunDungGear(s)) return true;
+        return isRunDungGear(inv.getItemInOffHand());
     }
 
-    private static boolean isDungGear(ItemStack s) {
+    private static boolean isRunDungGear(ItemStack s) {
         if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return false;
-        return s.getItemMeta().getPersistentDataContainer().has(
-                org.bukkit.NamespacedKey.minecraft(ItemTags.GEAR),
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        boolean isGear = pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.GEAR),
                 org.bukkit.persistence.PersistentDataType.STRING);
+        boolean persistent = pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.PERSISTENT),
+                org.bukkit.persistence.PersistentDataType.STRING);
+        return isGear && !persistent;
     }
 
     public void enterFloor(int floorIndex) {
@@ -206,6 +220,11 @@ public final class DungeonInstance {
                 carveSecretPassage(n);
                 registerDestructibleWall(n);
             }
+        }
+        // Post-pass LOCKED doors: place every barrier AFTER all rooms are built so a neighbour
+        // room's corridor carve can never overwrite the locked door away.
+        for (Floor.RoomNode n : run.floor.rooms()) {
+            if (n.type == RoomType.LOCKED) placeLockedDoorBarrier(n);
         }
         curRoom = run.floor.start;
         enterRoom(curRoom);
@@ -248,8 +267,7 @@ public final class DungeonInstance {
         }
         spawnRoomPickups(n);
         if (n.type == RoomType.SHOP) {
-            Location c = RoomGen.center(world, n, BASE_Y, spacing);
-            world.getBlockAt(c.getBlockX(), BASE_Y, c.getBlockZ()).setType(Material.EMERALD_BLOCK);
+            setupShopRoom(n);
         }
         if (n.type == RoomType.BOSS && !n.cleared && boss == null) {
             onRoomEnterBossCheck();
@@ -274,35 +292,31 @@ public final class DungeonInstance {
             }
         }
         // LOCKED room check: if the target is a LOCKED room that hasn't been cleared,
-        // require a key from the entering player.
+        // block entry. The player must right-click the IRON_BLOCK barrier with a key item to unlock it.
         if (target.type == RoomType.LOCKED && !target.cleared) {
-            PlayerState ps = run.playerStateOf(p.getUniqueId());
-            if (ps == null || ps.keys <= 0) {
-                p.sendMessage("§cThis room is locked — you need a key!");
-                // Teleport the player back to the center of the current room
-                Location back = RoomGen.center(world, curRoom, BASE_Y, spacing);
-                p.teleport(back);
-                return;
-            }
-            // Consume one key
-            ps.keys--;
-            p.sendMessage("§aYou use a key to unlock the door! §7(§e" + ps.keys + " keys remaining§7)");
-            // Play unlock effects
-            Location doorLoc = RoomGen.center(world, target, BASE_Y, spacing);
-            world.playSound(doorLoc, org.bukkit.Sound.BLOCK_CHEST_OPEN, 1.0f, 1.0f);
-            world.playSound(doorLoc, org.bukkit.Sound.BLOCK_IRON_DOOR_OPEN, 1.0f, 1.2f);
-            world.spawnParticle(org.bukkit.Particle.PORTAL, doorLoc.clone().add(0, 1.5, 0), 30, 1.5, 1.5, 8, 0.3);
-            // Remove the IRON_BLOCK door barrier
-            removeLockedDoorBarrier(target);
-            // Mark the room as cleared so it doesn't re-lock, and spawn loot
-            target.cleared = true;
-            spawnRoomPickups(target);
+            p.sendMessage("§cThis room is locked — right-click the iron door with a key to unlock it!");
+            // Teleport the player back to the center of the current room
+            Location back = RoomGen.center(world, curRoom, BASE_Y, spacing);
+            p.teleport(back);
+            return;
         }
         enterRoom(target);
     }
 
     /** Remove the IRON_BLOCK door barrier for a LOCKED room. */
     private void removeLockedDoorBarrier(Floor.RoomNode n) {
+        setLockedBarrier(n, Material.AIR);
+    }
+
+    /** Place the IRON_BLOCK door barrier for a LOCKED room. Runs as a post-pass after every room is
+     *  built, so a neighbour room's corridor carve can never overwrite the locked door away. */
+    private void placeLockedDoorBarrier(Floor.RoomNode n) {
+        setLockedBarrier(n, Material.IRON_BLOCK);
+    }
+
+    /** Fill or clear the 3-wide, full-height doorway of a LOCKED room. Shared geometry with
+     *  {@code sealDoors} so the barrier lines up with the carved door and its unlock click. */
+    private void setLockedBarrier(Floor.RoomNode n, Material mat) {
         int[] DX = {0, 1, 0, -1};
         int[] DZ = {-1, 0, 1, 0};
         Location c = RoomGen.center(world, n, BASE_Y, spacing);
@@ -318,9 +332,7 @@ public final class DungeonInstance {
                 for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
                     int px = horiz ? wallX : (perpC + off);
                     int pz = horiz ? (perpC + off) : wallZ;
-                    if (world.getBlockAt(px, y, pz).getType() == Material.IRON_BLOCK) {
-                        world.getBlockAt(px, y, pz).setType(Material.AIR);
-                    }
+                    world.getBlockAt(px, y, pz).setType(mat);
                 }
             }
         }
@@ -370,6 +382,52 @@ public final class DungeonInstance {
                 le.setHealth(top.maxHp);
             }
         }
+    }
+
+    /** Make a SHOP room read as a shop: a raised emerald counter to right-click, a standing "SHOP"
+     *  sign beside it, and a named, no-AI Villager shopkeeper. Only spawned once per room per floor. */
+    private void setupShopRoom(Floor.RoomNode n) {
+        long k = run.floor.key(n.x, n.z);
+        Location c = RoomGen.center(world, n, BASE_Y, spacing);
+        // offset the counter away from the exact spawn tile (the player lands at center, baseY+1)
+        int cx = c.getBlockX(), cz = c.getBlockZ() + 2;
+        // raised emerald counter (the interact target) sitting on a stone base
+        world.getBlockAt(cx, BASE_Y, cz).setType(Material.STONE);
+        world.getBlockAt(cx, BASE_Y + 1, cz).setType(Material.EMERALD_BLOCK);
+        // standing wooden sign reading "SHOP"
+        Location signLoc = new Location(world, c.getBlockX(), BASE_Y + 1, c.getBlockZ() + 1);
+        world.getBlockAt(signLoc).setType(Material.OAK_SIGN);
+        if (world.getBlockAt(signLoc).getState() instanceof Sign sign) {
+            var legacy = LegacyComponentSerializer.legacySection();
+            sign.setEditable(false);
+            sign.line(0, legacy.deserialize("§6§lSHOP"));
+            sign.line(1, legacy.deserialize("§7Right-click the"));
+            sign.line(2, legacy.deserialize("§7emerald counter"));
+            sign.update();
+        }
+        if (shopSpawned.add(k)) spawnShopkeeper(c);
+    }
+
+    /** Spawn a passive, named Villager shopkeeper next to the counter to make the shop obvious. */
+    private void spawnShopkeeper(Location c) {
+        Villager v = world.spawn(c.clone().add(2, 0, 1), Villager.class);
+        v.setCustomName("§6Shopkeeper");
+        v.setCustomNameVisible(true);
+        v.setAI(false);
+        v.setSilent(true);
+        v.setInvulnerable(true);
+        v.setCollidable(false);
+        v.addScoreboardTag("dung.shopkeeper");
+        shopkeepers.add(v);
+    }
+
+    /** Despawn all shopkeepers and forget this floor's spawned shop rooms. */
+    private void clearShopkeepers() {
+        for (Villager v : shopkeepers) {
+            if (v.isValid()) v.remove();
+        }
+        shopkeepers.clear();
+        shopSpawned.clear();
     }
 
     private static final MobType[] WEAK = {MobType.GAPER, MobType.FLY, MobType.SPIDER};
@@ -579,6 +637,8 @@ public final class DungeonInstance {
             if (Math.abs(p.getHealth() - real) > 1.0E-4) p.setHealth(real);
             p.setSaturation(0);
             p.setFoodLevel(10);
+            // Sync key/bomb hotbar items
+            syncHotbarItems(p);
         }
 
         refreshUI();
@@ -673,7 +733,12 @@ public final class DungeonInstance {
             p.sendMessage("§cNot enough mana or on cooldown.");
             return;
         }
+        if (!st.canCast(PlayerState.GCD_KEY, 0, PlayerState.GCD_MS)) {
+            p.sendMessage("§cToo fast!");
+            return;
+        }
         st.spendMana(cost);
+        st.startCooldown(PlayerState.GCD_KEY, PlayerState.GCD_MS);
         st.startCooldown(id, cd);
         dispatchAbility(id, st, p);
     }
@@ -700,7 +765,12 @@ public final class DungeonInstance {
             p.sendMessage("§cNot enough mana or on cooldown.");
             return;
         }
+        if (!st.canCast(PlayerState.GCD_KEY, 0, PlayerState.GCD_MS)) {
+            p.sendMessage("§cToo fast!");
+            return;
+        }
         st.spendMana(cost);
+        st.startCooldown(PlayerState.GCD_KEY, PlayerState.GCD_MS);
         st.startCooldown(abilityKey, cd);
         dispatchClassAbility(classId, st, p);
     }
@@ -1059,32 +1129,42 @@ public final class DungeonInstance {
      */
     private void carveSecretPassage(Floor.RoomNode secret) {
         Location wallLoc = secret.destructibleWallLoc;
-        if (wallLoc == null) return;
-        int wallDir = secret.secretWallDir;
-        boolean horiz = wallDir == 1 || wallDir == 3;
-        int[] DX = {0, 1, 0, -1};
-        int[] DZ = {-1, 0, 1, 0};
-        // The destructible wall is on the secret room's wall facing the parent combat room.
-        // We carve a 3-wide passage from this wall outward toward the combat room.
-        int axDir = horiz ? DX[wallDir] : DZ[wallDir];
-        int cx = wallLoc.getBlockX();
-        int cz = wallLoc.getBlockZ();
-        // Carve a passage from the wall outward for `spacing` blocks (enough to reach
-        // through the combat room's wall into its interior)
-        for (int t = 1; t <= spacing; t++) {
-            for (int off = -1; off <= 1; off++) {
-                int px = horiz ? (cx + axDir * t) : (cx + off);
-                int pz = horiz ? (cz + off) : (cz + axDir * t);
-                for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
-                    world.getBlockAt(px, y, pz).setType(Material.AIR);
+        Floor.RoomNode parent = secret.secretParent;
+        if (wallLoc == null || parent == null) return;
+        int wDir = secret.secretWallDir;
+        boolean horiz = wDir == 1 || wDir == 3;
+        // secret -> parent along-axis direction (+1 or -1 in grid units)
+        int asg = horiz ? Integer.signum(parent.x - secret.x) : Integer.signum(parent.z - secret.z);
+        int sbx = secret.x * spacing, sbz = secret.z * spacing;
+        int axC = horiz ? (sbx + RoomGen.WALL + secret.sizeW / 2) : (sbz + RoomGen.WALL + secret.sizeH / 2);
+        int perpC = horiz ? (sbz + RoomGen.PERP_CENTER) : (sbx + RoomGen.PERP_CENTER);
+        // wall faces along the corridor axis (same scheme as normal door carving)
+        int sWallT = RoomGen.WALL + (horiz ? secret.sizeW / 2 : secret.sizeH / 2);
+        int pWallT = spacing - (RoomGen.WALL + (horiz ? parent.sizeW / 2 : parent.sizeH / 2));
+        if (pWallT <= sWallT) pWallT = sWallT + 1;
+        // Build a proper walled corridor between the secret's wall face and the parent's wall face
+        // (3-wide tunnel with solid side walls), instead of punching a bare tunnel through every
+        // block for `spacing` tiles (which carved through floors and unrelated walls).
+        int COW = RoomGen.LONG / 2;
+        for (int t = sWallT; t <= pWallT; t++) {
+            for (int off = -COW; off <= COW; off++) {
+                boolean passage = Math.abs(off) <= 1;
+                int ax = axC + asg * t;
+                int px = horiz ? ax : (perpC + off);
+                int pz = horiz ? (perpC + off) : ax;
+                for (int y = BASE_Y; y <= BASE_Y + RoomGen.ROOM_HEIGHT + 1; y++) {
+                    if (y == BASE_Y) {
+                        world.getBlockAt(px, y, pz).setType(passage ? Material.POLISHED_ANDESITE : Material.STONE_BRICKS);
+                    } else if (y == BASE_Y + RoomGen.ROOM_HEIGHT + 1) {
+                        world.getBlockAt(px, y, pz).setType(Material.STONE_BRICKS);
+                    } else {
+                        world.getBlockAt(px, y, pz).setType(passage ? Material.AIR : Material.STONE_BRICKS);
+                    }
                 }
-                // Floor the passage
-                world.getBlockAt(px, BASE_Y, pz).setType(Material.POLISHED_ANDESITE);
-                // Roof the passage
-                world.getBlockAt(px, BASE_Y + RoomGen.ROOM_HEIGHT + 1, pz).setType(Material.STONE_BRICKS);
             }
         }
-        // Place the destructible wall (CRACKED_STONE_BRICKS) at the secret room's wall face
+        // Place the destructible wall (CRACKED_STONE_BRICKS) sealing the secret's end of the corridor
+        int cx = wallLoc.getBlockX(), cz = wallLoc.getBlockZ();
         for (int off = -1; off <= 1; off++) {
             for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
                 int px = horiz ? cx : (cx + off);
@@ -1122,6 +1202,73 @@ public final class DungeonInstance {
     public boolean isDestructibleWall(Location loc) {
         Location key = new Location(world, loc.getBlockX(), loc.getBlockY(), loc.getBlockZ());
         return destructibleWalls.contains(key);
+    }
+
+    /**
+     * Attempt to unlock a locked room by right-clicking its IRON_BLOCK door barrier
+     * with a key item in hand. Consumes 1 key from the player's inventory.
+     */
+    public void tryUnlockRoom(Player p, Location blockLocation) {
+        if (!running || run == null || run.floor == null) return;
+        PlayerState st = run.playerStateOf(p.getUniqueId());
+        if (st == null || st.keys <= 0) {
+            p.sendMessage("§cYou need a key to unlock this door!");
+            return;
+        }
+        // Find which LOCKED room this barrier belongs to
+        Floor.RoomNode lockedRoom = null;
+        for (Floor.RoomNode n : run.floor.rooms()) {
+            if (n.type == RoomType.LOCKED && !n.cleared) {
+                // Check if the clicked block is within this room's door barrier area
+                int[] DX = {0, 1, 0, -1};
+                int[] DZ = {-1, 0, 1, 0};
+                Location c = RoomGen.center(world, n, BASE_Y, spacing);
+                int baseX = n.x * spacing, baseZ = n.z * spacing;
+                for (int d = 0; d < 4; d++) {
+                    if (!n.doors[d]) continue;
+                    boolean horiz = d == 1 || d == 3;
+                    int half = horiz ? n.sizeW / 2 : n.sizeH / 2;
+                    int wallX = c.getBlockX() + DX[d] * (half + RoomGen.WALL);
+                    int wallZ = c.getBlockZ() + DZ[d] * (half + RoomGen.WALL);
+                    int perpC = horiz ? (baseZ + RoomGen.PERP_CENTER) : (baseX + RoomGen.PERP_CENTER);
+                    for (int off = -1; off <= 1; off++) {
+                        for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
+                            int px = horiz ? wallX : (perpC + off);
+                            int pz = horiz ? (perpC + off) : wallZ;
+                            if (blockLocation.getBlockX() == px && blockLocation.getBlockY() == y && blockLocation.getBlockZ() == pz) {
+                                lockedRoom = n;
+                                break;
+                            }
+                        }
+                        if (lockedRoom != null) break;
+                    }
+                    if (lockedRoom != null) break;
+                }
+            }
+            if (lockedRoom != null) break;
+        }
+        if (lockedRoom == null) return;
+
+        // Consume 1 key
+        st.keys--;
+        p.sendMessage("§aYou use a key to unlock the door! §7(§e" + st.keys + " keys remaining§7)");
+
+        // Play unlock effects
+        Location doorLoc = RoomGen.center(world, lockedRoom, BASE_Y, spacing);
+        world.playSound(doorLoc, org.bukkit.Sound.BLOCK_CHEST_OPEN, 1.0f, 1.0f);
+        world.playSound(doorLoc, org.bukkit.Sound.BLOCK_IRON_DOOR_OPEN, 1.0f, 1.2f);
+        world.spawnParticle(org.bukkit.Particle.PORTAL, doorLoc.clone().add(0, 1.5, 0), 30, 1.5, 1.5, 8, 0.3);
+
+        // Remove the IRON_BLOCK door barrier
+        removeLockedDoorBarrier(lockedRoom);
+
+        // Mark the room as cleared so it doesn't re-lock, and spawn loot
+        lockedRoom.cleared = true;
+        spawnRoomPickups(lockedRoom);
+
+        // Teleport the player into the room
+        Location enterLoc = RoomGen.center(world, lockedRoom, BASE_Y, spacing).add(0, 1, 0);
+        p.teleport(enterLoc);
     }
 
     /**
@@ -1217,6 +1364,123 @@ public final class DungeonInstance {
         return null;
     }
 
+    // ---------- key/bomb hotbar items ----------
+
+    /** Slot index for the key item (7th hotbar slot, 0-indexed). */
+    private static final int KEY_SLOT = 6;
+    /** Slot index for the bomb item (8th hotbar slot, 0-indexed). */
+    private static final int BOMB_SLOT = 7;
+
+    /** Create an enchanted key item for the hotbar. */
+    private static ItemStack makeKeyItem() {
+        ItemStack s = new ItemStack(Material.TRIPWIRE_HOOK);
+        s.editMeta(meta -> {
+            meta.setDisplayName("§9§lKey");
+            meta.addEnchant(org.bukkit.enchantments.Enchantment.UNBREAKING, 1, true);
+            meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+            meta.getPersistentDataContainer().set(
+                    org.bukkit.NamespacedKey.minecraft(ItemTags.RUN_ITEM),
+                    org.bukkit.persistence.PersistentDataType.STRING, "key");
+        });
+        return s;
+    }
+
+    /** Create an enchanted bomb item for the hotbar. */
+    private static ItemStack makeBombItem() {
+        ItemStack s = new ItemStack(Material.TNT);
+        s.editMeta(meta -> {
+            meta.setDisplayName("§4§lBomb");
+            meta.addEnchant(org.bukkit.enchantments.Enchantment.UNBREAKING, 1, true);
+            meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+            meta.getPersistentDataContainer().set(
+                    org.bukkit.NamespacedKey.minecraft(ItemTags.RUN_ITEM),
+                    org.bukkit.persistence.PersistentDataType.STRING, "bomb");
+        });
+        return s;
+    }
+
+    /** Check if an item is a Dung run item (key or bomb). */
+    public static boolean isRunItem(ItemStack s) {
+        if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return false;
+        return s.getItemMeta().getPersistentDataContainer().has(
+                org.bukkit.NamespacedKey.minecraft(ItemTags.RUN_ITEM),
+                org.bukkit.persistence.PersistentDataType.STRING);
+    }
+
+    /** Check if an item is a Dung key item. */
+    public static boolean isKeyItem(ItemStack s) {
+        if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return false;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        var key = org.bukkit.NamespacedKey.minecraft(ItemTags.RUN_ITEM);
+        if (!pdc.has(key, org.bukkit.persistence.PersistentDataType.STRING)) return false;
+        return "key".equals(pdc.get(key, org.bukkit.persistence.PersistentDataType.STRING));
+    }
+
+    /** Check if an item is a Dung bomb item. */
+    public static boolean isBombItem(ItemStack s) {
+        if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return false;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        var key = org.bukkit.NamespacedKey.minecraft(ItemTags.RUN_ITEM);
+        if (!pdc.has(key, org.bukkit.persistence.PersistentDataType.STRING)) return false;
+        return "bomb".equals(pdc.get(key, org.bukkit.persistence.PersistentDataType.STRING));
+    }
+
+    /** Sync the key and bomb items into the player's hotbar slots 7 and 8.
+     *  Called every tick to keep them locked in place. */
+    private void syncHotbarItems(Player p) {
+        PlayerState st = run == null ? null : run.playerStateOf(p.getUniqueId());
+        if (st == null) return;
+        PlayerInventory inv = p.getInventory();
+
+        // Slot 7 (index 6): Key item
+        ItemStack keyItem = inv.getItem(KEY_SLOT);
+        if (st.keys > 0) {
+            ItemStack expected = makeKeyItem();
+            expected.setAmount(Math.min(st.keys, 64));
+            if (!itemsMatch(keyItem, expected)) {
+                inv.setItem(KEY_SLOT, expected);
+            }
+        } else {
+            if (keyItem != null && isRunItem(keyItem)) {
+                inv.setItem(KEY_SLOT, null);
+            }
+        }
+
+        // Slot 8 (index 7): Bomb item
+        ItemStack bombItem = inv.getItem(BOMB_SLOT);
+        if (st.bombs > 0) {
+            ItemStack expected = makeBombItem();
+            expected.setAmount(Math.min(st.bombs, 64));
+            if (!itemsMatch(bombItem, expected)) {
+                inv.setItem(BOMB_SLOT, expected);
+            }
+        } else {
+            if (bombItem != null && isRunItem(bombItem)) {
+                inv.setItem(BOMB_SLOT, null);
+            }
+        }
+    }
+
+    /** Compare two ItemStacks for Dung run-item equality (type + PDC tag). */
+    private static boolean itemsMatch(ItemStack a, ItemStack b) {
+        if (a == null && b == null) return true;
+        if (a == null || b == null) return false;
+        if (a.getType() != b.getType()) return false;
+        if (a.getAmount() != b.getAmount()) return false;
+        boolean aIsRun = isRunItem(a);
+        boolean bIsRun = isRunItem(b);
+        return aIsRun == bIsRun;
+    }
+
+    /** Remove key/bomb run items from a player's hotbar slots 7 and 8. */
+    private static void clearHotbarItems(Player p) {
+        PlayerInventory inv = p.getInventory();
+        for (int slot : new int[]{KEY_SLOT, BOMB_SLOT}) {
+            ItemStack s = inv.getItem(slot);
+            if (s != null && isRunItem(s)) inv.setItem(slot, null);
+        }
+    }
+
     // ---------- utilities ----------
 
     public boolean playerHurt(Player p, double dmg) {
@@ -1286,6 +1550,7 @@ public final class DungeonInstance {
         tabs.remove(pid);
         // Remove player from the instance
         party.removeMember(pid);
+        GameManager.instance().removePlayerFromInstance(p);
         if (party.isEmpty()) {
             endRun();
         }
@@ -1295,10 +1560,10 @@ public final class DungeonInstance {
         PlayerInventory inv = p.getInventory();
         for (int slot = 0; slot < inv.getSize(); slot++) {
             ItemStack s = inv.getItem(slot);
-            if (s != null && isRunOnly(s)) inv.setItem(slot, null);
+            if (s != null && (isRunOnly(s) || isRunItem(s))) inv.setItem(slot, null);
         }
         ItemStack off = inv.getItemInOffHand();
-        if (off != null && isRunOnly(off)) inv.setItemInOffHand(null);
+        if (off != null && (isRunOnly(off) || isRunItem(off))) inv.setItemInOffHand(null);
         org.bukkit.inventory.EquipmentSlot[] slots = {
                 org.bukkit.inventory.EquipmentSlot.FEET,
                 org.bukkit.inventory.EquipmentSlot.LEGS,
@@ -1309,6 +1574,7 @@ public final class DungeonInstance {
         for (int i = 0; i < armor.length; i++) {
             if (armor[i] != null && isRunOnly(armor[i])) inv.setItem(slots[i], null);
         }
+        clearHotbarItems(p);
     }
 
     private static boolean isRunOnly(ItemStack s) {
@@ -1408,6 +1674,7 @@ public final class DungeonInstance {
         for (List<Enemy> es : roomEnemies.values()) for (Enemy e : es) e.despawn();
         roomEnemies.clear();
         roomLocked.clear();
+        clearShopkeepers();
         if (boss != null) { boss.despawn(); boss = null; }
         clearPedestals();
         if (world != null && run != null && run.floor != null) {
@@ -1447,21 +1714,21 @@ public final class DungeonInstance {
             if (hud != null) hud.update(p, this, board);
             if (tab != null && refreshTab) tab.refresh(p, this, board);
 
-            // Throttled action bar
+            // Throttled action bar — ONE writer (HUD.sendBar) owns the action bar, so the nearby-secret
+            // hint is folded in as a suffix here instead of a second sendActionBar cadence (which flickered).
             PlayerState st = run.playerStateOf(p.getUniqueId());
             if (st == null) continue;
             barTick++;
+            String secretHint = "";
+            if (st.bombs > 0 && adjacentSecretRoom() != null) {
+                secretHint = "§7You sense a hidden room nearby... §4[Use a bomb on the cracked wall]";
+            }
             Double lastH = lastBarHearts.get(p.getUniqueId());
             Double lastM = lastBarMana.get(p.getUniqueId());
             if (barTick % 5 == 0 || st.hearts != (lastH != null ? lastH : -1) || st.mana != (lastM != null ? lastM : -1)) {
-                hud.sendBar(p, st);
+                hud.sendBar(p, st, secretHint);
                 lastBarHearts.put(p.getUniqueId(), st.hearts);
                 lastBarMana.put(p.getUniqueId(), st.mana);
-            }
-            // Bomb wall hint: if the player is in a combat room with an adjacent secret
-            // and has bombs, show a hint in the action bar
-            if (barTick % 20 == 0 && st.bombs > 0 && adjacentSecretRoom() != null) {
-                p.sendActionBar("§7You sense a hidden room nearby... §4[Use a bomb on the cracked wall]");
             }
         }
     }

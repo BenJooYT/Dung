@@ -9,12 +9,12 @@ import java.util.List;
 public final class Upgrades {
     public record Track(String id, String label, int baseCost, int costPerLevel, int maxLevel) {}
 
-    public static final Track DAMAGE = new Track("damage", "Permanent Damage", 3, 2, 10);
-    public static final Track HEARTS = new Track("hearts", "Max Hearts", 4, 3, 10);
-    public static final Track DEFENSE = new Track("defense", "Defense", 5, 4, 10);
-    public static final Track CRIT = new Track("crit", "Crit Chance", 4, 3, 10);
-    public static final Track SPEED = new Track("speed", "Move Speed", 6, 5, 5);
-    public static final Track MANA = new Track("mana", "Max Mana", 3, 2, 10);
+    public static final Track DAMAGE = new Track("damage", "Permanent Damage", 6, 3, 15);
+    public static final Track HEARTS = new Track("hearts", "Max Hearts", 8, 4, 15);
+    public static final Track DEFENSE = new Track("defense", "Defense", 8, 5, 15);
+    public static final Track CRIT = new Track("crit", "Crit Chance", 8, 4, 15);
+    public static final Track SPEED = new Track("speed", "Move Speed", 10, 6, 8);
+    public static final Track MANA = new Track("mana", "Max Mana", 6, 3, 15);
 
     public static final List<Track> ALL = List.of(DAMAGE, HEARTS, DEFENSE, CRIT, SPEED, MANA);
 
@@ -33,11 +33,11 @@ public final class Upgrades {
     /** Permanent stat delta per owned level of a track. */
     public static int delta(Track t) {
         return switch (t.id()) {
-            case "damage" -> 2;
-            case "hearts" -> 10;
+            case "damage" -> 1;
+            case "hearts" -> 5;
             case "defense" -> 1;
-            case "mana" -> 10;
-            case "speed" -> 5;
+            case "mana" -> 5;
+            case "speed" -> 3;
             default -> 0; // crit handled as a fraction elsewhere
         };
     }

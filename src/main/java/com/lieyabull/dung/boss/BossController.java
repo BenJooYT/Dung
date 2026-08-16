@@ -37,7 +37,6 @@ public final class BossController {
     private int warning = 0;     // warning ticks remaining (boss holds still during these)
     private int pending = 0;     // attack to fire once the warning ends
     private double warnAngle = 0;// threatened direction for the telegraphed beam
-    private final Location anchor;
 
     /** Enrage past 50% HP: faster patterns, extra hurt. */
     private boolean enraged() {
@@ -59,11 +58,16 @@ public final class BossController {
         this.floor = floor;
         this.plugin = plugin;
         this.onDefeated = onDefeated;
-        this.anchor = center;
         this.maxHp = (60 + floor * 25) * Math.max(1, partySize);
         this.hp = maxHp;
         this.boss = w.spawnEntity(center, EntityType.ZOGLIN);
         boss.setPersistent(true);
+        // Slightly above base player walk speed but below sprint, so the Warden can run the player
+        // down unless they sprint to escape — "only slightly outrunnable".
+        if (boss instanceof org.bukkit.entity.LivingEntity le) {
+            var spd = le.getAttribute(org.bukkit.attribute.Attribute.MOVEMENT_SPEED);
+            if (spd != null) spd.setBaseValue(0.12);
+        }
         // Tag so the damage listener blocks the boss's native vanilla melee (Dung applies its own
         // PlayerState-based damage in tick()/fire(), so the vanilla hit must not reach real HP).
         boss.addScoreboardTag("dung.entity");
@@ -88,7 +92,9 @@ public final class BossController {
         if (!boss.isValid()) return;
         patternTimer++;
         boolean rage = enraged();
-        Location center = anchor.clone();
+        // All attacks originate from the boss entity's actual position (not the room-center anchor),
+        // so the laser "core" travels with the boss instead of staying pinned mid-room.
+        Location center = boss.getLocation().clone();
         center.setY(p.getY());
 
         // --- warning phase: boss holds still and shows the threatened direction ---
@@ -100,7 +106,7 @@ public final class BossController {
             return;
         }
 
-        // boss stays still; only a small contact sting if the player walks into it
+        // only a small contact sting if the player walks into the boss
         if (p.getLocation().distance(center) < 1.6) {
             com.lieyabull.dung.game.GameManager.playerHurt(p, 25 + floor * 10);
         }
@@ -111,8 +117,9 @@ public final class BossController {
         int atk = (attackIndex % pool) + ATTACK_BEAM;  // 1..pool -> BEAM, SLAM, (RADIAL)
         attackIndex++;
         if (atk == ATTACK_BEAM) {
-            // telegraph toward the player's current direction so they can dodge the lane
-            warnAngle = Math.atan2(center.getZ() - p.getZ(), center.getX() - p.getX());
+            // telegraph along the direction FROM the boss TOWARD the player (was the reverse, which
+            // fired the beam away from the player)
+            warnAngle = Math.atan2(p.getZ() - center.getZ(), p.getX() - center.getX());
         }
         pending = atk;
         warning = rage ? 14 : 18;

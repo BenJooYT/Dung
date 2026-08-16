@@ -79,6 +79,14 @@ public final class GearFactory {
                 org.bukkit.persistence.PersistentDataType.STRING);
     }
 
+    /** True if the item is persistent (survives death, bought with persistent currency). */
+    public static boolean isPersistent(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return false;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        return pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.PERSISTENT),
+                org.bukkit.persistence.PersistentDataType.STRING);
+    }
+
     /** Toggle the favorite flag; returns the new state (true = now favorited). */
     public static boolean toggleFavorite(ItemStack s) {
         final boolean[] state = {false};
@@ -211,15 +219,34 @@ public final class GearFactory {
     }
 
     /** First-run kit: a Frayed Blade + a full Cloth set, so a new player can fight immediately.
-     *  Order: [0]=weapon, [1..4]=helmet, chestplate, leggings, boots. Run gear (not persistent). */
+     *  Order: [0]=weapon, [1..4]=helmet, chestplate, leggings, boots. Run gear (not persistent),
+     *  marked STARTER so it is never salvageable. */
     public static ItemStack[] starter() {
         return new ItemStack[]{
-                weapon("frayed_blade", "Frayed Blade", Material.IRON_SWORD, Rarity.COMMON, 5, 0, "Rush", 15),
-                armor("cloth_0", "Cloth", Material.LEATHER_HELMET, Rarity.COMMON, 1, 0),
-                armor("cloth_1", "Cloth", Material.LEATHER_CHESTPLATE, Rarity.COMMON, 1, 0),
-                armor("cloth_2", "Cloth", Material.LEATHER_LEGGINGS, Rarity.COMMON, 1, 0),
-                armor("cloth_3", "Cloth", Material.LEATHER_BOOTS, Rarity.COMMON, 1, 0),
+                markStarter(weapon("frayed_blade", "Frayed Blade", Material.IRON_SWORD, Rarity.COMMON, 5, 0, "Rush", 15)),
+                markStarter(armor("cloth_0", "Cloth", Material.LEATHER_HELMET, Rarity.COMMON, 1, 0)),
+                markStarter(armor("cloth_1", "Cloth", Material.LEATHER_CHESTPLATE, Rarity.COMMON, 1, 0)),
+                markStarter(armor("cloth_2", "Cloth", Material.LEATHER_LEGGINGS, Rarity.COMMON, 1, 0)),
+                markStarter(armor("cloth_3", "Cloth", Material.LEATHER_BOOTS, Rarity.COMMON, 1, 0)),
         };
+    }
+
+    /** Flag gear as part of the free starter kit (skipped by salvage). */
+    public static ItemStack markStarter(ItemStack s) {
+        s.editMeta(meta -> {
+            meta.getPersistentDataContainer().set(
+                    org.bukkit.NamespacedKey.minecraft(ItemTags.STARTER),
+                    org.bukkit.persistence.PersistentDataType.STRING, "true");
+        });
+        return s;
+    }
+
+    /** True if the item is free starter-kit gear (never salvageable). */
+    public static boolean isStarter(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return false;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        return pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.STARTER),
+                org.bukkit.persistence.PersistentDataType.STRING);
     }
 
     public static ItemStack armor(String id, String name, Material mat, Rarity r, int defense, int health) {

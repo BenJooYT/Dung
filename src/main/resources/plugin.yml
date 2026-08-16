@@ -23,6 +23,12 @@ commands:
   party:
     description: Party management commands
     usage: /party <create|invite|accept|decline|leave|kick|disband>
+  plots:
+    description: Teleport to the plots world or warp to a named plot
+    usage: /plots [warp <name>]
+  plot:
+    description: Plot management commands
+    usage: /plot <claim|home|name|warp|unclaim>
 permissions:
   dung.admin:
     description: Admin debug commands

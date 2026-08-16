@@ -19,6 +19,8 @@ public final class ItemTags {
     public static final String COST = "dung.cost";
     public static final String DURABILITY = "dung.durability";
     public static final String MAX_DURABILITY = "dung.maxdurability";
+    public static final String RUN_ITEM = "dung.runitem";   // key|bomb — run-only hotbar item
+    public static final String STARTER = "dung.starter";    // free starter-kit gear — never salvageable
 
     private ItemTags() {}
 }

@@ -133,6 +133,30 @@ public final class GameListener implements Listener {
         }
     }
 
+    /** Prevent key/bomb run items from being moved, shift-clicked, or dragged out of their hotbar
+     *  slots. They are visual-only synced from PlayerState; letting them move lets syncHotbarItems
+     *  spawn a fresh copy in the slot, desyncing the counter from the physical item and duplicating it. */
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onInventoryClick(org.bukkit.event.inventory.InventoryClickEvent e) {
+        if (!(e.getWhoClicked() instanceof Player p)) return;
+        DungeonInstance di = instanceOf(p);
+        if (di == null) return;
+        if (DungeonInstance.isRunItem(e.getCurrentItem()) || DungeonInstance.isRunItem(e.getCursor())) {
+            e.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onInventoryDrag(org.bukkit.event.inventory.InventoryDragEvent e) {
+        if (!(e.getWhoClicked() instanceof Player p)) return;
+        DungeonInstance di = instanceOf(p);
+        if (di == null) return;
+        if (DungeonInstance.isRunItem(e.getOldCursor()) || DungeonInstance.isRunItem(e.getCursor())
+                || e.getNewItems().values().stream().anyMatch(DungeonInstance::isRunItem)) {
+            e.setCancelled(true);
+        }
+    }
+
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
         Player p = e.getPlayer();
@@ -145,13 +169,19 @@ public final class GameListener implements Listener {
         plugin.game().partyManager().onPlayerQuit(p);
     }
 
-    /** Sneak + drop (Q) casts the player's class-specific active ability. */
+    /** Sneak + drop (Q) casts the player's class-specific active ability.
+     *  Non-sneak drop of key/bomb run items is also cancelled to keep them locked. */
     @EventHandler
     public void onDropItem(PlayerDropItemEvent e) {
         Player p = e.getPlayer();
-        if (!p.isSneaking()) return;
         DungeonInstance di = instanceOf(p);
         if (di == null) return;
+        // Prevent dropping key/bomb run items
+        if (DungeonInstance.isRunItem(e.getItemDrop().getItemStack())) {
+            e.setCancelled(true);
+            return;
+        }
+        if (!p.isSneaking()) return;
         e.setCancelled(true);
         di.tryCastClassAbility(p);
     }
@@ -227,10 +257,24 @@ public final class GameListener implements Listener {
                 && e.getClickedBlock().getType() == Material.EMERALD_BLOCK) {
             di.openShop(p);
         }
-        // bomb wall: right-click a destructible wall (CRACKED_STONE_BRICKS)
+        // locked room: right-click an IRON_BLOCK barrier with a key item
+        if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getClickedBlock() != null
+                && e.getClickedBlock().getType() == Material.IRON_BLOCK) {
+            ItemStack heldItem = p.getInventory().getItemInMainHand();
+            if (DungeonInstance.isKeyItem(heldItem)) {
+                e.setCancelled(true);
+                di.tryUnlockRoom(p, e.getClickedBlock().getLocation());
+                return;
+            }
+        }
+        // bomb wall: right-click a destructible wall (CRACKED_STONE_BRICKS) with a bomb item
         if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getClickedBlock() != null
                 && e.getClickedBlock().getType() == Material.CRACKED_STONE_BRICKS) {
-            di.tryBombWall(p, e.getClickedBlock().getLocation());
+            ItemStack heldItem = p.getInventory().getItemInMainHand();
+            if (DungeonInstance.isBombItem(heldItem)) {
+                e.setCancelled(true);
+                di.tryBombWall(p, e.getClickedBlock().getLocation());
+            }
         }
     }
 
@@ -246,6 +290,10 @@ public final class GameListener implements Listener {
             if (di.claimPedestal(p, slabLoc)) {
                 e.setCancelled(true);
             }
+        } else if (e.getRightClicked() instanceof org.bukkit.entity.Villager v
+                && v.getScoreboardTags().contains("dung.shopkeeper")) {
+            e.setCancelled(true);
+            di.openShop(p);
         }
     }
 

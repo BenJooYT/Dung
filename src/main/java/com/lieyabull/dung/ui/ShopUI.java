@@ -8,8 +8,7 @@ import com.lieyabull.dung.items.ItemPool;
 import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.meta.Upgrades;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
-import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
@@ -17,6 +16,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -24,7 +24,6 @@ import org.bukkit.inventory.meta.ItemMeta;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -60,8 +59,11 @@ public final class ShopUI implements Listener {
     private static final String GUI_PERSISTENT_SHOP = "persistent_shop";
     private static final String GUI_UPGRADES = "upgrades";
 
-    // Track which players have which GUI open to prevent cross-GUI click abuse
-    private final Map<UUID, String> openGuis = new ConcurrentHashMap<>();
+    // Track which GUIs are open (keyed by inventory, not player, so a purchase that
+    // re-opens the shop on top of the old one doesn't wipe the tracking on close).
+    private final Map<Inventory, String> openGuis = new ConcurrentHashMap<>();
+
+    private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.legacySection();
 
     private final Dung plugin;
 
@@ -80,7 +82,7 @@ public final class ShopUI implements Listener {
         if (st == null) return;
 
         Inventory inv = Bukkit.createInventory(null, RUN_SHOP_SIZE,
-                Component.text("§8Shop  §7(Floor " + (di.run().floorIndex + 1) + ")  §e" + st.coins + " coins"));
+                LEGACY.deserialize("§8Shop  §7(Floor " + (di.run().floorIndex + 1) + ")  §x§b§8§8§6§0§b" + st.coins + " coins"));
 
         // Row 0: Gear
         // Slot 0: Random Weapon
@@ -123,7 +125,7 @@ public final class ShopUI implements Listener {
         // Fill empty slots with glass pane
         fillEmpty(inv);
 
-        openGuis.put(p.getUniqueId(), GUI_RUN_SHOP);
+        openGuis.put(inv, GUI_RUN_SHOP);
         p.openInventory(inv);
     }
 
@@ -137,7 +139,7 @@ public final class ShopUI implements Listener {
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
 
         Inventory inv = Bukkit.createInventory(null, PERSISTENT_SHOP_SIZE,
-                Component.text("§8Dung Shop  §6" + prof.persistentCoins + " coins  §b" + prof.shards + " shards"));
+                LEGACY.deserialize("§8Dung Shop  §x§b§8§8§6§0§b" + prof.persistentCoins + " coins  §3" + prof.shards + " shards"));
 
         // Slot 0: Random Weapon (persistent)
         inv.setItem(0, makeShopItem(Material.DIAMOND_SWORD, "§fRandom Weapon",
@@ -164,7 +166,7 @@ public final class ShopUI implements Listener {
 
         fillEmpty(inv);
 
-        openGuis.put(p.getUniqueId(), GUI_PERSISTENT_SHOP);
+        openGuis.put(inv, GUI_PERSISTENT_SHOP);
         p.openInventory(inv);
     }
 
@@ -177,7 +179,7 @@ public final class ShopUI implements Listener {
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
 
         Inventory inv = Bukkit.createInventory(null, UPGRADES_SIZE,
-                Component.text("§8Upgrades  §b" + prof.shards + " shards"));
+                LEGACY.deserialize("§8Upgrades  §3" + prof.shards + " shards"));
 
         for (int i = 0; i < Upgrades.ALL.size(); i++) {
             Upgrades.Track t = Upgrades.ALL.get(i);
@@ -215,7 +217,7 @@ public final class ShopUI implements Listener {
 
         fillEmpty(inv);
 
-        openGuis.put(p.getUniqueId(), GUI_UPGRADES);
+        openGuis.put(inv, GUI_UPGRADES);
         p.openInventory(inv);
     }
 
@@ -224,7 +226,7 @@ public final class ShopUI implements Listener {
     @EventHandler
     public void onClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
-        String guiType = openGuis.get(p.getUniqueId());
+        String guiType = openGuis.get(e.getInventory());
         if (guiType == null) return;
         e.setCancelled(true);
 
@@ -249,9 +251,25 @@ public final class ShopUI implements Listener {
 
     @EventHandler
     public void onClose(InventoryCloseEvent e) {
-        if (e.getPlayer() instanceof Player p) {
-            openGuis.remove(p.getUniqueId());
+        if (e.getPlayer() instanceof Player) {
+            openGuis.remove(e.getInventory());
         }
+    }
+
+    /** Cancel drags within a tracked GUI so shop items can't be pulled out or swapped in. */
+    @EventHandler
+    public void onDrag(InventoryDragEvent e) {
+        if (e.getWhoClicked() instanceof Player && openGuis.get(e.getInventory()) != null) {
+            e.setCancelled(true);
+        }
+    }
+
+    /** Defer a GUI open by one tick. Opening a new inventory synchronously from inside an
+     *  InventoryClickEvent makes the resulting InventoryCloseEvent report the *new* inventory,
+     *  which onClose then removes from {@link #openGuis} — leaving the shop untracked (and thus
+     *  an unprotected generic container). Running it on the next tick keeps tracking intact. */
+    private void reopen(Runnable open) {
+        Bukkit.getScheduler().runTask(plugin, open);
     }
 
     // ==================== CLICK HANDLERS ====================
@@ -306,7 +324,7 @@ public final class ShopUI implements Listener {
             });
         }
         // Refresh the GUI to show updated coin count
-        openRunShop(p, di);
+        reopen(() -> openRunShop(p, di));
     }
 
     private void handlePersistentShopClick(Player p, String action) {
@@ -324,7 +342,7 @@ public final class ShopUI implements Listener {
                 GearFactory.initDurability(s);
                 p.getInventory().addItem(s);
                 p.sendMessage("§aPurchased weapon! §7(-§6" + PERSISTENT_WEAPON_COST + " coins§7)");
-                openPersistentShop(p); // refresh
+                reopen(() -> openPersistentShop(p)); // refresh
             }
             case "armor" -> {
                 if (prof.persistentCoins < PERSISTENT_ARMOR_COST) {
@@ -337,7 +355,7 @@ public final class ShopUI implements Listener {
                 GearFactory.initDurability(s);
                 p.getInventory().addItem(s);
                 p.sendMessage("§aPurchased armor! §7(-§6" + PERSISTENT_ARMOR_COST + " coins§7)");
-                openPersistentShop(p); // refresh
+                reopen(() -> openPersistentShop(p)); // refresh
             }
             case "repair" -> {
                 // Find the first damaged persistent item in the player's inventory
@@ -391,7 +409,7 @@ public final class ShopUI implements Listener {
                 GearFactory.repairItem(target, repairAmt);
                 plugin.meta().save();
                 p.sendMessage("§aRepaired item! §7(-§6" + cost + " coins§7)");
-                openPersistentShop(p); // refresh
+                reopen(() -> openPersistentShop(p)); // refresh
             }
             case "repair_all" -> {
                 int totalCost = 0;
@@ -448,15 +466,15 @@ public final class ShopUI implements Listener {
                 }
                 plugin.meta().save();
                 p.sendMessage("§aRepaired " + toRepair.size() + " item(s)! §7(-§6" + totalCost + " coins§7)");
-                openPersistentShop(p); // refresh
+                reopen(() -> openPersistentShop(p)); // refresh
             }
-            case "upgrades" -> openUpgrades(p);
+            case "upgrades" -> reopen(() -> openUpgrades(p));
         }
     }
 
     private void handleUpgradesClick(Player p, String action) {
         if ("back".equals(action)) {
-            openPersistentShop(p);
+            reopen(() -> openPersistentShop(p));
             return;
         }
 
@@ -478,7 +496,7 @@ public final class ShopUI implements Listener {
         prof.upgrades.put(t.id(), owned + 1);
         plugin.meta().save();
         p.sendMessage("§a" + t.label() + " §7is now §fLv " + (owned + 1) + "§7.");
-        openUpgrades(p); // refresh
+        reopen(() -> openUpgrades(p)); // refresh
     }
 
     // ==================== HELPERS ====================
@@ -495,10 +513,10 @@ public final class ShopUI implements Listener {
     private ItemStack makeShopItem(Material mat, String name, List<String> lore, String guiType, String action) {
         ItemStack s = new ItemStack(mat);
         ItemMeta meta = s.getItemMeta();
-        meta.displayName(Component.text(name));
+        meta.displayName(LEGACY.deserialize(name));
         List<Component> loreComponents = new ArrayList<>();
         for (String line : lore) {
-            loreComponents.add(Component.text(line));
+            loreComponents.add(LEGACY.deserialize(line));
         }
         meta.lore(loreComponents);
         meta.getPersistentDataContainer().set(
@@ -525,7 +543,7 @@ public final class ShopUI implements Listener {
             case "damage" -> "+" + (level * Upgrades.delta(t)) + " damage";
             case "hearts" -> "+" + (level * Upgrades.delta(t)) + " max HP";
             case "defense" -> "+" + (level * Upgrades.delta(t)) + " defense";
-            case "crit" -> "+" + level + "% crit chance";
+            case "crit" -> "+" + (level * 0.5) + "% crit chance";
             case "speed" -> "+" + (level * Upgrades.delta(t)) + "% move speed";
             case "mana" -> "+" + (level * Upgrades.delta(t)) + " max mana";
             default -> "";

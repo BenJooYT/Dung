@@ -41,7 +41,6 @@ public final class RoomGen {
         int ceilY = baseY + ROOM_HEIGHT + 1;
         // Visual themes per room type
         boolean boss = n.type == RoomType.BOSS;
-        boolean locked = n.type == RoomType.LOCKED;
         Material wallMat;
         Material floorMat;
         Material lightMat;
@@ -136,7 +135,18 @@ public final class RoomGen {
                 int axC  = horiz ? cx0 : cz0;                // along-axis origin
                 int perpC = horiz ? (sz + perpRef) : (sx + perpRef); // FIXED perpendicular center
                 int asg  = horiz ? DX[d] : DZ[d];            // along-axis direction sign
-                for (int t = 0; t <= spacing; t++) {
+                int half = horiz ? n.sizeW / 2 : n.sizeH / 2;
+                int innerWallT = WALL + half;        // this room's wall face (the doorway depth)
+                int nextWallT = spacing - innerWallT; // mirror: the neighbour seals its matching half
+                // guard: if spacing is ever too small the symmetric range would be empty/unsealed; keep
+                // at least the doorway block sealed so the tube can't open straight into the void
+                if (nextWallT <= innerWallT) nextWallT = innerWallT + 1;
+                // Carve ONLY the inter-room corridor: from this room's wall face to the neighbour's
+                // wall face. t ranges over [innerWallT, nextWallT] instead of the whole spacing, so
+                // the 3-wide passage and its floor never cut through either room's interior (the
+                // "corridor floor leaking into the room" bug). Because this room and the neighbour
+                // carve the SAME corridor, they still merge into one continuous tunnel.
+                for (int t = innerWallT; t <= nextWallT; t++) {
                     for (int off = -1; off <= 1; off++) {    // exactly 3 wide
                         int px = horiz ? (axC + asg * t) : (perpC + off);
                         int pz = horiz ? (perpC + off) : (axC + asg * t);
@@ -152,12 +162,6 @@ public final class RoomGen {
                 // spanning the widest room's interior, with the 3-wide passage (already carved above)
                 // cut through the middle. Sides are solid walls instead of open floor, so the corridor
                 // reads as a tunnel (not a room-in-a-room) and there is no void to fall into.
-                int half = horiz ? n.sizeW / 2 : n.sizeH / 2;
-                int innerWallT = WALL + half;        // this room's wall face (the doorway depth)
-                int nextWallT = spacing - innerWallT; // mirror: the neighbour seals its matching half
-                // guard: if spacing is ever too small the symmetric range would be empty/unsealed; keep
-                // at least the doorway block sealed so the tube can't open straight into the void
-                if (nextWallT <= innerWallT) nextWallT = innerWallT + 1;
                 int COW = LONG / 2;                   // solid mass covers the widest room interior
                 for (int t = innerWallT; t < nextWallT; t++) {
                     for (int off = -COW; off <= COW; off++) {
@@ -185,28 +189,16 @@ public final class RoomGen {
                     w.getBlockAt(px, baseY, pz).setType(Material.REDSTONE_BLOCK);
                     w.getBlockAt(px, baseY + ROOM_HEIGHT + 1, pz).setType(Material.SHROOMLIGHT);
                 }
-                // LOCKED room door barrier: place IRON_BLOCK at the doorway so it looks sealed.
-                // When a key is used, DungeonInstance will replace these with air.
-                if (locked) {
-                    int px = horiz ? (axC + asg * innerWallT) : perpC;
-                    int pz = horiz ? perpC : (axC + asg * innerWallT);
-                    for (int off = -1; off <= 1; off++) {
-                        for (int y = baseY + 1; y <= baseY + ROOM_HEIGHT; y++) {
-                            int bx = horiz ? px : (perpC + off);
-                            int bz = horiz ? (perpC + off) : pz;
-                            w.getBlockAt(bx, y, bz).setType(Material.IRON_BLOCK);
-                        }
-                    }
-                }
             }
         }
         // Apply room shape modifications after the basic shell is built
         applyShape(w, n, sx, sz, baseY, ceilY, wallMat, floorMat);
-        // interior lighting: glowstone set flush with the ceiling so tall rooms still light up
-        // (boss rooms use the red shroomlight for a menacing tint)
+        // interior lighting: glowstone set flush WITH the ceiling (at ceilY, the roof block itself)
+        // so the lamps are embedded in the roof rather than dangling below it. Tall rooms still
+        // light up because the ceiling sits one row above the tallest air block.
         for (int x = WALL + 1; x < wl - 1; x += 3) {
             for (int z = WALL + 1; z < wh - 1; z += 3) {
-                w.getBlockAt(sx + x, baseY + ROOM_HEIGHT, sz + z).setType(lightMat);
+                w.getBlockAt(sx + x, ceilY, sz + z).setType(lightMat);
             }
         }
     }

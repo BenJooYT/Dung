@@ -130,9 +130,10 @@ run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
 - **Shards** — earned in a run by breaking armor with `/salvage` (held piece) or `/salvage all`
   (every armor piece in the bag outside hotbar/equipment). Value scales with rarity and defense.
   Favorited pieces (`/salvage favorite`) are always skipped by salvage. Spent in `/upgrades` on
-  permanent stat upgrades: **Permanent Damage** (+2/lv),
-  **Max Hearts** (+10/lv), **Defense** (+1/lv), **Crit Chance** (+1%/lv), **Move Speed**
-  (+5%/lv), **Max Mana** (+10/lv). Each has a rising cost and a level cap.
+  permanent stat upgrades: **Permanent Damage** (+1/lv),
+  **Max Hearts** (+5/lv), **Defense** (+1/lv), **Crit Chance** (+0.5%/lv), **Move Speed**
+  (+3%/lv), **Max Mana** (+5/lv). Each has a rising cost and a level cap (see
+  [meta → Upgrades](#meta--persistent-progression) for exact curves).
 
 ---
 
@@ -243,6 +244,7 @@ typos into compile errors instead of silent save incompatibility. All tags live 
 | `dung.health` | int | health affix (adds max hearts) |
 | `dung.ability` | string | weapon ability id |
 | `dung.cost` | int | ability mana cost override |
+| `dung.runitem` | string | `"key"` or `"bomb"` — marks a hotbar run item |
 
 **`Rarity`** — SkyBlock-style enum: `COMMON`, `UNCOMMON`, `RARE`, `EPIC`, `LEGENDARY`,
 `MYTHIC`. Each carries a text color, a `statMult` (damage/defense multiplier), a `floorUnlock`
@@ -299,11 +301,15 @@ combat stats (`damage`, `defense`, `reach`, `critChance`, `critMult`, `speedMult
 - `isInvuln()`, `hurt(dmg)` — invuln check; damage mitigated by defense
   (`dmg * 100/(100+def)`, min 1), 500ms i-frame after each hit, records `lastDamageTime` (gates
   natural regen), sets `dead` at ≤0.
+- `hasDamageBoost()` / `hasGuaranteedCrit()` — class ability buffs: War Cry applies a
+  timed damage multiplier; Shadow Step applies a timed guaranteed crit.
 - `heal(amount)` — clamp to max.
 - `regenMana()` — per-tick mana regen (rate/20).
 - `regenHearts()` — **out-of-combat** HP regen: only when alive, not at max, and >5s since the
   last hit (`HEAL_DELAY_SECONDS`); rate `healPerSecond` (default 2/s), 0 disables it.
 - `canCast(id, cost, cdMs)`, `spendMana`, `startCooldown` — ability resource/cooldown gating.
+  A player-scoped **global cooldown** (`GCD_KEY`/`GCD_MS`, 400ms) is shared by every weapon and
+  class ability so rapid weapon-swapping can't bypass per-ability cooldowns and burst-stack casts.
 - `bestEquipRarity()` — highest rarity across equipped gear.
 
 **`GameManager`** — registry of `DungeonInstance`s, routes events per player.
@@ -322,7 +328,7 @@ boss, HUD, and world cleanup for a single run.
 Lifecycle:
 - `startRun(party, seed)` — resolves world, creates `Run` + per-player `PlayerState` (loads
   class + permanent upgrades, applies held gear), sets up scoreboards, grants starter kits,
-  fires tutorial for new profiles, then `enterFloor(0)`.
+  fires tutorial (including key/bomb hotbar instructions) for new profiles, then `enterFloor(0)`.
 - `enterFloor(i)` — randomizes spacing (22–28), generates + builds the floor, teleports all
   party members to the START room.
 - `enterRoom(n)` — marks visited, applies spawn-grace invuln, spawns enemies for un-cleared
@@ -343,19 +349,27 @@ Combat:
 - `tryCastAbility(p, item)` / `dispatchAbility(id, st)` — casts the held weapon's stored ability
   if mana + cooldown allow. Abilities: **Rush** `[5,1000]`, **Slash** `[12,2500]`, **Cleave**
   `[15,3000]`, **Smash** `[18,3500]`, **Blade Storm** `[25,4500]`, **Arcane Bolt** `[20,3500]`,
-  **Ravage** `[40,8000]`.
+  **Ravage** `[40,8000]`. All casts (weapon + class) respect a shared **400ms global cooldown**
+  keyed to the player, so swapping between different-ability weapons cannot stack casts.
 - `tryCastClassAbility(p)` / `dispatchClassAbility(id, st, caster)` — casts the player's
   class-specific active ability: **Warrior — War Cry** (10 mana, 8s cd: party damage boost +
   invuln), **Mage — Arcane Nova** (25 mana, 6s cd: AoE 2x damage), **Ranger — Shadow Step**
   (15 mana, 5s cd: teleport behind nearest enemy + guaranteed crit). Triggered by sneak+drop (Q).
 - `openShop(p)` — opens the chest GUI shop for the player in a SHOP room.
+- `tryUnlockRoom(p, loc)` — right-click an IRON_BLOCK barrier with a key item to unlock a
+  LOCKED room (consumes 1 key, spawns pedestal loot).
+- `tryBombWall(p, loc)` — right-click a CRACKED_STONE_BRICKS wall with a bomb item to blast
+  open a hidden SECRET room (consumes 1 bomb, reveals pedestal loot).
+- `syncHotbarItems(p)` — locks key (TRIPWIRE_HOOK) and bomb (TNT) items into hotbar slots 7-8,
+  synced every tick; items can't be dropped or moved.
 
 Rooms/rewards:
 - `onRoomClear(n, k)` — clears the room, opens doors, awards coins + gear.
 - `onRoomEnterBossCheck()` / `onBossDefeated()` — spawn/despawn the Warden, open doors, drop
   guaranteed rare+ loot, bank coins into persistent wallet (delta capped at 40).
 - `stripRunGear(p)` — removes run loot (Dung gear without `dung.persistent` + coin nuggets)
-  from storage/armor/offhand; permanent purchases survive. Runs on death and quit.
+  from storage/armor/offhand, plus key/bomb hotbar items; permanent purchases survive.
+  Runs on death and quit.
 
 Utilities:
 - `playerHurt(p, dmg)` (static) — applies `PlayerState.hurt` + red-hurt animation/sound.
@@ -386,11 +400,15 @@ raises damage. `damage(dmg)` updates the boss bar and, at 0, despawns + calls
 - `onDeath` / `onRespawn` — clean death teardown; force respawn at world spawn (see
   [death model](#death--persistence-model)).
 - `onHeldItem` / `onArmor` / `onInteract` — recompute stats on gear change; block block-place;
-  cast abilities on sneak+right-click; open the shop on the emerald block.
+  cast abilities on sneak+right-click; open the chest GUI shop on the emerald block;
+  unlock locked doors with key item on IRON_BLOCK; bomb destructible walls with bomb item
+  on CRACKED_STONE_BRICKS.
 - `onAttack` — left-click triggers `registerAttack()` and cancels the vanilla hit.
 - `onEnemyDamage` — **cancels all vanilla damage from Dung entities** (mobs + their projectiles,
   via `isDungSource`) so only `PlayerState`-based damage applies.
 - `onPickup` — intercepts pickups (heart/coin/key/bomb) and applies their effect.
+- `onDropItem` — sneak+drop (Q) casts class ability; non-sneak drop of key/bomb run items
+  is cancelled to keep them locked in the hotbar.
 - `onQuit` — ends the run (clears inventory) on logout.
 
 ### `meta` — persistent progression
@@ -412,11 +430,24 @@ backup**.
 cap, and the per-level stat `delta`.
 
 - `byId(id)` — look up a track by id.
-- `cost(t, level)` — shard cost of the next level.
+- `cost(t, level)` — shard cost of the next level (`baseCost + costPerLevel * level`).
 - `delta(t)` — permanent stat gained per level.
 
+Current curves (rebalanced for the high per-floor income):
+
+| Track | Delta/lv | baseCost / costPerLevel | Cap | Total to max | Max stat |
+|---|---|---|---|---|---|
+| Damage | +1 | 6 / 3 | 15 | 405 | +15 dmg |
+| Hearts | +5 | 8 / 4 | 15 | 540 | +75 HP |
+| Defense | +1 | 8 / 5 | 15 | 645 | +15 def |
+| Crit | +0.5% | 8 / 4 | 15 | 540 | +7.5% |
+| Speed | +3% | 10 / 6 | 8 | 248 | +24% |
+| Mana | +5 | 6 / 3 | 15 | 405 | +75 mana |
+
+Maxing all six tracks costs **2,783 shards** (~28–46 floors at typical income).
+
 The upgrades are applied in `PlayerState.applyUpgrades()` (after class passives):
-damage +2/lv, max hearts +10/lv, defense +1/lv, crit +1%/lv, move speed +5%/lv, max mana +10/lv.
+damage +1/lv, max hearts +5/lv, defense +1/lv, crit +0.5%/lv, move speed +3%/lv, max mana +5/lv.
 
 ### `pickup` — floor pickups
 
@@ -426,15 +457,16 @@ damage +2/lv, max hearts +10/lv, defense +1/lv, crit +1%/lv, move speed +5%/lv, 
 |---|---|---|
 | `RED_DYE` | HEART | heals 8 HP |
 | `GOLD_NUGGET` | COIN | +1 run coin |
-| `TRIPWIRE_HOOK` | KEY | +1 key (placeholder) |
-| `TNT` | BOMB | +1 bomb (placeholder) |
+| `TRIPWIRE_HOOK` | KEY | +1 key (used to unlock LOCKED rooms) |
+| `TNT` | BOMB | +1 bomb (used to blow through SECRET room walls) |
 
 - `isPickup(m)` / `typeOf(m)` / `apply(m, st)` / `stack(m)`.
 
 ### `ui` — HUD, tab menu & chat
 
-**`HUD`** — sidebar scoreboard with combat stats, run consumables, current room, boss status,
-class, and the longest running ability cooldown. `sendBar` paints the action bar:
+**`HUD`** — sidebar scoreboard with combat stats, run consumables (keys/bombs show hotbar slot
+hints `[slot 7]`/`[slot 8]`), current room, boss status, class, and the longest running ability
+cooldown. `sendBar` paints the action bar:
 `♥ <hearts>/<maxHearts> (<pct>)   ✦ <mana>/<maxMana>` (integer counts + percent).
 
 **`TabUI`** — tab menu (player-list slot) with layered detail: header (floor + class), combat
@@ -457,7 +489,8 @@ status (rooms explored/cleared, boss state).
 - **Defense** — reduces incoming damage: `dmg * 100/(100+defense)`, minimum 1.
 - **Critical hits** — `critChance` chance of `critMult` damage (rarity pushes both).
 - **Speed** — `speedMult` scales walk speed (`min(0.3, 0.2*speedMult)`).
-- **Mana** — regenerates per second; spent on weapon abilities with per-ability cooldowns.
+- **Mana** — regenerates per second; spent on weapon abilities with per-ability cooldowns. A
+  shared **400ms global cooldown** applies to all ability casts so weapon-swapping can't stack them.
 - **Permanent upgrades** — shard-bought levels from `/upgrades` add damage, max hearts, defense,
   crit chance, move speed, and max mana on top of gear and class every run.
 - **Natural healing** — out-of-combat regen (`healPerSecond`, 5s after damage). Vanilla hunger
@@ -549,7 +582,7 @@ immediately and spent in `/upgrades`.
 
 Headless JUnit tests under `src/test` cover the pure-logic paths that don't need a live Bukkit
 server: corridor geometry (`CorridorGeometryTest`), simulated floor generation where an agent
-clears every generated floor including the new bomb-disconnected `SECRET` rooms
+clears every generated floor including bomb-disconnected `SECRET` rooms
 (`SimulatedPlayerFloorTest`), rarity distribution across floors (`ItemPoolTest`), per-player
 stats (`PlayerStateTest`), permanent upgrades (`UpgradesTest`), and party lifecycle
 (`PartyManagerTest`). Run with `.\gradlew.bat --offline cleanTest test`.

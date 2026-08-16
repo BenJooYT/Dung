@@ -17,9 +17,9 @@ public class UpgradesTest {
         assertNotNull(t);
         assertEquals("damage", t.id());
         assertEquals("Permanent Damage", t.label());
-        assertEquals(3, t.baseCost());
-        assertEquals(2, t.costPerLevel());
-        assertEquals(10, t.maxLevel());
+        assertEquals(6, t.baseCost());
+        assertEquals(3, t.costPerLevel());
+        assertEquals(15, t.maxLevel());
     }
 
     @Test
@@ -27,10 +27,10 @@ public class UpgradesTest {
         Upgrades.Track t = Upgrades.byId("hearts");
         assertNotNull(t);
         assertEquals("hearts", t.id());
-        assertEquals("Max Hearts", t.label());
-        assertEquals(4, t.baseCost());
-        assertEquals(3, t.costPerLevel());
-        assertEquals(10, t.maxLevel());
+assertEquals("Max Hearts", t.label());
+        assertEquals(8, t.baseCost());
+        assertEquals(4, t.costPerLevel());
+        assertEquals(15, t.maxLevel());
     }
 
     @Test
@@ -38,10 +38,10 @@ public class UpgradesTest {
         Upgrades.Track t = Upgrades.byId("defense");
         assertNotNull(t);
         assertEquals("defense", t.id());
-        assertEquals("Defense", t.label());
-        assertEquals(5, t.baseCost());
-        assertEquals(4, t.costPerLevel());
-        assertEquals(10, t.maxLevel());
+assertEquals("Defense", t.label());
+        assertEquals(8, t.baseCost());
+        assertEquals(5, t.costPerLevel());
+        assertEquals(15, t.maxLevel());
     }
 
     @Test
@@ -49,10 +49,10 @@ public class UpgradesTest {
         Upgrades.Track t = Upgrades.byId("crit");
         assertNotNull(t);
         assertEquals("crit", t.id());
-        assertEquals("Crit Chance", t.label());
-        assertEquals(4, t.baseCost());
-        assertEquals(3, t.costPerLevel());
-        assertEquals(10, t.maxLevel());
+assertEquals("Crit Chance", t.label());
+        assertEquals(8, t.baseCost());
+        assertEquals(4, t.costPerLevel());
+        assertEquals(15, t.maxLevel());
     }
 
     @Test
@@ -60,10 +60,10 @@ public class UpgradesTest {
         Upgrades.Track t = Upgrades.byId("speed");
         assertNotNull(t);
         assertEquals("speed", t.id());
-        assertEquals("Move Speed", t.label());
-        assertEquals(6, t.baseCost());
-        assertEquals(5, t.costPerLevel());
-        assertEquals(5, t.maxLevel());
+assertEquals("Move Speed", t.label());
+        assertEquals(10, t.baseCost());
+        assertEquals(6, t.costPerLevel());
+        assertEquals(8, t.maxLevel());
     }
 
     @Test
@@ -72,9 +72,9 @@ public class UpgradesTest {
         assertNotNull(t);
         assertEquals("mana", t.id());
         assertEquals("Max Mana", t.label());
-        assertEquals(3, t.baseCost());
-        assertEquals(2, t.costPerLevel());
-        assertEquals(10, t.maxLevel());
+        assertEquals(6, t.baseCost());
+        assertEquals(3, t.costPerLevel());
+        assertEquals(15, t.maxLevel());
     }
 
     @Test
@@ -86,109 +86,109 @@ public class UpgradesTest {
 
     // ---- cost() ----
 
-    @Test
+@Test
     void costForDamageLevel0() {
-        // baseCost=3, costPerLevel=2, level=0 -> 3 + 2*0 = 3
-        assertEquals(3, Upgrades.cost(Upgrades.DAMAGE, 0));
+        // baseCost=6, costPerLevel=3, level=0 -> 6 + 3*0 = 6
+        assertEquals(6, Upgrades.cost(Upgrades.DAMAGE, 0));
     }
 
     @Test
     void costForDamageLevel1() {
-        // baseCost=3, costPerLevel=2, level=1 -> 3 + 2*1 = 5
-        assertEquals(5, Upgrades.cost(Upgrades.DAMAGE, 1));
+        // baseCost=6, costPerLevel=3, level=1 -> 6 + 3*1 = 9
+        assertEquals(9, Upgrades.cost(Upgrades.DAMAGE, 1));
     }
 
     @Test
     void costForDamageLevel5() {
-        // baseCost=3, costPerLevel=2, level=5 -> 3 + 2*5 = 13
-        assertEquals(13, Upgrades.cost(Upgrades.DAMAGE, 5));
+        // baseCost=6, costPerLevel=3, level=5 -> 6 + 3*5 = 21
+        assertEquals(21, Upgrades.cost(Upgrades.DAMAGE, 5));
     }
 
     @Test
     void costForHeartsLevel0() {
-        assertEquals(4, Upgrades.cost(Upgrades.HEARTS, 0));
+        assertEquals(8, Upgrades.cost(Upgrades.HEARTS, 0));
     }
 
     @Test
     void costForHeartsLevel1() {
-        assertEquals(7, Upgrades.cost(Upgrades.HEARTS, 1));
+        assertEquals(12, Upgrades.cost(Upgrades.HEARTS, 1));
     }
 
     @Test
     void costForHeartsLevel5() {
-        assertEquals(19, Upgrades.cost(Upgrades.HEARTS, 5));
+        assertEquals(28, Upgrades.cost(Upgrades.HEARTS, 5));
     }
 
     @Test
     void costForDefenseLevel0() {
-        assertEquals(5, Upgrades.cost(Upgrades.DEFENSE, 0));
+        assertEquals(8, Upgrades.cost(Upgrades.DEFENSE, 0));
     }
 
     @Test
     void costForDefenseLevel1() {
-        assertEquals(9, Upgrades.cost(Upgrades.DEFENSE, 1));
+        assertEquals(13, Upgrades.cost(Upgrades.DEFENSE, 1));
     }
 
     @Test
     void costForDefenseLevel5() {
-        assertEquals(25, Upgrades.cost(Upgrades.DEFENSE, 5));
+        assertEquals(33, Upgrades.cost(Upgrades.DEFENSE, 5));
     }
 
     @Test
     void costForCritLevel0() {
-        assertEquals(4, Upgrades.cost(Upgrades.CRIT, 0));
+        assertEquals(8, Upgrades.cost(Upgrades.CRIT, 0));
     }
 
     @Test
     void costForCritLevel1() {
-        assertEquals(7, Upgrades.cost(Upgrades.CRIT, 1));
+        assertEquals(12, Upgrades.cost(Upgrades.CRIT, 1));
     }
 
     @Test
     void costForCritLevel5() {
-        assertEquals(19, Upgrades.cost(Upgrades.CRIT, 5));
+        assertEquals(28, Upgrades.cost(Upgrades.CRIT, 5));
     }
 
     @Test
     void costForSpeedLevel0() {
-        assertEquals(6, Upgrades.cost(Upgrades.SPEED, 0));
+        assertEquals(10, Upgrades.cost(Upgrades.SPEED, 0));
     }
 
     @Test
     void costForSpeedLevel1() {
-        assertEquals(11, Upgrades.cost(Upgrades.SPEED, 1));
+        assertEquals(16, Upgrades.cost(Upgrades.SPEED, 1));
     }
 
     @Test
     void costForSpeedLevel5() {
-        assertEquals(31, Upgrades.cost(Upgrades.SPEED, 5));
+        assertEquals(40, Upgrades.cost(Upgrades.SPEED, 5));
     }
 
     @Test
     void costForManaLevel0() {
-        assertEquals(3, Upgrades.cost(Upgrades.MANA, 0));
+        assertEquals(6, Upgrades.cost(Upgrades.MANA, 0));
     }
 
     @Test
     void costForManaLevel1() {
-        assertEquals(5, Upgrades.cost(Upgrades.MANA, 1));
+        assertEquals(9, Upgrades.cost(Upgrades.MANA, 1));
     }
 
     @Test
     void costForManaLevel5() {
-        assertEquals(13, Upgrades.cost(Upgrades.MANA, 5));
+        assertEquals(21, Upgrades.cost(Upgrades.MANA, 5));
     }
 
     // ---- delta() ----
 
-    @Test
+@Test
     void deltaForDamage() {
-        assertEquals(2, Upgrades.delta(Upgrades.DAMAGE));
+        assertEquals(1, Upgrades.delta(Upgrades.DAMAGE));
     }
 
     @Test
     void deltaForHearts() {
-        assertEquals(10, Upgrades.delta(Upgrades.HEARTS));
+        assertEquals(5, Upgrades.delta(Upgrades.HEARTS));
     }
 
     @Test
@@ -198,12 +198,12 @@ public class UpgradesTest {
 
     @Test
     void deltaForMana() {
-        assertEquals(10, Upgrades.delta(Upgrades.MANA));
+        assertEquals(5, Upgrades.delta(Upgrades.MANA));
     }
 
     @Test
     void deltaForSpeed() {
-        assertEquals(5, Upgrades.delta(Upgrades.SPEED));
+        assertEquals(3, Upgrades.delta(Upgrades.SPEED));
     }
 
     @Test

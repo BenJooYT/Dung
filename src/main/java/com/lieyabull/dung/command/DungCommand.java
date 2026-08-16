@@ -230,10 +230,15 @@ public final class DungCommand implements CommandExecutor {
             p.sendMessage("§8That armor is §bfavorited§8. Run §f/salvage favorite§8 to un-favorite it first.");
             return true;
         }
+        if (com.lieyabull.dung.items.GearFactory.isStarter(held)) {
+            p.sendMessage("§8That's your free starter kit — it can't be salvaged.");
+            return true;
+        }
         int shards = salvageValue(held);
         held.setAmount(held.getAmount() - 1);
         addShards(p, shards);
-        p.sendMessage("§bSalvaged " + rarityColor(held) + held.getItemMeta().getDisplayName()
+        p.sendMessage("§bSalvaged " + rarityColor(held)
+                + (held.getItemMeta() == null ? held.getType().name() : held.getItemMeta().getDisplayName())
                 + "§b → §b+" + shards + " shards§7 (total §b" + plugin.meta().profile(p.getUniqueId()).shards + "§7). Spend them with /upgrades.");
         return true;
     }
@@ -284,6 +289,10 @@ public final class DungCommand implements CommandExecutor {
     private static boolean isSalvableArmor(org.bukkit.inventory.ItemStack s) {
         if (s == null || s.getType() == org.bukkit.Material.AIR) return false;
         if (com.lieyabull.dung.items.GearFactory.isFavorite(s)) return false;
+        // /salvage all only sweeps the bag; persistent gear is never bulk-salvaged (only held salvage).
+        if (com.lieyabull.dung.items.GearFactory.isPersistent(s)) return false;
+        // Free starter-kit gear is never salvageable.
+        if (com.lieyabull.dung.items.GearFactory.isStarter(s)) return false;
         return "armor".equals(pdcString(s, ItemTags.KIND));
     }
 

@@ -1,9 +1,12 @@
 package com.lieyabull.dung;
 
 import com.lieyabull.dung.command.DungCommand;
+import com.lieyabull.dung.command.PlotCommand;
 import com.lieyabull.dung.game.GameManager;
 import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.listener.GameListener;
+import com.lieyabull.dung.listener.PlotListener;
+import com.lieyabull.dung.plot.PlotManager;
 import com.lieyabull.dung.ui.ShopUI;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
@@ -16,6 +19,7 @@ public final class Dung extends JavaPlugin {
     private GameManager game;
     private MetaManager meta;
     private ShopUI shopUI;
+    private PlotManager plotManager;
     private World world;
 
     public static Dung instance() {
@@ -30,7 +34,9 @@ public final class Dung extends JavaPlugin {
         meta.load();
         game = new GameManager(this);
         shopUI = new ShopUI(this);
+        plotManager = new PlotManager(this);
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
+        Bukkit.getPluginManager().registerEvents(new PlotListener(this), this);
         Bukkit.getPluginManager().registerEvents(shopUI, this);
         getCommand("dung").setExecutor(new DungCommand(this));
         getCommand("dungeon").setExecutor(new DungCommand(this));
@@ -38,6 +44,11 @@ public final class Dung extends JavaPlugin {
         getCommand("upgrades").setExecutor(new DungCommand(this));
         getCommand("salvage").setExecutor(new DungCommand(this));
         getCommand("party").setExecutor(new DungCommand(this));
+        PlotCommand plotCmd = new PlotCommand(this);
+        getCommand("plots").setExecutor(plotCmd);
+        getCommand("plots").setTabCompleter(plotCmd);
+        getCommand("plot").setExecutor(plotCmd);
+        getCommand("plot").setTabCompleter(plotCmd);
         getLogger().info("Dung enabled. World resolved lazily.");
     }
 
@@ -45,6 +56,7 @@ public final class Dung extends JavaPlugin {
     public void onDisable() {
         if (game != null) game.shutdown();
         if (meta != null) meta.save();
+        if (plotManager != null) plotManager.save();
         instance = null;
     }
 
@@ -73,5 +85,9 @@ public final class Dung extends JavaPlugin {
 
     public ShopUI shopUI() {
         return shopUI;
+    }
+
+    public PlotManager plotManager() {
+        return plotManager;
     }
 }

@@ -86,6 +86,13 @@ public final class GameManager {
         di.endRun();
     }
 
+    /** Remove a single player from the instance map (used when a player dies mid-run, since they
+     *  are removed from the party first, so neither leaveInstance nor removeInstance would find
+     *  them anymore — leaving isInInstance() true forever and blocking /dung start). */
+    public void removePlayerFromInstance(Player p) {
+        playerInstance.remove(p.getUniqueId());
+    }
+
     /** End a specific dungeon instance. */
     public void removeInstance(DungeonInstance di) {
         instances.remove(di.instanceId());
