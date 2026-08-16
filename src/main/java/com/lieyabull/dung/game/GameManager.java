@@ -56,7 +56,8 @@ public final class GameManager {
         return playerInstance.containsKey(p.getUniqueId());
     }
 
-    /** Start a new dungeon run for a party. */
+    /** Start a new dungeon run for a party. Each instance is offset ~1000 blocks from the
+     *  previous one so multiple parties can run parallel dungeons without overlapping. */
     public void startRun(Party party, long seed) {
         // Check no party member is already in a run
         for (UUID uid : party.members()) {
@@ -66,7 +67,10 @@ public final class GameManager {
                 return;
             }
         }
-        DungeonInstance di = new DungeonInstance(plugin, party);
+        // Compute offset: each instance gets its own 1000-block region
+        int offsetX = instances.size() * 1000;
+        int offsetZ = 0;
+        DungeonInstance di = new DungeonInstance(plugin, party, offsetX, offsetZ);
         instances.put(di.instanceId(), di);
         for (UUID uid : party.members()) {
             playerInstance.put(uid, di);
@@ -74,16 +78,17 @@ public final class GameManager {
         di.startRun(seed);
     }
 
-    /** End a player's dungeon instance (leave/disband). */
+    /** End a player's participation in a dungeon run (/dung leave). Removes just that player from
+     *  their instance and party; the shared run continues for the rest of the party. */
     public void leaveInstance(Player p) {
         DungeonInstance di = playerInstance.get(p.getUniqueId());
         if (di == null) return;
-        // Remove all party members from the instance map first, then end the run
-        for (UUID uid : di.party().members()) {
-            playerInstance.remove(uid);
-        }
-        instances.remove(di.instanceId());
-        di.endRun();
+        // Remove the player from the party first so removePlayer can detect an empty party.
+        di.party().removeMember(p.getUniqueId());
+        di.removePlayer(p);
+        // Clean up the PartyManager's playerParties entry so the player can start a new run.
+        // If the party is now empty, also remove it from partyById so it won't be reused.
+        partyManager.cleanupAfterLeave(p);
     }
 
     /** Remove a single player from the instance map (used when a player dies mid-run, since they

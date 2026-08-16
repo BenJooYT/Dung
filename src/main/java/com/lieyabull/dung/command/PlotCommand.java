@@ -28,6 +28,15 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
         this.plugin = plugin;
     }
 
+    /** Check if the player is currently in a dungeon run and send them a message if so. */
+    private boolean blockIfInRun(Player p) {
+        if (plugin.game().isInInstance(p)) {
+            p.sendMessage("§cYou can't use plot warps while in a dungeon run.");
+            return true;
+        }
+        return false;
+    }
+
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof Player p)) {
@@ -40,11 +49,13 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
         if (label.equalsIgnoreCase("plots")) {
             if (args.length == 0) {
                 // /plots — teleport to the plots world
+                if (blockIfInRun(p)) return true;
                 pm.teleportToPlots(p);
                 return true;
             }
             if (args[0].equalsIgnoreCase("warp") && args.length >= 2) {
                 // /plots warp <name>
+                if (blockIfInRun(p)) return true;
                 String err = pm.warpToNamedPlot(p, args[1]);
                 if (err != null) {
                     p.sendMessage(err);
@@ -72,13 +83,20 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
 
         switch (args[0].toLowerCase()) {
             case "claim": {
-                String err = pm.claimPlot(p);
-                if (err != null) {
-                    p.sendMessage(err);
+                if (args.length >= 2) {
+                    // /plot claim shards or /plot claim coins
+                    String err = pm.claimPlot(p, args[1]);
+                    if (err != null) {
+                        p.sendMessage(err);
+                    }
+                } else {
+                    // /plot claim — show balances and clickable options
+                    pm.showClaimOptions(p);
                 }
                 return true;
             }
             case "home": {
+                if (blockIfInRun(p)) return true;
                 if (pm.teleportToPlot(p)) {
                     p.sendMessage("§aTeleported to your plot.");
                 } else {
@@ -100,6 +118,7 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             case "warp": {
+                if (blockIfInRun(p)) return true;
                 if (args.length < 2) {
                     p.sendMessage("§cUsage: §f/plot warp <name>§c — warp to a named plot.");
                     return true;

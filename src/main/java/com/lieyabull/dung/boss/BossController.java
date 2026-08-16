@@ -87,6 +87,13 @@ public final class BossController {
         }
     }
 
+    /** Remove a viewer (e.g. a party member who died or left mid-run). */
+    public void removeViewer(Player p) {
+        if (viewers.remove(p)) {
+            bar.removePlayer(p);
+        }
+    }
+
     public void tick(Player p) {
         if (hp <= 0) return;
         if (!boss.isValid()) return;
@@ -202,6 +209,10 @@ public final class BossController {
         hp -= dmg;
         bar.setProgress(Math.max(0, hp / maxHp));
         bar.setTitle("§4The Warden §8" + Math.max(0, (int) hp) + "/" + (int) maxHp);
+        // Hit feedback: sound + particles so the player knows their attack landed
+        world.playSound(boss.getLocation(), org.bukkit.Sound.ENTITY_PLAYER_HURT, 0.8f, 1.0f);
+        world.spawnParticle(org.bukkit.Particle.CRIT,
+                boss.getLocation().clone().add(0, 1.5, 0), 12, 0.5, 0.8, 0.5, 0.05);
         if (hp <= 0) {
             defeated = true;
             boss.remove();

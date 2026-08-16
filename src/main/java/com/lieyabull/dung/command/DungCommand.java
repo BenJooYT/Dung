@@ -19,6 +19,8 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
+import java.util.UUID;
+
 public final class DungCommand implements CommandExecutor {
     private final Dung plugin;
 
@@ -28,6 +30,11 @@ public final class DungCommand implements CommandExecutor {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        // Admin cleanup, also runnable from console to clear a stuck boss HP bar: /dung bossbar
+        if ((label.equalsIgnoreCase("dung") || label.equalsIgnoreCase("dungeon"))
+                && args.length > 0 && args[0].equalsIgnoreCase("bossbar")) {
+            return bossbarCmd(sender, args);
+        }
         if (!(sender instanceof Player p)) {
             sender.sendMessage("§cOnly players can use Dung.");
             return true;
@@ -37,8 +44,50 @@ public final class DungCommand implements CommandExecutor {
             case "upgrades": return upgradesCmd(p, args);
             case "salvage": return salvageCmd(p, args);
             case "party": return partyCmd(p, args);
+            case "balance": balance(p); return true;
             default: return dungCmd(p, args);
         }
+    }
+
+    /** Clear any leaked boss HP bars (keyed `dung_boss_*`). Runnable from console to fix a stuck bar. */
+    private boolean bossbarCmd(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("dung.admin")) {
+            sender.sendMessage("§cNo permission.");
+            return true;
+        }
+        int removed = 0;
+        java.util.List<org.bukkit.boss.KeyedBossBar> stuck = new java.util.ArrayList<>();
+        java.util.Iterator<org.bukkit.boss.KeyedBossBar> it = Bukkit.getBossBars();
+        while (it.hasNext()) {
+            org.bukkit.boss.KeyedBossBar bar = it.next();
+            if (bar.getKey().getKey().startsWith("dung_boss_")) stuck.add(bar);
+        }
+        for (org.bukkit.boss.KeyedBossBar k : stuck) {
+            k.removeAll();
+            k.setVisible(false);
+            Bukkit.removeBossBar(k.getKey());
+            removed++;
+        }
+        sender.sendMessage("§aCleared " + removed + " stuck boss bar" + (removed == 1 ? "" : "s") + ".");
+        return true;
+    }
+
+    /** Wipe all player data (saves.yml, plots.yml), turn off natural mob spawning, and
+     *  broadcast the reset. Requires dung.admin permission. */
+    private void resetCmd(Player p) {
+        // End all active runs
+        for (DungeonInstance di : plugin.game().instances()) {
+            di.endRun();
+        }
+        // Clear all player data in MetaManager
+        plugin.meta().clearAll();
+        // Clear all plot data
+        plugin.plotManager().clearAll();
+        // Turn off natural mob spawning in all worlds
+        for (org.bukkit.World w : Bukkit.getWorlds()) {
+            w.setGameRule(org.bukkit.GameRules.SPAWN_MOBS, false);
+        }
+        Bukkit.broadcastMessage("§c§lAll player data has been reset. Natural mob spawning disabled.");
     }
 
     // ---------- /dung <sub> ----------
@@ -72,7 +121,7 @@ public final class DungCommand implements CommandExecutor {
             case "descend": {
                 DungeonInstance di = gm.instanceOf(p);
                 if (di == null) { p.sendMessage("§cStart a run first."); return true; }
-                di.descend();
+                di.descend(p);
                 return true;
             }
             case "leave": {
@@ -89,11 +138,21 @@ public final class DungCommand implements CommandExecutor {
             case "shop": return shopCmd(p, args);
             case "upgrades": return upgradesCmd(p, args);
             case "salvage": return salvageCmd(p, args);
+            case "balance": balance(p); return true;
             case "stats": stats(p); return true;
             case "class": classCmd(p, args); return true;
             case "give":
                 if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
                 give(p, args);
+                return true;
+            case "stop":
+                if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
+                Bukkit.broadcastMessage("§c§lServer is stopping...");
+                Bukkit.getScheduler().runTask(plugin, () -> Bukkit.shutdown());
+                return true;
+            case "reset":
+                if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
+                resetCmd(p);
                 return true;
             case "help":
             default:
@@ -106,6 +165,7 @@ public final class DungCommand implements CommandExecutor {
 
     private boolean partyCmd(Player p, String[] args) {
         PartyManager pm = plugin.game().partyManager();
+        GameManager gm = plugin.game();
         if (args.length == 0) {
             Party party = pm.partyOf(p);
             if (party == null) {
@@ -138,15 +198,29 @@ public final class DungCommand implements CommandExecutor {
                 Player target = Bukkit.getPlayer(args[1]);
                 if (target == null) { p.sendMessage("§cPlayer not found."); return true; }
                 if (target.equals(p)) { p.sendMessage("§cYou can't invite yourself."); return true; }
+                if (gm.isInInstance(p)) {
+                    p.sendMessage("§cYou can't invite while your party is in a run.");
+                    return true;
+                }
                 if (pm.invite(p, target)) {
                     p.sendMessage("§aInvited " + target.getName() + " to the party.");
                     target.sendMessage("§a" + p.getName() + " invited you to a party! §f/party accept§a or §f/party decline");
                 } else {
-                    p.sendMessage("§cCould not invite. You may not be the leader, or they're already in a party.");
+                    p.sendMessage("§cCould not invite. They may already be in a party, or the party is full.");
                 }
                 return true;
             }
             case "accept": {
+                if (gm.isInInstance(p)) {
+                    p.sendMessage("§cYou can't join a party while you're in a run.");
+                    return true;
+                }
+                UUID inviterId = pm.getInviter(p);
+                Player inviter = inviterId != null ? Bukkit.getPlayer(inviterId) : null;
+                if (inviter != null && gm.isInInstance(inviter)) {
+                    p.sendMessage("§cThat party has already started a run.");
+                    return true;
+                }
                 if (pm.acceptInvite(p)) {
                     p.sendMessage("§aYou joined the party!");
                 } else {
@@ -161,6 +235,8 @@ public final class DungCommand implements CommandExecutor {
             }
             case "leave": {
                 pm.leaveParty(p);
+                DungeonInstance leaveDi = gm.instanceOf(p);
+                if (leaveDi != null) leaveDi.removePlayer(p);
                 p.sendMessage("§7You left the party.");
                 return true;
             }
@@ -169,6 +245,8 @@ public final class DungCommand implements CommandExecutor {
                 Player target = Bukkit.getPlayer(args[1]);
                 if (target == null) { p.sendMessage("§cPlayer not found."); return true; }
                 if (pm.kick(p, target)) {
+                    DungeonInstance kickDi = gm.instanceOf(target);
+                    if (kickDi != null) kickDi.removePlayer(target);
                     p.sendMessage("§aKicked " + target.getName() + " from the party.");
                 } else {
                     p.sendMessage("§cCould not kick. You may not be the leader.");
@@ -176,7 +254,9 @@ public final class DungCommand implements CommandExecutor {
                 return true;
             }
             case "disband": {
+                DungeonInstance disbandDi = gm.instanceOf(p);
                 if (pm.disband(p)) {
+                    if (disbandDi != null) disbandDi.endRun();
                     p.sendMessage("§cParty disbanded.");
                 } else {
                     p.sendMessage("§cYou are not the party leader.");
@@ -192,6 +272,10 @@ public final class DungCommand implements CommandExecutor {
     // ---------- /shop ----------
 
     private boolean shopCmd(Player p, String[] args) {
+        if (plugin.game().isInInstance(p)) {
+            p.sendMessage("§cYou can't use /shop while inside a dungeon run. Leave with /dung leave first.");
+            return true;
+        }
         plugin.shopUI().openPersistentShop(p);
         return true;
     }
@@ -199,6 +283,10 @@ public final class DungCommand implements CommandExecutor {
     // ---------- /upgrades ----------
 
     private boolean upgradesCmd(Player p, String[] args) {
+        if (plugin.game().isInInstance(p)) {
+            p.sendMessage("§cYou can't use /upgrades while inside a dungeon run. Leave with /dung leave first.");
+            return true;
+        }
         plugin.shopUI().openUpgrades(p);
         return true;
     }
@@ -337,6 +425,15 @@ public final class DungCommand implements CommandExecutor {
         } catch (IllegalArgumentException e) {
             return "";
         }
+    }
+
+    // ---------- balance ----------
+
+    private void balance(Player p) {
+        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+        p.sendMessage("§6--- " + p.getName() + "'s Balance ---");
+        p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins);
+        p.sendMessage("§7Shards: §b" + prof.shards);
     }
 
     // ---------- existing: stats / class / give ----------

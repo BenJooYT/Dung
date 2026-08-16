@@ -2,11 +2,14 @@ package com.lieyabull.dung;
 
 import com.lieyabull.dung.command.DungCommand;
 import com.lieyabull.dung.command.PlotCommand;
+import com.lieyabull.dung.command.RoomCommand;
 import com.lieyabull.dung.game.GameManager;
 import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.listener.GameListener;
 import com.lieyabull.dung.listener.PlotListener;
 import com.lieyabull.dung.plot.PlotManager;
+import com.lieyabull.dung.room.RoomEditor;
+import com.lieyabull.dung.room.RoomTutorial;
 import com.lieyabull.dung.ui.ShopUI;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
@@ -20,6 +23,8 @@ public final class Dung extends JavaPlugin {
     private MetaManager meta;
     private ShopUI shopUI;
     private PlotManager plotManager;
+    private RoomEditor roomEditor;
+    private RoomTutorial roomTutorial;
     private World world;
 
     public static Dung instance() {
@@ -35,6 +40,9 @@ public final class Dung extends JavaPlugin {
         game = new GameManager(this);
         shopUI = new ShopUI(this);
         plotManager = new PlotManager(this);
+        roomEditor = new RoomEditor(this);
+        roomTutorial = new RoomTutorial(this, roomEditor);
+        Bukkit.getPluginManager().registerEvents(roomTutorial, this);
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
         Bukkit.getPluginManager().registerEvents(new PlotListener(this), this);
         Bukkit.getPluginManager().registerEvents(shopUI, this);
@@ -44,6 +52,9 @@ public final class Dung extends JavaPlugin {
         getCommand("upgrades").setExecutor(new DungCommand(this));
         getCommand("salvage").setExecutor(new DungCommand(this));
         getCommand("party").setExecutor(new DungCommand(this));
+        RoomCommand roomCmd = new RoomCommand(this, roomEditor);
+        getCommand("room").setExecutor(roomCmd);
+        getCommand("room").setTabCompleter(roomCmd);
         PlotCommand plotCmd = new PlotCommand(this);
         getCommand("plots").setExecutor(plotCmd);
         getCommand("plots").setTabCompleter(plotCmd);
@@ -89,5 +100,13 @@ public final class Dung extends JavaPlugin {
 
     public PlotManager plotManager() {
         return plotManager;
+    }
+
+    public RoomEditor roomEditor() {
+        return roomEditor;
+    }
+
+    public RoomTutorial roomTutorial() {
+        return roomTutorial;
     }
 }

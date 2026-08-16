@@ -34,9 +34,9 @@ public final class Enemy {
     private int dashTicks = 0;      // charger: active lunge duration in ticks
     private boolean dashing = false;
 
-    public Enemy(World w, Location loc, MobType type, int floor, int room, Player target) {
+    public Enemy(World w, Location loc, MobType type, int floor, int room, Player target, double hpMult) {
         this.type = type;
-        this.maxHp = type.hpAt(floor);
+        this.maxHp = type.hpAt(floor) * hpMult;
         this.hp = maxHp;
         this.damage = type.damageAt(floor);
         this.speed = type.baseSpeed;
@@ -52,6 +52,10 @@ public final class Enemy {
         ((LivingEntity) entity).setMaxHealth(maxHp);
         ((LivingEntity) entity).setHealth(maxHp);
         ((LivingEntity) entity).addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, PotionEffect.INFINITE_DURATION, 200, false, false));
+        // Elite mobs glow with a yellow outline so players can spot them at a glance
+        if (type.isElite()) {
+            ((LivingEntity) entity).addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, PotionEffect.INFINITE_DURATION, 0, false, false));
+        }
         scaleFor(type);
     }
 
@@ -75,6 +79,8 @@ public final class Enemy {
 
     public void tick(Player p, long deltaMs) {
         if (dead || !entity.isValid() || p == null || !p.isOnline()) return;
+        // Don't target spectators (dead players)
+        if (p.getGameMode() == org.bukkit.GameMode.SPECTATOR) return;
         if (attackCd > 0) attackCd--;
         if (knockTicks > 0) {      // while being knocked back, let physics carry them, no homing
             knockTicks--;
@@ -158,7 +164,7 @@ public final class Enemy {
             }
         }
         if (attacked) {
-            attackCd = 20 + type.id % 6;   // ~1.0-1.3s between hits (slightly faster cadence)
+            attackCd = 12;   // ~0.6s between hits (matches the old player fireRateTicks)
             movePause = 10;                // freeze ~0.5s so the player can sidestep
         }
     }
@@ -201,6 +207,11 @@ private boolean isWalkable(Location l) {
             entity.remove();
         } else {
             entity.setCustomName(type.name + " §c" + Math.max(0, (int) hp) + "/" + (int) maxHp);
+            // Hit feedback: sound + particles so the player knows their attack landed
+            org.bukkit.World w = entity.getWorld();
+            w.playSound(entity.getLocation(), org.bukkit.Sound.ENTITY_PLAYER_HURT, 0.6f, 1.2f);
+            w.spawnParticle(org.bukkit.Particle.CRIT,
+                    entity.getLocation().clone().add(0, 1, 0), 8, 0.3, 0.5, 0.3, 0.05);
         }
     }
 

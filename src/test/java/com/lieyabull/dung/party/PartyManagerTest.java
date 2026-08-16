@@ -390,8 +390,10 @@ public class PartyManagerTest {
     }
 
     @Test
-    void inviteFailsIfInviterNotInParty() {
-        assertFalse(manager.invite(leader.player, member1.player));
+    void inviteCreatesPartyIfInviterNotInParty() {
+        assertTrue(manager.invite(leader.player, member1.player));
+        assertNotNull(manager.partyOf(leader.player));
+        assertTrue(manager.partyOf(leader.player).isLeader(leader.player.getUniqueId()));
     }
 
     @Test

@@ -5,6 +5,7 @@ import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.entity.Player;
 
 /** Clickable chat actions + notifications (command shortcuts without needing to type). */
@@ -23,7 +24,9 @@ public final class ChatUI {
     }
 
     public static void notify(Player p, String msg) {
-        p.sendMessage(Component.text(msg, NamedTextColor.GRAY));
+        // msg may carry legacy § codes (e.g. pickup text); Component.text() would throw
+        // LegacyFormattingDetected, so parse them through the legacy serializer instead.
+        p.sendMessage(LegacyComponentSerializer.legacySection().deserialize(msg));
     }
 
     public static void notify(Player p, Component c) {

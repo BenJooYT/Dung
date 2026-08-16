@@ -29,6 +29,12 @@ commands:
   plot:
     description: Plot management commands
     usage: /plot <claim|home|name|warp|unclaim>
+  balance:
+    description: Show your persistent coins and shards
+    usage: /balance
+  room:
+    description: Room editor and room-template commands
+    usage: /room <new|pos1|pos2|region|spawnfloor|conn|marker|playerspawn|shopkeeper|capture|info|validate|export|test|testlocal|list|open>
 permissions:
   dung.admin:
     description: Admin debug commands

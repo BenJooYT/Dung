@@ -28,12 +28,20 @@ public final class RoomGen {
     private RoomGen() {}
 
     public static RoomBase baseFor(Floor.RoomNode n, int spacing) {
+        return baseFor(n, spacing, 0, 0);
+    }
+
+    public static RoomBase baseFor(Floor.RoomNode n, int spacing, int offsetX, int offsetZ) {
         // spacing between room centers, so rooms don't share walls
-        return new RoomBase(n.x * spacing, n.z * spacing);
+        return new RoomBase(n.x * spacing + offsetX, n.z * spacing + offsetZ);
     }
 
     public static void build(World w, Floor.RoomNode n, int baseY, int spacing) {
-        RoomBase b = baseFor(n, spacing);
+        build(w, n, baseY, spacing, 0, 0);
+    }
+
+    public static void build(World w, Floor.RoomNode n, int baseY, int spacing, int offsetX, int offsetZ) {
+        RoomBase b = baseFor(n, spacing, offsetX, offsetZ);
         int sx = b.x, sz = b.z;
         int wl = n.sizeW + 2 * WALL;       // footprint including walls
         int wh = n.sizeH + 2 * WALL;
@@ -331,7 +339,11 @@ public final class RoomGen {
 
     /** Spawn location: exact center of the room floor, 1 above. (No spurious +0.5.) */
     public static Location center(World w, Floor.RoomNode n, int baseY, int spacing) {
-        RoomBase b = baseFor(n, spacing);
+        return center(w, n, baseY, spacing, 0, 0);
+    }
+
+    public static Location center(World w, Floor.RoomNode n, int baseY, int spacing, int offsetX, int offsetZ) {
+        RoomBase b = baseFor(n, spacing, offsetX, offsetZ);
         return new Location(w, b.x + WALL + n.sizeW / 2.0, baseY + 1, b.z + WALL + n.sizeH / 2.0);
     }
 }

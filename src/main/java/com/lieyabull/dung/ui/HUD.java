@@ -27,6 +27,12 @@ public final class HUD {
     private final String[] lastText = new String[ROWS];
     private String lastDisplayName = null;
 
+    /** Reset the last-text tracking so the next update re-paints every row. */
+    public void resetLastText() {
+        java.util.Arrays.fill(lastText, null);
+        lastDisplayName = null;
+    }
+
     public void reset(Player p, org.bukkit.scoreboard.Scoreboard board) {
         if (board == null) return;
         if (board.getObjective("dung") != null) board.getObjective("dung").unregister();
@@ -61,7 +67,9 @@ public final class HUD {
         setLine(o, 5, "§e⛁ Coins §f" + st.coins + "   §9⛂ Keys §f" + st.keys + " §7[slot 7]");
         setLine(o, 6, "§4✹ Bombs §f" + st.bombs + " §7[slot 8]   §cKills §f" + run.kills);
         setLine(o, 7, "");
-        setLine(o, 8, "§6Room: §f" + di.curRoom().type.label);
+        Floor.RoomNode playerRoom = di.playerRoomOf(p.getUniqueId());
+        Floor.RoomNode displayRoom = playerRoom != null ? playerRoom : di.curRoom();
+        setLine(o, 8, "§6Room: §f" + (displayRoom != null ? displayRoom.type.label : "?"));
         // Gear condition: show worst durability among persistent gear
         String gearCond = gearCondition(p);
         if (!gearCond.isEmpty()) {
@@ -71,7 +79,7 @@ public final class HUD {
         }
         // Check if any adjacent room is a LOCKED room
         String lockedHint = "";
-        Floor.RoomNode cur = di.curRoom();
+        Floor.RoomNode cur = displayRoom;
         if (cur != null) {
             int[] DX = {0, 1, 0, -1};
             int[] DZ = {-1, 0, 1, 0};

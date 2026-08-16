@@ -10,7 +10,7 @@ lost on death** but **permanent progression (coins, unlocks, class) persists**. 
 distributed (sidebar = live info, boss bar = encounters, chat = notifications/actions,
 tab = detailed build/run/progression).
 
-## Current status (verified working)
+## Current status (verified working)e     
 - [x] Gradle 9.7 + Paper 1.21.11 toolchain; plugin jar builds (`Dung-1.0.0.jar`).
 - [x] **Headless server boot verified:** `[Dung] Dung enabled.` + `Done (12.790s)!`, no exceptions.
 - [x] Core lifecycle: `/dung start`, floor generation, room building, descend, leave.
@@ -218,8 +218,89 @@ tab = detailed build/run/progression).
       above base player walk (`0.1`) but below sprint (`~0.13`), so the Warden can run a walking
       player down but a sprinting player can still just barely escape (speed upgrades widen the gap).
 
+### Iteration 14 - mid-run party-system bug fixes
+- [x] **Quit/leave/kick no longer end everyone's run:** `DungeonInstance.removePlayer(Player)` now removes
+      only that member (state, gear display, tab, playerRoom) and calls `endRun()` only when the party
+      empties. `GameListener.onQuit`, `/party leave`, `/party kick`, and `/party disband` are wired so the
+      party membership is mutated before instance removal (correct emptiness detection).
+- [x] **Split-room softlock + enemy duplication fixed:** per-player room tracking (`playerRoom` map +
+      `spawnedRooms` set) replaces the single global `curRoom` for combat. `onPlayerMoved` records each
+      member's room; `tick` clears/enemies-tick every occupied room (deduped); `registerAttack` hits the
+      attacker's own room. A room's enemies now spawn exactly once (guard prevents re-entry dup).
+- [x] **Empty-room softlock fixed:** `spawnEnemies` returns whether enemies actually spawned; a room is
+      only locked when the spawn succeeded (no reference player can no longer trap a room open forever).
+- [x] **Mid-run join blocked:** `/party invite`/`accept` now refuse while either party is mid-run, so a
+      stateless joiner can't be counted in boss scaling/spawns.
+- [x] **Boss bar viewer leak fixed:** `BossController.removeViewer` added and called on member death/leave.
+
+### Iteration 15 — descend + boss-clear for any member, all-members room seal, party teardown audit
+- [x] **Non-leader / non-global descend fixed:** `descend()` checked the single global `curRoom` (which any
+      member could clobber), so a member in any other room got "Defeat the boss first!" even after the boss
+      died. It now checks `run.floor.boss.cleared`. Also `onBossDefeated` now marks the actual boss room
+      cleared via a captured `bossRoom` field (was `curRoom` — a moving member could keep it unmarked).
+- [x] **All-members room seal:** a COMBAT/ELITE (and BOSS) room now only seals + spawns its enemies once
+      EVERY online party member is inside it (`allMembersInRoom` gate) — fights start together; members
+      still outside get a "won't seal until everyone is inside" hint.
+- [x] **Party teardown audit (verified):** leave/kick/disband fully detach the leaving player(s) from
+      `playerInstance` + party, so ex-members can immediately create/join a party and `/dung start` again.
+      Leave/kick clean via `removePlayer`→`removePlayerFromInstance`; disband ends the run and
+      `removeInstance` clears every member (the `Party` object still holds members after disband).
+
+### Iteration 16 — hit-target caps, party-scaled mobs & log warning fix
+- [x] **Basic swings hit a few, not everyone:** a melee swing now damages only the nearest 3 enemies
+      within reach (sorted by distance) instead of every mob in the room.
+- [x] **Skills target per their description:** added a shared `hitTargets`/`inCone` helper and gave each
+      ability a target limit matching its lore — Slash=1 ("a quick, heavy strike ahead"), Cleave=3 (cone),
+      Smash=3 (nearby blast), Blade Storm=4 (around you), Arcane Bolt=3 (line), Ravage=all ("devastate
+      every enemy in the room"). Rush stays mobility-only.
+- [x] **Dungeons compensate for party size:** boss HP already scaled with party size; now regular mobs do
+      too. Enemy count multiplies by party size and enemy HP gains a `+30%` per extra member (`hpMult` on
+      `Enemy`), so a group run is harder, not just faster. Solo play is unchanged.
+- [x] **Log spam fixed:** `ChatUI.notify(String)` passed legacy `§` pickup text to `Component.text()`,
+      throwing `LegacyFormattingDetected` (the same bug already fixed for `TabUI`) — every heart/coin/bomb
+      pickup dumped a ~40-line stacktrace. It now deserializes via `LegacyComponentSerializer.legacySection()`.
+
+### Iteration 17 — held armor no longer grants stats
+- [x] **Equipping armor in-hand is cosmetic:** `PlayerState.recomputeStats` read the mainhand item's
+      `HEALTH`/`REACH`/`RARITY` tags regardless of item kind, so *holding* an armor piece (which carries
+      those tags) silently granted its health + rarity crit without it being equipped — misleading and
+      abusable (carry your best armor for free HP/crit). Mainhand stats now only apply when the held item
+      is a real weapon (`dung.kind == "weapon"`); armor contributes only from the 4 armor slots.
+
+### Iteration 18 — return to pre-run location on leave/death
+- [x] **`/dung leave` and mid-run death teleport you back to where you were before starting the run**
+      (previously they dumped you at the dungeon world spawn). `startRun` now records each member's
+      location (`returnLocs`); a new `teleportOut` uses it on death, `/dung leave`/kick, and when the run
+      ends (disband/last member), falling back to the dungeon spawn only if no saved spot exists.
+
+### Iteration 19 — console cleanup for a stuck boss HP bar
+- [x] **`/dung bossbar`** (console or op) iterates all `KeyedBossBar`s keyed `dung_boss_*` and removes
+      them — a fast fix for a boss bar stuck on screen after a leaked/aborted boss fight, without a
+      server restart.
+
 ### Remaining candidate work
-- [ ] Class-specific passives/active balance beyond the three defaults.
+- [ ] **More enemy variety** — Ranged enemies (archers, mages), shield enemies (block frontal damage),
+      healers (heal nearby mobs), exploders (rush + detonate), teleporters (blink behind player).
+      The `MobType`/`Enemy` framework already supports distinct AI behaviors — adding new types
+      would slot in cleanly and make combat more tactical.
+- [ ] **Status effects** — Poison (DoT), Slow, Weakness, Stun on both players and enemies. Weapons/
+      abilities could apply them; enemies could apply them on hit. Adds strategic depth to combat.
+- [ ] **More room shapes** — Cross-shaped, ring/circular, bridged (gap to jump), multi-level platforms,
+      hazard rooms (lava/fire patches). The `RoomGen` shape-building system supports adding new layouts.
+- [ ] **More boss variety** — A mage boss (teleports + homing projectiles), swarm boss (spawns minions),
+      tank boss (damage gates). Each tied to a floor range for variety across deep runs.
+- [ ] **Persistent gear upgrades** — Enchanting/reforging/repair for persistent gear using shards/coins.
+      Gives players something to grind toward with their persistent currency.
+- [ ] **Floor-specific biomes/themes** — Nether brick (floors 3-4), End stone (5-6), deepslate (7+).
+      Each with different enemy distributions and visual identity.
+- [ ] **Leaderboards / statistics** — `/dung leaderboard` for best floor, clears, kills. Personal
+      stats page with more detail. Mostly UI work on existing `MetaManager` data.
+- [ ] **Class-specific passives/active balance** beyond the three defaults.
+- [x] **Room editor tutorial** — `/room tutorial` walks through building, capturing, validating,
+      exporting, and testing a room template step by step. Auto-advances when the player runs the
+      expected command. Replayable any number of times.
+- [ ] **Room editor authoring/test/export polish** (Iterations 11-13 shipped the subsystem; generate-template
+      floor mode, editor CLI, tests, and registry are in place).
 
 ## Build / run
 ```

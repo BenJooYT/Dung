@@ -38,7 +38,9 @@ public final class PlayerState {
     public double critChance = 0.05;
     public double critMult = 1.5;
     public double speedMult = 1.0;
-    public int fireRateTicks = 12;
+    public int fireRateTicks = 3;
+    /** Per-player attack cooldown counter (ticks remaining before next swing). */
+    public int fireCd = 0;
     // class
     public String classId = "warrior";
     // permanent (shard-bought) upgrades: track id -> owned level
@@ -71,23 +73,26 @@ public final class PlayerState {
         reach = 3.0;
         critChance = 0.05;
         critMult = 1.5;
-        fireRateTicks = 12;
+        fireRateTicks = 3;
         speedMult = 1.0;
         int healthBonus = 0;
-        // weapon damage from mainhand
+        // weapon damage from mainhand — only a real weapon counts. Holding an armor piece in-hand
+        // (which carries HEALTH/DEFENSE/RARITY tags) must NOT grant its stats; it only applies when
+        // actually equipped, so players can't get the bonuses by just carrying the item.
         ItemStack weapon = inv.getItemInMainHand();
-        Integer wdmg = intTag(weapon, ItemTags.DAMAGE);
+        boolean mainhandIsWeapon = isWeaponKind(weapon);
+        Integer wdmg = mainhandIsWeapon ? intTag(weapon, ItemTags.DAMAGE) : null;
         if (wdmg != null) damage = wdmg;
         // some weapons extend melee reach (tags set by GearFactory)
-        Double wreach = doubleTag(weapon, ItemTags.REACH);
+        Double wreach = mainhandIsWeapon ? doubleTag(weapon, ItemTags.REACH) : null;
         if (wreach != null) reach = wreach;
         // rarity adds crit/knockback flavor so builds diverge (SkyBlock-style)
-        Rarity wr = rarityOf(weapon);
+        Rarity wr = mainhandIsWeapon ? rarityOf(weapon) : null;
         if (wr != null) {
             critChance += 0.02 * wr.ordinal();
             critMult = Math.min(3.0, 1.5 + wr.ordinal() * 0.1);
         }
-        Integer whealth = intTag(weapon, ItemTags.HEALTH);
+        Integer whealth = mainhandIsWeapon ? intTag(weapon, ItemTags.HEALTH) : null;
         if (whealth != null) healthBonus += whealth;
         // armor defense from 4 armor slots; rarity pushes crit
         for (ItemStack s : inv.getArmorContents()) {
@@ -100,6 +105,9 @@ public final class PlayerState {
         }
         applyClassPassives();
         applyUpgrades();
+        // Clamp current mana to the final maxMana (after upgrades) so switching weapons
+        // doesn't clamp against the temporary base maxMana before upgrades are applied.
+        mana = Math.min(maxMana, mana);
         // Apply the health affix to the max-heart pool as a symmetric reservoir so it can't be
         // farmed by swapping gear: growing the pool burst-heals the gained amount (equipping a big
         // chestpiece feels good), and shrinking it refunds exactly that amount (no free healing).
@@ -143,10 +151,21 @@ public final class PlayerState {
                 break;
             case "ranger":
                 critChance += 0.10;
-                fireRateTicks = (int) Math.max(5, fireRateTicks - 2);
+                fireRateTicks = (int) Math.max(2, fireRateTicks - 2);
                 break;
         }
-        mana = Math.min(maxMana, mana); // clamp current mana to the (possibly reduced) max
+        // Mana clamp is now done in recomputeStats() after applyUpgrades(), so the upgrade
+        // mana bonus is included in the clamp target. This prevents weapon-swap from clamping
+        // mana against the base maxMana before upgrades are factored in.
+    }
+
+    private static boolean isWeaponKind(ItemStack s) {
+        if (s == null || s.getType() == Material.AIR) return false;
+        var pdc = s.getItemMeta() == null ? null : s.getItemMeta().getPersistentDataContainer();
+        if (pdc == null) return false;
+        String k = pdc.get(org.bukkit.NamespacedKey.minecraft(ItemTags.KIND),
+                org.bukkit.persistence.PersistentDataType.STRING);
+        return "weapon".equals(k);
     }
 
     private static Integer intTag(ItemStack s, String key) {

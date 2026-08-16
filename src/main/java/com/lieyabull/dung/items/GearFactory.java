@@ -6,7 +6,11 @@ import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ArmorMeta;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.trim.ArmorTrim;
+import org.bukkit.inventory.meta.trim.TrimMaterial;
+import org.bukkit.inventory.meta.trim.TrimPattern;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -212,7 +216,7 @@ public final class GearFactory {
         if (!isPersistent) return;
         String kind = pdc.get(org.bukkit.NamespacedKey.minecraft(ItemTags.KIND),
                 org.bukkit.persistence.PersistentDataType.STRING);
-        int maxDur = "weapon".equals(kind) ? 100 : 80;
+        int maxDur = "weapon".equals(kind) ? 100 : 30;
         setMaxDurability(s, maxDur);
         setDurability(s, maxDur);
         addDurabilityLore(s);
@@ -257,6 +261,18 @@ public final class GearFactory {
             meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
             if (r.ordinal() >= Rarity.RARE.ordinal()) {
                 meta.addEnchant(Enchantment.UNBREAKING, 1, true);
+            }
+            // Apply eye armor trim for epic and above, matching the rarity color
+            if (r.ordinal() >= Rarity.EPIC.ordinal() && meta instanceof ArmorMeta armorMeta) {
+                TrimMaterial trimMat = switch (r) {
+                    case EPIC -> TrimMaterial.AMETHYST;
+                    case LEGENDARY -> TrimMaterial.GOLD;
+                    case MYTHIC -> TrimMaterial.REDSTONE;
+                    default -> null;
+                };
+                if (trimMat != null) {
+                    armorMeta.setTrim(new ArmorTrim(trimMat, TrimPattern.EYE));
+                }
             }
             var pdc = meta.getPersistentDataContainer();
             pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.GEAR),

@@ -91,6 +91,21 @@ public final class PlotManager {
         return plotsWorld;
     }
 
+    /** Wipe all plot data from memory and disk. */
+    public void clearAll() {
+        plots.clear();
+        playerPlots.clear();
+        nameToPlot.clear();
+        for (String key : plotsData.getKeys(false)) {
+            plotsData.set(key, null);
+        }
+        try {
+            plotsData.save(plotsFile);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
     /** Teleport a player to the plots world spawn. */
     public void teleportToPlots(Player p) {
         World w = getPlotsWorld();
@@ -163,10 +178,85 @@ public final class PlotManager {
         return dx >= 1 && dx <= PLOT_SIZE && dz >= 1 && dz <= PLOT_SIZE;
     }
 
+    /**
+     * If the player is standing on an unclaimed plot in the plots world, return that plot's
+     * coordinate. Otherwise return null.
+     */
+    private PlotCoord standingOnUnclaimedPlot(Player p) {
+        Location loc = p.getLocation();
+        if (loc.getWorld() == null || !loc.getWorld().equals(plotsWorld)) return null;
+        PlotCoord coord = plotAt(loc);
+        if (coord == null) return null;
+        // Return the plot only if it's not already claimed
+        if (plots.containsKey(coord)) return null;
+        return coord;
+    }
+
     // ==================== CLAIMING ====================
 
-    /** Claim a plot for a player. Returns a message (null = success). */
-    public String claimPlot(Player p) {
+    /** Show the player their balances and clickable options to claim a plot with shards or coins.
+     *  If the player is standing on an unclaimed plot in the plots world, that plot will be
+     *  claimed. Otherwise falls back to the spiral-assignment logic. */
+    public void showClaimOptions(Player p) {
+        if (playerPlots.containsKey(p.getUniqueId())) {
+            p.sendMessage("§cYou already own a plot! Use §f/plot home§c to teleport to it.");
+            return;
+        }
+
+        // Check if the player is standing on an unclaimed plot in the plots world
+        PlotCoord standingOn = standingOnUnclaimedPlot(p);
+        if (standingOn != null) {
+            p.sendMessage("");
+            p.sendMessage("§6§lClaim Plot at §f(" + standingOn.x() + ", " + standingOn.z() + ")");
+        } else {
+            p.sendMessage("");
+            p.sendMessage("§6§lClaim a Plot");
+        }
+
+        MetaManager.MetaProfile profile = plugin.meta().profile(p.getUniqueId());
+        p.sendMessage("§7  Your balance: §e" + profile.shards + " shards§7, §6" + profile.persistentCoins + " coins");
+        p.sendMessage("");
+
+        boolean canShards = profile.shards >= CLAIM_SHARD_COST;
+        boolean canCoins = profile.persistentCoins >= CLAIM_COIN_COST;
+
+        if (!canShards && !canCoins) {
+            p.sendMessage("§cYou need §e" + CLAIM_SHARD_COST + " shards§c or §6" + CLAIM_COIN_COST + " coins§c to claim a plot.");
+            return;
+        }
+
+        // Clickable shard option
+        net.kyori.adventure.text.Component shardOpt = net.kyori.adventure.text.Component.text("[ ", net.kyori.adventure.text.format.NamedTextColor.GRAY)
+                .append(net.kyori.adventure.text.Component.text("Buy with " + CLAIM_SHARD_COST + " Shards",
+                        canShards ? net.kyori.adventure.text.format.NamedTextColor.YELLOW : net.kyori.adventure.text.format.NamedTextColor.DARK_GRAY,
+                        net.kyori.adventure.text.format.TextDecoration.BOLD))
+                .append(net.kyori.adventure.text.Component.text(" ]", net.kyori.adventure.text.format.NamedTextColor.GRAY));
+        if (canShards) {
+            shardOpt = shardOpt.hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(
+                    net.kyori.adventure.text.Component.text("Click to claim with " + CLAIM_SHARD_COST + " shards", net.kyori.adventure.text.format.NamedTextColor.GRAY)))
+                    .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/plot claim shards"));
+        }
+        p.sendMessage(shardOpt);
+
+        // Clickable coin option
+        net.kyori.adventure.text.Component coinOpt = net.kyori.adventure.text.Component.text("[ ", net.kyori.adventure.text.format.NamedTextColor.GRAY)
+                .append(net.kyori.adventure.text.Component.text("Buy with " + CLAIM_COIN_COST + " Coins",
+                        canCoins ? net.kyori.adventure.text.format.NamedTextColor.GOLD : net.kyori.adventure.text.format.NamedTextColor.DARK_GRAY,
+                        net.kyori.adventure.text.format.TextDecoration.BOLD))
+                .append(net.kyori.adventure.text.Component.text(" ]", net.kyori.adventure.text.format.NamedTextColor.GRAY));
+        if (canCoins) {
+            coinOpt = coinOpt.hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(
+                    net.kyori.adventure.text.Component.text("Click to claim with " + CLAIM_COIN_COST + " coins", net.kyori.adventure.text.format.NamedTextColor.GRAY)))
+                    .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/plot claim coins"));
+        }
+        p.sendMessage(coinOpt);
+        p.sendMessage("");
+    }
+
+    /** Claim a plot for a player using the specified payment method. Returns a message (null = success).
+     *  If the player is standing on an unclaimed plot in the plots world, that plot is claimed.
+     *  Otherwise falls back to the spiral-assignment logic. */
+    public String claimPlot(Player p, String paymentMethod) {
         // Check if player already owns a plot
         if (playerPlots.containsKey(p.getUniqueId())) {
             return "§cYou already own a plot! Use §f/plot home§c to teleport to it.";
@@ -174,18 +264,29 @@ public final class PlotManager {
 
         MetaManager.MetaProfile profile = plugin.meta().profile(p.getUniqueId());
 
-        // Check if player can afford it
-        boolean useShards = profile.shards >= CLAIM_SHARD_COST;
-        boolean useCoins = profile.persistentCoins >= CLAIM_COIN_COST;
-
-        if (!useShards && !useCoins) {
-            return "§cYou need §e" + CLAIM_SHARD_COST + " shards§c or §6" + CLAIM_COIN_COST + " coins§c to claim a plot.";
+        boolean useShards;
+        if (paymentMethod.equalsIgnoreCase("shards")) {
+            if (profile.shards < CLAIM_SHARD_COST) {
+                return "§cYou need §e" + CLAIM_SHARD_COST + " shards§c, but you only have §e" + profile.shards + "§c.";
+            }
+            useShards = true;
+        } else if (paymentMethod.equalsIgnoreCase("coins")) {
+            if (profile.persistentCoins < CLAIM_COIN_COST) {
+                return "§cYou need §6" + CLAIM_COIN_COST + " coins§c, but you only have §6" + profile.persistentCoins + "§c.";
+            }
+            useShards = false;
+        } else {
+            return "§cInvalid payment method. Use §f/plot claim shards§c or §f/plot claim coins§c.";
         }
 
-        // Find the next available plot (simple spiral search from 0,0)
-        PlotCoord coord = findAvailablePlot();
+        // First check if the player is standing on an unclaimed plot in the plots world
+        PlotCoord coord = standingOnUnclaimedPlot(p);
         if (coord == null) {
-            return "§cNo available plots! This shouldn't happen.";
+            // Fallback: find the next available plot via spiral search
+            coord = findAvailablePlot();
+            if (coord == null) {
+                return "§cNo available plots! This shouldn't happen.";
+            }
         }
 
         // Charge the player

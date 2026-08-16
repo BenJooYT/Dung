@@ -12,6 +12,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockIgniteEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityChangeBlockEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.event.player.PlayerBucketFillEvent;
@@ -90,6 +91,20 @@ public final class PlotListener implements Listener {
         if (!pm.ownsPlot(e.getPlayer(), coord)) {
             e.setCancelled(true);
             e.getPlayer().sendMessage("§cThat chest belongs to someone else!");
+        }
+    }
+
+    /** Prevent players from trampling crops on plots they don't own.
+     *  EntityChangeBlockEvent fires when farmland turns to dirt from trampling. */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onEntityChangeBlock(EntityChangeBlockEvent e) {
+        if (!(e.getEntity() instanceof Player p)) return;
+        PlotManager pm = plugin.plotManager();
+        Location loc = e.getBlock().getLocation();
+        PlotManager.PlotCoord coord = pm.plotAt(loc);
+        if (coord == null) return;
+        if (!pm.ownsPlot(p, coord)) {
+            e.setCancelled(true);
         }
     }
 }

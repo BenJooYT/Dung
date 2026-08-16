@@ -7,6 +7,7 @@ import com.lieyabull.dung.game.PlayerState;
 import com.lieyabull.dung.game.Run;
 import com.lieyabull.dung.pickup.Pickup;
 import com.lieyabull.dung.items.ItemTags;
+import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.ui.ChatUI;
 import com.lieyabull.dung.dungeon.Floor;
 import com.lieyabull.dung.dungeon.RoomGen;
@@ -52,10 +53,22 @@ public final class GameListener implements Listener {
 
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
-        if (!e.getPlayer().hasPlayedBefore()) {
-            e.getPlayer().teleport(e.getPlayer().getWorld().getSpawnLocation());
+        Player p = e.getPlayer();
+        if (!p.hasPlayedBefore()) {
+            p.teleport(p.getWorld().getSpawnLocation());
+            ChatUI.startPrompt(p);
+            return;
         }
-        ChatUI.startPrompt(e.getPlayer());
+        // Restore the player's last known location (e.g. plots world) instead of always
+        // sending them to the main world spawn. The location is saved on quit.
+        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+        if (prof.lastWorld != null) {
+            org.bukkit.World w = org.bukkit.Bukkit.getWorld(prof.lastWorld);
+            if (w != null) {
+                p.teleport(new org.bukkit.Location(w, prof.lastX, prof.lastY, prof.lastZ, prof.lastYaw, prof.lastPitch));
+            }
+        }
+        ChatUI.startPrompt(p);
     }
 
     /** Stop natural/world mob spawning, but ONLY inside the run's world while a run is active.
@@ -85,7 +98,10 @@ public final class GameListener implements Listener {
         di.onPlayerMoved(p, p.getLocation());
     }
 
-    /** Handle death cleanly for the run's player so they never strand on the vanilla screen. */
+    /** Handle death cleanly for the run's player so they never strand on the vanilla screen.
+     *  Dead players are set to SPECTATOR mode by onPlayerDeath and can be revived when the
+     *  boss is defeated, so we no longer call spigot().respawn() — that would undo the
+     *  spectator state. */
     @EventHandler(priority = EventPriority.HIGH)
     public void onDeath(org.bukkit.event.entity.PlayerDeathEvent e) {
         Player p = e.getEntity();
@@ -97,22 +113,28 @@ public final class GameListener implements Listener {
             p.sendMessage("§cYou died.");
             org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
                 di.onPlayerDeath(p);
-                if (p.isDead()) p.spigot().respawn();
             });
         }
     }
 
-    /** Always bring a run player back to world spawn. Not gated on `isRunning()` because by the
-     *  time they click Respawn on a vanilla death screen, the run has already been torn down. */
+    /** Handle respawn for a run player. Since dead players are now set to SPECTATOR mode
+     *  (not removed from the instance), a vanilla respawn event should only trigger if the
+     *  player somehow bypassed the spectator path. Set them to spectator and keep them in
+     *  the instance so they can be revived on boss defeat.
+     *  If the player has already been revived (not in deadPlayers), restore SURVIVAL mode
+     *  instead of overriding it back to SPECTATOR. */
     @EventHandler(priority = EventPriority.HIGH)
     public void onRespawn(org.bukkit.event.player.PlayerRespawnEvent e) {
         Player p = e.getPlayer();
         DungeonInstance di = instanceOf(p);
         if (di != null) {
-            di.endRun();
             e.setRespawnLocation(e.getPlayer().getWorld().getSpawnLocation());
+            if (di.isDead(p.getUniqueId())) {
+                p.setGameMode(GameMode.SPECTATOR);
+            } else {
+                p.setGameMode(GameMode.SURVIVAL);
+            }
             p.setHealth(20);
-            p.setGameMode(GameMode.SURVIVAL);
             p.setWalkSpeed((float) 0.2);
         }
     }
@@ -157,16 +179,54 @@ public final class GameListener implements Listener {
         }
     }
 
+    /** Keys and bombs are materials that can be placed as blocks (TRIPWIRE_HOOK / TNT). Placing one
+     *  decrements the held item, but the next-tick hotbar sync re-creates the copy — leaving the
+     *  placed block + a restored stack, which can be broken to farm free items (duplication). Cancel
+     *  placement entirely so a run item can never leave the hotbar as a block. */
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onBlockPlace(org.bukkit.event.block.BlockPlaceEvent e) {
+        Player p = e.getPlayer();
+        DungeonInstance di = instanceOf(p);
+        if (di == null) return;
+        if (DungeonInstance.isRunItem(e.getItemInHand())) {
+            e.setCancelled(true);
+            p.sendActionBar("§cKeys and bombs stay in your hotbar!");
+        }
+    }
+
+    /** Belt-and-suspenders: forbid breaking key/bomb-material blocks while in a run, so a copy that
+     *  somehow reached the world (e.g. placed before this guard) can't be re-collected into a stack. */
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onBlockBreak(org.bukkit.event.block.BlockBreakEvent e) {
+        Player p = e.getPlayer();
+        DungeonInstance di = instanceOf(p);
+        if (di == null) return;
+        org.bukkit.Material t = e.getBlock().getType();
+        if (t == Material.TNT || t == Material.TRIPWIRE_HOOK) {
+            e.setCancelled(true);
+        }
+    }
+
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
         Player p = e.getPlayer();
-        // Clean up dungeon instance first (endRun cleans up blocks/entities and removes from registry)
+        // Save the player's current location so onJoin can restore it (e.g. plots world).
+        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+        org.bukkit.Location loc = p.getLocation();
+        prof.lastWorld = loc.getWorld().getName();
+        prof.lastX = loc.getX();
+        prof.lastY = loc.getY();
+        prof.lastZ = loc.getZ();
+        prof.lastYaw = loc.getYaw();
+        prof.lastPitch = loc.getPitch();
+        plugin.meta().save();
+        // Party cleanup first (removes p from the party), so removePlayer can detect an empty party
+        // and end the run. The shared run continues for the rest of the party otherwise.
+        plugin.game().partyManager().onPlayerQuit(p);
         DungeonInstance di = instanceOf(p);
         if (di != null) {
-            di.endRun();
+            di.removePlayer(p);
         }
-        // Then clean up party membership
-        plugin.game().partyManager().onPlayerQuit(p);
     }
 
     /** Sneak + drop (Q) casts the player's class-specific active ability.
@@ -227,6 +287,10 @@ public final class GameListener implements Listener {
         DungeonInstance di = instanceOf(p);
         if (di == null) return;
         // ability: sneak + right-click casts the held weapon's stored ability.
+        // Only process the main hand — the event fires separately for each hand, and processing
+        // the offhand would attempt the ability a second time (after mana was spent / cooldown
+        // started), producing a spurious "Not enough mana or on cooldown" message.
+        if (e.getHand() != org.bukkit.inventory.EquipmentSlot.HAND) return;
         ItemStack held = p.getInventory().getItemInMainHand();
         boolean hasAbility = held != null && !held.getType().isAir() && held.getItemMeta() != null
                 && held.getItemMeta().getPersistentDataContainer()
@@ -236,15 +300,11 @@ public final class GameListener implements Listener {
                 && p.isSneaking()) {
             e.setCancelled(true);
             di.tryCastAbility(p, held);
-        }
-        if (e.getItem() != null) {
-            String en = e.getItem().getType().name();
-            if (en.endsWith("_HELMET") || en.endsWith("_CHESTPLATE")
-                    || en.endsWith("_LEGGINGS") || en.endsWith("_BOOTS")) {
-                di.recomputeStats();
-            }
+            return;
         }
         // pedestal: right-click a pedestal slab to claim the item
+        // Check this BEFORE the armor-equip check so that holding an armor piece while
+        // right-clicking a pedestal doesn't equip the armor — we cancel the event early.
         if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getClickedBlock() != null
                 && e.getClickedBlock().getType() == Material.POLISHED_BLACKSTONE_SLAB) {
             if (di.claimPedestal(p, e.getClickedBlock().getLocation())) {
@@ -252,10 +312,12 @@ public final class GameListener implements Listener {
                 return;
             }
         }
-        // shop: right-click the shop block in a SHOP room
-        if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getClickedBlock() != null
-                && e.getClickedBlock().getType() == Material.EMERALD_BLOCK) {
-            di.openShop(p);
+        if (e.getItem() != null) {
+            String en = e.getItem().getType().name();
+            if (en.endsWith("_HELMET") || en.endsWith("_CHESTPLATE")
+                    || en.endsWith("_LEGGINGS") || en.endsWith("_BOOTS")) {
+                di.recomputeStats();
+            }
         }
         // locked room: right-click an IRON_BLOCK barrier with a key item
         if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getClickedBlock() != null

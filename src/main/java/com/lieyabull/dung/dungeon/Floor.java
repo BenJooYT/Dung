@@ -74,6 +74,9 @@ public final class Floor {
         public int secretWallDir = -1;
         // world location of the destructible wall center (set during RoomGen.build)
         public Location destructibleWallLoc;
+        // assigned room-template id + runtime template (template floor mode). null = procedural build.
+        public String templateId;
+        public com.lieyabull.dung.room.RoomTemplate template;
 
         public RoomNode(int x, int z, RoomType type) {
             this.x = x;

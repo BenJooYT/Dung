@@ -21,6 +21,7 @@ clearing rooms banks persistent coins and kill/full-clear stats that survive dea
 4. [Package reference](#package-reference)
    - [`com.lieyabull.dung` — plugin root](#comlieyabullndung--plugin-root)
    - [`dungeon` — floor & room generation](#dungeon--floor--room-generation)
+   - [`room` — room editor & template system](#room--room-editor--template-system)
    - [`entity` — enemies & AI](#entity--enemies--ai)
    - [`items` — gear, rarity & loot](#items--gear-rarity--loot)
    - [`game` — run state, combat & lifecycle](#game--run-state-combat--lifecycle)
@@ -50,6 +51,9 @@ clearing rooms banks persistent coins and kill/full-clear stats that survive dea
 /shop             # between runs: spend persistent coins on gear
 /upgrades         # between runs: spend shards on permanent upgrades
 /salvage          # in a run: break held armor into permanent shards
+/party create     # create a party for multiplayer dungeons
+/plots            # teleport to the plots world
+/plot claim       # claim a plot (250 shards or 150 coins)
 ```
 
 Requires permission `dung.admin` (default: OP) for the debug command `/dung give`; everything
@@ -118,6 +122,27 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/party leave` | all | Leave your current party. |
 | `/party kick <player>` | all | Kick a member from the party (leader only). |
 | `/party disband` | all | Disband the party entirely (leader only). |
+| `/plots` | all | Teleport to the plots world. |
+| `/plots warp <name>` | all | Teleport to a named plot. |
+| `/plot claim` | all | Claim the next available plot (costs 250 shards or 150 coins). |
+| `/plot home` | all | Teleport to your own plot. |
+| `/plot name <name>` | all | Name your plot (globally unique). |
+| `/plot warp <name>` | all | Teleport to your named plot. |
+| `/plot unclaim` | all | Abandon your plot (frees it for re-claiming). |
+| `/dung bossbar` | `dung.admin` | Remove any stuck boss bars from the server. |
+| `/room tutorial [next|back|reset|skip <n>]` | all | Walk-through tutorial for the room editor (replayable). |
+| `/room open` | all | Teleport to the room editor world. |
+| `/room new <id> [types]` | all | Create a new room template. |
+| `/room pos1` / `/room pos2` | all | Mark selection corners for bounds / spawn floors. |
+| `/room region` | all | Add the selection as a bound cuboid. |
+| `/room conn <dir> [type] [w] [h]` | all | Add a doorway connection. |
+| `/room playerspawn` | all | Set the player spawn marker at your position. |
+| `/room spawnfloor` | all | Add the selection as an enemy spawn floor. |
+| `/room capture` | all | Snapshot blocks inside all bound regions. |
+| `/room validate` | all | Validate the template (must pass before export). |
+| `/room export <id>` | all | Write the asset + manifest to `plugins/Dung/rooms/`. |
+| `/room testlocal` | all | Test the in-progress template in a test pad. |
+| `/room list` | all | List registered production room templates. |
 
 `/dung give` is a free admin debug surface: `rareweapon` now spawns a persistent weapon at no
 coin cost (real purchases go through `/shop weapon`); `/dung give coins` drops 10 gold-nugget
@@ -144,8 +169,8 @@ run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
 **`Dung`** (extends `JavaPlugin`) — plugin lifecycle & shared accessors.
 
 - `onEnable()` — saves default config, loads `MetaManager`, builds `GameManager`, registers
-  `GameListener` and `ShopUI`, and binds `DungCommand` to `/dung`, `/dungeon`, `/shop`,
-  `/upgrades`, `/salvage`, and `/party`.
+  `GameListener`, `RoomTutorial`, and `ShopUI`, and binds `DungCommand` to `/dung`, `/dungeon`,
+  `/shop`, `/upgrades`, `/salvage`, and `/party`.
 - `onDisable()` — shuts down the run (`game.shutdown()`) and saves meta.
 - `world()` / `resolveWorld()` — **lazy** world resolution: skips the End, falls back to the
   first world. Resolved lazily to avoid NPEs during `onEnable` before worlds load.
@@ -191,6 +216,66 @@ loot-table odds and difficulty. Kinds: `START` (0), `COMBAT` (1), `TREASURE` (2)
 - `center(w, n, baseY, spacing)` — the exact room floor center (+1 for the player).
 - Constants: `SQUARE=13`, `LONG=17`, `WALL=1`, `ROOM_HEIGHT=4`, `PERP_CENTER=9`.
 
+### `room` — room editor & template system
+
+**`RoomEditor`** — coordinates the room-editor subsystem: the isolated editor world, per-player
+authoring sessions, the production registry, and asset export.
+
+- `openEditor(p)` — teleports the player to the editor world (flat, no mobs, no weather).
+- `session(p)` — returns the `RoomEditSession` for a player (created on first access).
+- `export(tpl)` — writes the template JSON + a human-readable manifest to `plugins/Dung/rooms/`.
+- `registry()` — the `RoomRegistry` of production templates loaded from JAR resources.
+
+**`RoomEditSession`** — per-player authoring state for one in-progress room template.
+
+- `template()` — the `RoomTemplate` being edited.
+- `pos1`/`pos2` — world-coordinate selection corners for bounds / spawn floors.
+- `newRoom(id, types)` — creates a fresh template with the given id and room types.
+- `addRegion()` — adds the current selection as a bound cuboid.
+- `addSpawnFloor()` — adds the current selection as an enemy spawn floor.
+- `addConnector(dir, type, width, height)` — adds a doorway connection at the player's position.
+- `setPlayerSpawn()` — sets the `PLAYER_SPAWN` marker at the player's position.
+- `setShopkeeper()` — sets the `SHOPKEEPER` marker at the player's position.
+- `addMarker(type, name)` — adds a generic marker at the player's position.
+- `capture()` — snapshots all blocks inside bound regions into the template.
+- `info()` — returns a summary of the in-progress template.
+
+**`RoomTemplate`** — pure-data room definition: bounds, blocks, connectors, spawn floors, markers.
+
+- `id`, `types`, `description`, `version`, `validated` — metadata.
+- `bounds` — list of `RoomBounds` cuboids defining the room's volume.
+- `blocks` — list of `RoomBlock` entries (x, y, z, block state string).
+- `connectors` — list of `RoomConnector` entries (direction, type, position, width, height, floorY, clearance).
+- `spawnFloors` — list of `SpawnFloor` cuboids where enemies can spawn.
+- `markers` — list of `RoomMarker` entries (type, position, optional name).
+- `total()` — computes the overall bounding box across all regions.
+- `connectorFacing(dir)` — finds a connector on the given direction.
+- `markersOf(type)` — filters markers by type.
+
+**`RoomIo`** — JSON serialization/deserialization for `RoomTemplate` (Gson-based).
+
+**`RoomValidator`** — validates a room template for self-containment, connectivity, and safety.
+
+- `validate(tpl)` — returns a `Result` with `valid` flag and a list of `Issue`s.
+- Rules: all blocks must be inside bounds, all connectors must be open (air), player spawn must
+  be on a solid floor with headroom, spawn floors must be solid, no disconnected geometry.
+- SECRET rooms may lack a player spawn and connectors (they're entered via a destructible wall).
+
+**`RoomTester`** — tests a room template by instantiating it in a test pad.
+
+- `test(tpl, p)` — builds the room at a safe offset, verifies connectors are open, checks the
+  spawn is safe, and spawns a test enemy. Returns a `Result` with feedback lines.
+
+**`RoomTutorial`** — walk-through tutorial for the room editor. Guides a player step by step
+through building, capturing, validating, exporting, and testing a room template.
+
+- `start(p)` — begins or resumes the tutorial.
+- `next(p)` / `back(p)` — advance or go back one step.
+- `skipTo(p, n)` — jump to a specific step (1-based).
+- `reset(p)` — restart from the beginning.
+- Auto-advances when the player runs the expected command (e.g. `/room open` advances to step 2).
+- Triggered with `/room tutorial`; replayable any number of times.
+
 ### `entity` — enemies & AI
 
 **`MobType`** — the enemy catalog. Each type has a base HP/damage/speed, an `ai` behavior kind,
@@ -219,7 +304,8 @@ and an `id`. Elite variants use `id >= 100`.
   (small capped steps) so mobs can't teleport through walls. Attacks only when in range and off
   cooldown, then freezes ~0.5s to give a dodge window. Knockback freezes ~0.4s and zeroes any
   residual velocity before homing resumes, so the physics push doesn't snap into teleporting.
-- `damage(dmg, source, dx, dz)` — applies damage, knockback, updates the name bar, and triggers
+- `damage(dmg, source, dx, dz)` — applies damage, knockback, updates the name bar, plays hit
+  feedback (`ENTITY_PLAYER_HURT` sound + `CRIT` particles) on non-lethal damage, and triggers
   the death poof + sound when defeated.
 - `alive()`, `despawn()`, `playDeathAnimation()`, `deathSound()`, `faceTarget()`,
   `isWalkable()` (walls include boss-room deepslate; floors stay walkable).
@@ -286,7 +372,7 @@ Gear lives in the inventory, not here.
 **`PlayerState`** — the live MMORPG stats + resource bars (single source of truth). Fields:
 `maxHearts`/`hearts` (100 base), `mana`/`maxMana`, `manaRegen`, `coins`, `keys`, `bombs`,
 combat stats (`damage`, `defense`, `reach`, `critChance`, `critMult`, `speedMult`,
-`fireRateTicks`), `classId`, `cooldowns`, `invulnUntil`, `dead`.
+`fireRateTicks` (default 3, reduced from 12)), `classId`, `cooldowns`, `invulnUntil`, `dead`.
 
 - `recomputeStats()` — rebuilds combat stats from held weapon + 4 armor slots (SkyBlock style):
   damage from mainhand, reach override, rarity crit/knockback, defense/health from armor, then
@@ -361,7 +447,16 @@ Combat:
 - `tryBombWall(p, loc)` — right-click a CRACKED_STONE_BRICKS wall with a bomb item to blast
   open a hidden SECRET room (consumes 1 bomb, reveals pedestal loot).
 - `syncHotbarItems(p)` — locks key (TRIPWIRE_HOOK) and bomb (TNT) items into hotbar slots 7-8,
-  synced every tick; items can't be dropped or moved.
+  synced every tick; items can't be dropped or moved. Empty slots get a `BLACK_STAINED_GLASS_PANE`
+  tagged as a run item to prevent duplication via inventory click/drag.
+- `makeEmptySlotItem()` — creates a black stained glass pane marked with `dung.runitem` so
+  inventory click/drag handlers block moving it (prevents tick-by-tick duplication).
+- `tryCastAbility(p, item)` — after casting a weapon ability, persistent weapons lose 1-2
+  random durability via `GearFactory.damageItem()`; broken items are removed from the main hand.
+- `endRun()` — now calls `damagePersistentGear(p)` for each online member after inventory
+  restore, so persistent items take durability damage when the run ends normally.
+- `reviveDeadPlayers()` — resets `PlayerState.dead = false` after removing from `deadPlayers`,
+  so the tick loop doesn't re-trigger `onPlayerDeath` on the next cycle.
 
 Rooms/rewards:
 - `onRoomClear(n, k)` — clears the room, opens doors, awards coins + gear.
@@ -386,14 +481,15 @@ holds still while warning, then fires:
 - **ATTACK_RADIAL** — enrage-only (below 50% HP): expands a ring, hits within 5 blocks.
 
 A contact sting damages if you walk into the boss. `enraged()` past 50% HP speeds up patterns and
-raises damage. `damage(dmg)` updates the boss bar and, at 0, despawns + calls
-`GameManager.onBossDefeated()`.
+raises damage. `damage(dmg)` updates the boss bar, plays hit feedback (`ENTITY_PLAYER_HURT`
+sound + `CRIT` particles), and at 0, despawns + calls `GameManager.onBossDefeated()`.
 
 ### `listener` — Paper event wiring
 
 **`GameListener`** — routes Paper events to the game, only for the active run's player.
 
-- `onJoin` — teleport new players to spawn + show the help prompt.
+- `onJoin` — restore players to their last saved location (world, coords, yaw/pitch from
+  `MetaProfile`) on rejoin; first-time players go to world spawn. Shows the help prompt.
 - `onCreatureSpawn` — suppress natural/world mob spawns inside the run world while running
   (Dung mobs are `CUSTOM`-reasoned so they're unaffected).
 - `onMove` (MONITOR) — room-crossing detection.
@@ -402,14 +498,16 @@ raises damage. `damage(dmg)` updates the boss bar and, at 0, despawns + calls
 - `onHeldItem` / `onArmor` / `onInteract` — recompute stats on gear change; block block-place;
   cast abilities on sneak+right-click; open the chest GUI shop on the emerald block;
   unlock locked doors with key item on IRON_BLOCK; bomb destructible walls with bomb item
-  on CRACKED_STONE_BRICKS.
+  on CRACKED_STONE_BRICKS; claim pedestal loot on POLISHED_BLACKSTONE_SLAB (checked before
+  armor-equip detection so holding an armor piece doesn't equip it when clicking a pedestal).
 - `onAttack` — left-click triggers `registerAttack()` and cancels the vanilla hit.
 - `onEnemyDamage` — **cancels all vanilla damage from Dung entities** (mobs + their projectiles,
   via `isDungSource`) so only `PlayerState`-based damage applies.
 - `onPickup` — intercepts pickups (heart/coin/key/bomb) and applies their effect.
 - `onDropItem` — sneak+drop (Q) casts class ability; non-sneak drop of key/bomb run items
   is cancelled to keep them locked in the hotbar.
-- `onQuit` — ends the run (clears inventory) on logout.
+- `onQuit` — saves the player's current location to `MetaProfile` (for rejoin restoration),
+  then ends the run (clears inventory) on logout.
 
 ### `meta` — persistent progression
 
@@ -421,7 +519,8 @@ backup**.
 - `save()` — writes to a temp file then atomically moves it over the target. Persists coins,
   shards, per-track upgrade levels, deaths, clears, class, kills, and best floor.
 - `profile(uuid)` — lazily creates/loads a `MetaProfile` (`persistentCoins`, `shards`,
-  `upgrades`, `deaths`, `clears`, `classId`, `kills`, `bestFloor`).
+  `upgrades`, `deaths`, `clears`, `classId`, `kills`, `bestFloor`, `lastWorld`/`lastX`/`lastY`/
+  `lastZ`/`lastYaw`/`lastPitch` for rejoin location restoration).
 - `addPersistentCoins(uuid, amount)` — permanent coins that survive death.
 - `MetaProfile` — per-player data; `upgrades` is a `track id -> level` map.
 
@@ -577,6 +676,26 @@ immediately and spent in `/upgrades`.
   persistent gear, not just the run.
 - **Tab throttle** — `TabUI.refresh` runs every 10 ticks; only the HUD action bar keeps a
   per-tick cadence.
+- **Return to pre-run location** — `/dung leave` and mid-run death teleport you back to where
+  you were before starting the run (recorded per-player in `returnLocs`).
+- **Rejoin location persistence** — Players who quit return to the same world they left from
+  (e.g. plots world), saved in `MetaProfile.lastWorld`/`lastX`/`lastY`/`lastZ`/`lastYaw`/`lastPitch`.
+- **Persistent gear durability on run end** — Persistent items now take durability damage when
+  the run ends normally (not just on death), applied after inventory restore so the damage sticks.
+- **Weapon ability durability cost** — Persistent weapons lose 1-2 random durability each time
+  their weapon ability is used, saved after the run ends.
+- **Hit feedback** — Enemies and the boss play `ENTITY_PLAYER_HURT` sound + `CRIT` particles
+  when taking non-lethal damage, so players get audio-visual feedback.
+- **Pedestal armor equip fix** — Picking up rewards from a pedestal while holding an armor piece
+  no longer equips the armor (pedestal check runs before the armor-equip check).
+- **Player attack cooldown reduced** — Player `fireRateTicks` reduced from 12 to 3 (quarter of
+  original); monster attack cooldown set to 12 ticks (the old player value).
+- **Stained glass pane duplication fixed** — The black stained glass pane in empty key/bomb
+  hotbar slots is now tagged as a run item, so inventory click/drag handlers block moving it.
+- **Revived players no longer re-die** — `reviveDeadPlayers()` now resets `PlayerState.dead`
+  so the tick loop doesn't re-trigger `onPlayerDeath` on the next cycle.
+- **Plot crop trampling prevented** — `PlotListener` cancels `EntityChangeBlockEvent` when a
+  player tramples farmland on a plot they don't own.
 
 ### Tests
 

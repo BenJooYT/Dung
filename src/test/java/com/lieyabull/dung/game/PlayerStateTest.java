@@ -50,7 +50,7 @@ public class PlayerStateTest {
         assertEquals(0.05, st.critChance, 0.001);
         assertEquals(1.5, st.critMult, 0.001);
         assertEquals(1.0, st.speedMult, 0.001);
-        assertEquals(12, st.fireRateTicks);
+        assertEquals(3, st.fireRateTicks);
         assertEquals("warrior", st.classId);
         assertFalse(st.dead);
         assertEquals(0, st.invulnUntil);
@@ -264,19 +264,30 @@ public class PlayerStateTest {
         PlayerState st = makeState();
         st.classId = "ranger";
         st.applyClassPassives();
-        // ranger: critChance += 0.10, fireRateTicks = max(5, 12-2) = 10
+        // ranger: critChance += 0.10, fireRateTicks = max(2, 3-2) = 2
         assertEquals(0.15, st.critChance, 0.001);
-        assertEquals(10, st.fireRateTicks);
+        assertEquals(2, st.fireRateTicks);
     }
 
     @Test
-    void mageClassClampsManaToMax() {
+    void mageClassSetsMaxMana() {
+        PlayerState st = makeState();
+        st.classId = "mage";
+        st.applyClassPassives();
+        assertEquals(160.0, st.maxMana, 0.001);
+        assertEquals(8.0, st.manaRegen, 0.001);
+    }
+
+    @Test
+    void mageClassDoesNotClampManaInApplyClassPassives() {
+        // Mana clamping is now done in recomputeStats() after upgrades are applied,
+        // so applyClassPassives() alone should not clamp mana.
         PlayerState st = makeState();
         st.mana = 200; // above default maxMana of 100
         st.classId = "mage";
         st.applyClassPassives();
         assertEquals(160.0, st.maxMana, 0.001);
-        assertEquals(160.0, st.mana, 0.001); // clamped down
+        assertEquals(200.0, st.mana, 0.001); // not clamped — clamp happens in recomputeStats()
     }
 
     // ---- hasDamageBoost() ----

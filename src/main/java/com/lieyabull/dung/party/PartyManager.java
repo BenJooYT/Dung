@@ -3,6 +3,7 @@ package com.lieyabull.dung.party;
 import org.bukkit.entity.Player;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -35,10 +36,14 @@ public final class PartyManager {
         return playerParties.get(uuid);
     }
 
-    /** Send an invite. Returns false if the inviter is not a party leader. */
+    /** Send an invite. If the inviter is not in a party, automatically creates one first. */
     public boolean invite(Player inviter, Player invitee) {
         Party p = partyOf(inviter);
-        if (p == null || !p.isLeader(inviter.getUniqueId())) return false;
+        if (p == null) {
+            p = createParty(inviter);
+            if (p == null) return false;
+        }
+        if (!p.isLeader(inviter.getUniqueId())) return false;
         if (partyOf(invitee) != null) return false;
         if (p.size() >= Party.MAX_SIZE) return false;
         pendingInvites.put(invitee.getUniqueId(), inviter.getUniqueId());
@@ -110,13 +115,18 @@ public final class PartyManager {
         return true;
     }
 
-    /** Disband the party entirely (leader only). */
+    /** Disband the party entirely (leader only). Removes every member from the party
+     *  and clears the internal member list so the Party object is fully empty. */
     public boolean disband(Player leader) {
         Party p = partyOf(leader);
         if (p == null || !p.isLeader(leader.getUniqueId())) return false;
         p.broadcast("§cThe party has been disbanded.");
         for (UUID uid : p.members()) {
             playerParties.remove(uid);
+        }
+        // Clear the party's internal member list so the Party object is truly empty
+        for (UUID uid : List.copyOf(p.members())) {
+            p.removeMember(uid);
         }
         partyById.remove(p.id());
         return true;
@@ -138,6 +148,18 @@ public final class PartyManager {
         Party party = partyOf(p);
         if (party != null) {
             leaveParty(p);
+        }
+    }
+
+    /** Called after a player leaves a dungeon instance. Removes the player from the
+     *  playerParties map (the party's member list was already cleared by the instance).
+     *  If the party is now empty, also removes it from partyById so it won't be reused
+     *  when the player starts a new run. */
+    public void cleanupAfterLeave(Player p) {
+        UUID uid = p.getUniqueId();
+        Party party = playerParties.remove(uid);
+        if (party != null && party.isEmpty()) {
+            partyById.remove(party.id());
         }
     }
 }

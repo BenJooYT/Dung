@@ -57,6 +57,14 @@ public final class MetaManager {
                 data.set(key + ".bestsFloor", prof.bestFloor);
                 data.set(key + ".shards", prof.shards);
                 data.set(key + ".tutorial", prof.hasSeenTutorial);
+                if (prof.lastWorld != null) {
+                    data.set(key + ".lastWorld", prof.lastWorld);
+                    data.set(key + ".lastX", prof.lastX);
+                    data.set(key + ".lastY", prof.lastY);
+                    data.set(key + ".lastZ", prof.lastZ);
+                    data.set(key + ".lastYaw", (double) prof.lastYaw);
+                    data.set(key + ".lastPitch", (double) prof.lastPitch);
+                }
                 for (java.util.Map.Entry<String, Integer> u : prof.upgrades.entrySet()) {
                     data.set(key + ".upgrades." + u.getKey(), u.getValue());
                 }
@@ -89,6 +97,14 @@ public final class MetaManager {
             p.bestFloor = data.getInt(key + ".bestsFloor", 0);
             p.shards = data.getInt(key + ".shards", 0);
             p.hasSeenTutorial = data.getBoolean(key + ".tutorial", false);
+            if (data.contains(key + ".lastWorld")) {
+                p.lastWorld = data.getString(key + ".lastWorld");
+                p.lastX = data.getDouble(key + ".lastX", 0);
+                p.lastY = data.getDouble(key + ".lastY", 0);
+                p.lastZ = data.getDouble(key + ".lastZ", 0);
+                p.lastYaw = (float) data.getDouble(key + ".lastYaw", 0);
+                p.lastPitch = (float) data.getDouble(key + ".lastPitch", 0);
+            }
             if (data.contains(key + ".upgrades")) {
                 for (String u : data.getConfigurationSection(key + ".upgrades").getKeys(false)) {
                     p.upgrades.put(u, data.getInt(key + ".upgrades." + u, 0));
@@ -96,6 +112,15 @@ public final class MetaManager {
             }
             return p;
         });
+    }
+
+    /** Wipe all player data from memory and disk. */
+    public void clearAll() {
+        profiles.clear();
+        for (String key : data.getKeys(false)) {
+            data.set(key, null);
+        }
+        save();
     }
 
     /** Add persistent coins (survive death); separate from run coins. */
@@ -113,5 +138,9 @@ public final class MetaManager {
         public String classId = "warrior";
         public int kills;
         public int bestFloor;
+        // Last known location for rejoin — null means use default spawn
+        public String lastWorld;
+        public double lastX, lastY, lastZ;
+        public float lastYaw, lastPitch;
     }
 }
