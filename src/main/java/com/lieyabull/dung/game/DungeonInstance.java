@@ -106,6 +106,8 @@ public final class DungeonInstance {
     private final Set<Long> persistSpawned = new HashSet<>();
     // Items "tried to persist" successfully during the run — delivered as persistent gear after the run ends
     private final Map<UUID, List<ItemStack>> pendingPersists = new HashMap<>();
+    // Consecutive failed PRESERVE attempts per player — bad-luck protection (reset on success)
+    private final Map<UUID, Integer> preserveFails = new HashMap<>();
     // Saved pre-run inventory snapshots (non-dungeon items) to restore after the run ends
     private final Map<UUID, ItemStack[]> savedInventories = new HashMap<>();
     private boolean running;
@@ -150,6 +152,7 @@ public final class DungeonInstance {
     public BossController boss() { return boss; }
     public Map<Long, List<Enemy>> roomEnemies() { return roomEnemies; }
     public boolean isRunning() { return running; }
+    public Map<UUID, Integer> preserveFails() { return preserveFails; }
 
     /** Check if a player is currently dead (in the deadPlayers set). Used by GameListener
      *  to decide whether to set a respawning player to SPECTATOR or SURVIVAL mode. */
@@ -1876,10 +1879,7 @@ public final class DungeonInstance {
     /** REFORGE: reroll an item's affix set for shards. Keeps base stats, rarity, ability, and upgrade
      *  level; only the affixes change. Returns a preview of the new affixes without applying them. */
     public List<Affix.AffixRoll> previewReforge(ItemStack item) {
-        boolean pity = WorkstationRules.reforgePityActive(GearFactory.getReforgeCount(item));
-        return pity
-                ? Affix.rollMaxed(GearFactory.getRarity(item), kindOf(item))
-                : Affix.roll(GearFactory.getRarity(item), kindOf(item), new java.util.Random());
+        return Affix.roll(GearFactory.getRarity(item), kindOf(item), new java.util.Random());
     }
 
     public boolean tryReforge(Player p, int slot) {
@@ -1894,23 +1894,20 @@ public final class DungeonInstance {
             return false;
         }
         int floor = currentFloorNumber();
-        int shardCost = WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor);
+        int reforgeCount = GearFactory.getReforgeCount(item);
+        int shardCost = WorkstationRules.scaledCost(WorkstationRules.reforgeShardCost(reforgeCount), floor);
         if (prof.shards < shardCost) {
             p.sendMessage("§3You need " + shardCost + " shards (have " + prof.shards + ").");
             return false;
         }
         prof.shards -= shardCost;
         plugin.meta().save();
-        int count = GearFactory.getReforgeCount(item);
-        boolean pity = WorkstationRules.reforgePityActive(count);
-        List<Affix.AffixRoll> rolled = pity
-                ? Affix.rollMaxed(GearFactory.getRarity(item), kindOf(item))
-                : Affix.roll(GearFactory.getRarity(item), kindOf(item), new java.util.Random());
-        GearFactory.setReforgeCount(item, WorkstationRules.reforgeCountAfter(count, pity));
+        List<Affix.AffixRoll> rolled = Affix.roll(GearFactory.getRarity(item), kindOf(item), new java.util.Random());
+        GearFactory.setReforgeCount(item, reforgeCount + 1);
         GearFactory.reforge(item, rolled, GearFactory.getUpgradeLevel(item));
         recomputeStats(); // equipped item's affixes changed in place — refresh live combat stats
         world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_GRINDSTONE_USE, 1.0f, 1.0f);
-        p.sendMessage((pity ? "§d§lPITY ROLL! §dEvery affix at max! §7New affixes: " : "§bReforged! §7New affixes: ")
+        p.sendMessage("§bReforged! §7New affixes: "
                 + affixSummary(rolled) + " §7(-§3" + shardCost + " shards§7)");
         return true;
     }
@@ -1971,19 +1968,27 @@ public final class DungeonInstance {
         prof.shards -= shardCost;
         plugin.meta().save();
 
-        boolean success = WorkstationRules.preserveSucceeds(new java.util.Random().nextDouble());
+        int fails = preserveFails.getOrDefault(pid, 0);
+        boolean guaranteed = WorkstationRules.preserveGuaranteed(fails);
+        boolean success = guaranteed || WorkstationRules.preserveSucceeds(new java.util.Random().nextDouble());
         if (success) {
+            preserveFails.remove(pid); // reset on success
             p.getInventory().setItem(slot, null);
             pendingPersists.computeIfAbsent(pid, k -> new ArrayList<>()).add(GearFactory.persistize(item));
             world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_BEACON_ACTIVATE, 1.0f, 1.5f);
-            p.sendMessage("§d§l✦ PRESERVED! §dYour item will persist past this run (at half durability).");
+            String pityMsg = guaranteed ? " §6§l✦ PITY! §7Guaranteed after " + WorkstationRules.PRESERVE_PITY + " fails!" : "";
+            p.sendMessage("§d§l✦ PRESERVED! §dYour item will persist past this run (at half durability)." + pityMsg);
             p.sendMessage("§7  You'll receive it when the run ends.");
         } else {
-            // Failed: return the item, one rarity worse (stats scaled down, recolored).
+            // Failed: increment consecutive fails for pity tracking
+            preserveFails.put(pid, fails + 1);
+            // Return the item, one rarity worse (stats scaled down, recolored).
             ItemStack downgraded = GearFactory.downgradeRarity(item);
             p.getInventory().setItem(slot, downgraded);
             world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_ANVIL_LAND, 1.0f, 1.0f);
-            p.sendMessage("§cThe preserve failed. Your item was returned, §lone rarity worse§r§c.");
+            int remaining = WorkstationRules.PRESERVE_PITY - (fails + 1);
+            p.sendMessage("§cThe preserve failed. Your item was returned, §lone rarity worse§r§c."
+                    + " §7(Pity: §e" + remaining + "§7 more fail" + (remaining == 1 ? "" : "s") + " → guaranteed)");
         }
         recomputeStats(); // equipped slot changed (removed or downgraded) — refresh live combat stats
         return true;

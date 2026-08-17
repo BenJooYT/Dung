@@ -534,7 +534,7 @@ public final class GearFactory {
         return v == null ? 0 : v;
     }
 
-    /** Reforges performed on an item since its last pity roll (0 if none). */
+    /** Number of times an item has been reforged (0 if never). Used to make each reforge costlier. */
     public static int getReforgeCount(ItemStack s) {
         if (s == null || s.getItemMeta() == null) return 0;
         var pdc = s.getItemMeta().getPersistentDataContainer();
@@ -543,7 +543,7 @@ public final class GearFactory {
         return v == null ? 0 : v;
     }
 
-    /** Set the item's reforge-pity counter. */
+    /** Set the item's reforge count. */
     public static void setReforgeCount(ItemStack s, int count) {
         if (s == null || s.getType() == Material.AIR) return;
         s.editMeta(meta -> meta.getPersistentDataContainer().set(

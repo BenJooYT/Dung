@@ -134,11 +134,10 @@ public final class WorkstationUI implements Listener {
             }
             case REFORGE -> {
                 lines.add("§3Cost: " + WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor) + " shards");
-                lines.add("§7(scales with floor)");
+                lines.add("§7+§3" + WorkstationRules.REFORGE_SHARD_PER_REFORGE + "§7 shards per");
+                lines.add("§7previous reforge of that item.");
                 lines.add("§7Effect: rerolls the item's affixes");
                 lines.add("§7Keeps base stats, rarity, ability.");
-                lines.add("§7Pity: every " + WorkstationRules.REFORGE_PITY + " rerolls is a");
-                lines.add("§7guaranteed §dmax-affix roll§7.");
             }
             case PRESERVE -> {
                 lines.add("§e" + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_COIN_COST, floor) + " run coins");
@@ -146,6 +145,8 @@ public final class WorkstationUI implements Listener {
                 lines.add("§3AND " + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_SHARD_COST, floor) + " shards");
                 lines.add("§7(scales with floor)");
                 lines.add("§7Chance: §a" + (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100) + "%");
+                lines.add("§7Pity: guaranteed to succeed after");
+                lines.add("§7" + WorkstationRules.PRESERVE_PITY + " consecutive failures.");
                 lines.add("§7Success: persists past the run");
                 lines.add("§7(§ehalf durability§7). §cFail: returned one");
                 lines.add("§crarity worse.");
@@ -241,14 +242,28 @@ public final class WorkstationUI implements Listener {
                 lines.add("§3Cost: " + WorkstationRules.scaledCost(WorkstationRules.upgradeShardCost(lvl), floor) + " shards");
             }
             case REFORGE -> {
+                int reforgeCount = GearFactory.getReforgeCount(item);
                 List<Affix.AffixRoll> rolled = state.di.previewReforge(item);
-                boolean pity = WorkstationRules.reforgePityActive(GearFactory.getReforgeCount(item));
-                lines.add((pity ? "§d§lPITY! §dEvery affix max:" : "§bNew affixes: ") + affixSummary(rolled));
-                lines.add("§3Cost: " + WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor) + " shards");
+                lines.add("§bNew affixes: " + affixSummary(rolled));
+                int cost = WorkstationRules.scaledCost(WorkstationRules.reforgeShardCost(reforgeCount), floor);
+                lines.add("§3Cost: " + cost + " shards");
+                if (reforgeCount > 0) {
+                    lines.add("§7(+§3" + (cost - WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor))
+                            + "§7 from " + reforgeCount + " prior reforge" + (reforgeCount == 1 ? "" : "s") + ")");
+                }
             }
             case PRESERVE -> {
+                int fails = state.di.preserveFails().getOrDefault(p.getUniqueId(), 0);
+                boolean guaranteed = WorkstationRules.preserveGuaranteed(fails);
                 lines.add("§dAttempts to preserve this item past the run");
                 lines.add("§7Chance: §a" + (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100) + "%");
+                if (guaranteed) {
+                    lines.add("§6§l✦ PITY! §7Next attempt guaranteed!");
+                } else {
+                    int remaining = WorkstationRules.PRESERVE_PITY - fails;
+                    lines.add("§7Pity: §e" + remaining + "§7 more fail" + (remaining == 1 ? "" : "s")
+                            + " → guaranteed");
+                }
                 lines.add("§7Success: §aques at half durability§7. §cFail: returned");
                 lines.add("§cone rarity worse§7.");
                 lines.add("§e" + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_COIN_COST, floor) + " run coins");

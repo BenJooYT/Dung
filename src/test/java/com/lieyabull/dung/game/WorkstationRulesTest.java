@@ -93,17 +93,14 @@ public class WorkstationRulesTest {
         assertEquals(WorkstationRules.REFORGE_SHARD_COST * 3, WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, 15));
     }
 
-    // ---- reforge pity ----
+    // ---- preserve pity ----
 
     @Test
-    void reforgePityActivatesAfterThresholdAndResets() {
-        assertFalse(WorkstationRules.reforgePityActive(0));
-        assertFalse(WorkstationRules.reforgePityActive(WorkstationRules.REFORGE_PITY - 1));
-        assertTrue(WorkstationRules.reforgePityActive(WorkstationRules.REFORGE_PITY));
-        // a pity roll resets the counter; a normal roll increments it
-        assertEquals(1, WorkstationRules.reforgeCountAfter(0, false));
-        assertEquals(WorkstationRules.REFORGE_PITY, WorkstationRules.reforgeCountAfter(WorkstationRules.REFORGE_PITY - 1, false));
-        assertEquals(0, WorkstationRules.reforgeCountAfter(WorkstationRules.REFORGE_PITY, true));
+    void preserveGuaranteedActivatesAfterThreshold() {
+        assertFalse(WorkstationRules.preserveGuaranteed(0));
+        assertFalse(WorkstationRules.preserveGuaranteed(WorkstationRules.PRESERVE_PITY - 2));
+        assertTrue(WorkstationRules.preserveGuaranteed(WorkstationRules.PRESERVE_PITY - 1));
+        assertTrue(WorkstationRules.preserveGuaranteed(WorkstationRules.PRESERVE_PITY));
     }
 
     // ---- SALVAGE ----

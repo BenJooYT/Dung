@@ -70,18 +70,14 @@ public final class WorkstationRules {
 
     // ---------- REFORGE ----------
     public static final int REFORGE_COIN_COST = 0;
+    /** Shard cost for the first reforge of an item. */
     public static final int REFORGE_SHARD_COST = 15;
-    /** Reforges (on one item) before the next one is a guaranteed full-pool "pity" roll. */
-    public static final int REFORGE_PITY = 10;
-
-    /** Whether a reforge with the given running reforge count (0-based) should be a pity (maxed) roll. */
-    public static boolean reforgePityActive(int count) {
-        return count >= REFORGE_PITY;
-    }
-
-    /** Reforge count to store on the item after a reforge: resets to 0 on a pity roll, else increments. */
-    public static int reforgeCountAfter(int count, boolean pity) {
-        return pity ? 0 : count + 1;
+    /** Extra shards added to the cost per time the item has already been reforged. */
+    public static final int REFORGE_SHARD_PER_REFORGE = 5;
+    /** Shard cost to reforge an item given how many times it has already been reforged — each
+     *  consecutive reforge of the same item is costlier, so endless re-rolling has a price. */
+    public static int reforgeShardCost(int reforgeCount) {
+        return REFORGE_SHARD_COST + REFORGE_SHARD_PER_REFORGE * Math.max(0, reforgeCount);
     }
 
     // ---------- PRESERVE ----------
@@ -93,10 +89,25 @@ public final class WorkstationRules {
     public static final int PRESERVE_SHARD_COST = 250;
     /** Base chance (0.0-1.0) a preserve attempt succeeds and queues the item for post-run delivery. */
     public static final double PRESERVE_SUCCESS_CHANCE = 0.40;
+    /** Bad-luck protection: after this many consecutive failed preserve attempts, the next attempt is
+     *  guaranteed to succeed (a success no later than the Nth attempt). */
+    public static final int PRESERVE_PITY = 3;
 
     /** Whether a preserve attempt with a uniform random {@code roll} in [0,1) succeeds. */
     public static boolean preserveSucceeds(double roll) {
         return roll < PRESERVE_SUCCESS_CHANCE;
+    }
+
+    /** Whether a preserve attempt should be guaranteed to succeed given the number of consecutive failed
+     *  attempts so far (0-based). Reaches true at {@code PRESERVE_PITY - 1} failures, so a player is never
+     *  forced to fail more than {@code PRESERVE_PITY} times in a row. */
+    public static boolean preserveGuaranteed(int consecutiveFails) {
+        return consecutiveFails >= PRESERVE_PITY - 1;
+    }
+
+    /** The number of consecutive failures needed to trigger the pity guarantee. */
+    public static int preservePityThreshold() {
+        return PRESERVE_PITY;
     }
 
     // ---------- SALVAGE ----------

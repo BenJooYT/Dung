@@ -372,6 +372,12 @@ tab = detailed build/run/progression).
 - [x] **`GearFactory` helpers:** `persistize` (mark persistent + init durability at half) and
       `downgradeRarity` (scale stat tags + rewrite lore to the next-lowest rarity).
 
+### Iteration 29 — Persist pity system (guaranteed preserve after 3 consecutive failures)
+- [x] **Persist pity threshold:** After 3 consecutive failed preserve attempts, the next attempt is guaranteed to succeed. The counter resets to 0 on a successful preserve.
+- [x] **`WorkstationRules.PRESERVE_PITY`** — constant set to 3. `preserveGuaranteed(int)` returns true when the consecutive fail count reaches `PRESERVE_PITY - 1` (2 failures → 3rd attempt guaranteed).
+- [x] **`DungeonInstance.tryPreserve`** — now tracks consecutive failures per player via the `preserveFails` map. Uses `preserveGuaranteed` to force success on the 3rd attempt. Shows pity status in the result message.
+- [x] **`WorkstationUI`** — shows current fail count in the preserve detail panel: "Pity: N more fails → guaranteed" or "✦ PITY! Next attempt guaranteed!" when active.
+
 ### Iteration 28 — Unified dungeon progression workstations
 - [x] **Five physical workstations replace the Persist Master NPC.** An UPGRADE room now spawns five
       workstation blocks (Smithing Table = UPGRADE, Grindstone = REFORGE, Anvil = PRESERVE, Barrel =
