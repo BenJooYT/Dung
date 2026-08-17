@@ -58,10 +58,8 @@ public final class HUD {
             lastDisplayName = display;
         }
         setLine(o, 0, "§8§m                   ");
-        // combat stats — DMG shows melee in red and magic (when present) in blue
-        String dmgLine = st.magicDamage > 0
-                ? "§7DMG §c" + TextUtil.fmt(st.damage) + "§f/§b" + TextUtil.fmt(st.magicDamage)
-                : "§7DMG §c" + TextUtil.fmt(st.damage);
+        // combat stats — DMG always shows melee (red) and magic (blue) counters side by side
+        String dmgLine = "§7DMG §c" + TextUtil.fmt(st.damage) + "§f/§b" + TextUtil.fmt(st.magicDamage);
         setLine(o, 1, dmgLine + "   §7DEF §a" + (int) st.defense);
         setLine(o, 2, "§7Crit §f" + (int) (st.critChance * 100) + "% §b✕" + TextUtil.fmt(st.critMult));
         setLine(o, 3, "§7Reach §f" + TextUtil.fmt(st.reach) + "   §7Spd §f" + TextUtil.fmt(st.speedMult));

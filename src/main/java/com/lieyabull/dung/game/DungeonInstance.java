@@ -1666,7 +1666,7 @@ public final class DungeonInstance {
                         // Draw curved lightning arc from source to target
                         org.bukkit.Location src = (i == 0) ? primary.entity.getLocation() : others.get(i - 1).entity.getLocation();
                         org.bukkit.Location dst = target.entity.getLocation();
-                        drawLightningArc(world, src.clone().add(0, 1, 0), dst.clone().add(0, 1, 0));
+                        drawLightningArcLinger(world, src.clone().add(0, 1, 0), dst.clone().add(0, 1, 0));
                     }
                     world.playSound(caster.getLocation(), org.bukkit.Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 0.6f, 1.2f);
                     caster.sendMessage("§6Chain Lightning!");
@@ -2935,6 +2935,27 @@ public final class DungeonInstance {
             double offset = Math.sin(progress * Math.PI) * amplitude;
             point.add(perp.clone().multiply(offset));
             w.spawnParticle(org.bukkit.Particle.CRIT, point.toLocation(w), 1, 0, 0, 0, 0);
+        }
+    }
+
+    /** Draw a lightning arc that lingers ~4x longer than a single draw: spawns the arc once now,
+     *  then re-spawns the same frozen path at +1, +2, +3 ticks so the bolt stays visible for ~4
+     *  ticks instead of flickering out instantly. Coordinates are snapshots, so the lingering arc
+     *  holds where the bolt originally struck even if the targets moved. */
+    private void drawLightningArcLinger(org.bukkit.World w, org.bukkit.Location src, org.bukkit.Location dst) {
+        org.bukkit.util.Vector s = src.toVector().clone();
+        org.bukkit.util.Vector d = dst.toVector().clone();
+        for (int delay = 0; delay < 4; delay++) {
+            if (delay == 0) {
+                drawLightningArc(w, src, dst);
+            } else {
+                final int ticks = delay;
+                org.bukkit.Bukkit.getScheduler().runTaskLater(plugin,
+                        () -> drawLightningArc(w,
+                                s.toLocation(w),
+                                d.toLocation(w)),
+                        ticks);
+            }
         }
     }
 

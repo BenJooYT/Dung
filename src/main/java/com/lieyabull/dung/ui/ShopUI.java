@@ -202,6 +202,7 @@ public final class ShopUI implements Listener {
                 case "crit" -> Material.ARROW;
                 case "speed" -> Material.FEATHER;
                 case "mana" -> Material.EXPERIENCE_BOTTLE;
+                case "magic_damage" -> Material.BLAZE_ROD;
                 default -> Material.BARRIER;
             };
 
@@ -572,6 +573,7 @@ public final class ShopUI implements Listener {
             case "crit" -> "+" + (level * 0.5) + "% crit chance";
             case "speed" -> "+" + (level * Upgrades.delta(t)) + "% move speed";
             case "mana" -> "+" + (level * Upgrades.delta(t)) + " max mana";
+            case "magic_damage" -> "+" + (level * Upgrades.delta(t)) + " magic damage";
             default -> "";
         };
     }
