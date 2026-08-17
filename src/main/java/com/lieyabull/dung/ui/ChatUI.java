@@ -34,7 +34,7 @@ public final class ChatUI {
     }
 
     public static Component command(String label, String command, String hover) {
-        return Component.text(label, NamedTextColor.AQUA)
+        return LegacyComponentSerializer.legacySection().deserialize(label)
                 .hoverEvent(HoverEvent.showText(Component.text(hover, NamedTextColor.GRAY)))
                 .clickEvent(ClickEvent.runCommand(command));
     }

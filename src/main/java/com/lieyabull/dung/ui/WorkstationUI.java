@@ -7,6 +7,7 @@ import com.lieyabull.dung.game.WorkstationRules;
 import com.lieyabull.dung.game.WorkstationType;
 import com.lieyabull.dung.items.Affix;
 import com.lieyabull.dung.items.GearFactory;
+import com.lieyabull.dung.items.ItemTags;
 import com.lieyabull.dung.meta.MetaManager;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
@@ -97,8 +98,8 @@ public final class WorkstationUI implements Listener {
             state.guiToPlayer[guiIndex] = playerSlot;
         }
 
-        // Info panel
-        int infoSlot = type == WorkstationType.STORAGE ? 31 : 30;
+        // Info panel (shifted right by 1 slot)
+        int infoSlot = type == WorkstationType.STORAGE ? 32 : 31;
         inv.setItem(infoSlot, makeInfo(type, di.currentFloorNumber()));
 
         fillEmpty(inv);
@@ -140,10 +141,9 @@ public final class WorkstationUI implements Listener {
                 lines.add("§7Keeps base stats, rarity, ability.");
             }
             case PRESERVE -> {
-                lines.add("§e" + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_COIN_COST, floor) + " run coins");
-                lines.add("§dAND " + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_PERSISTENT_COIN_COST, floor) + " persistent coins");
-                lines.add("§3AND " + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_SHARD_COST, floor) + " shards");
-                lines.add("§7(scales with floor)");
+                lines.add("§e" + WorkstationRules.PRESERVE_COIN_COST + " run coins");
+                lines.add("§dAND " + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " persistent coins");
+                lines.add("§3AND " + WorkstationRules.PRESERVE_SHARD_COST + " shards");
                 lines.add("§7Chance: §a" + (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100) + "%");
                 lines.add("§7Pity: guaranteed to succeed after");
                 lines.add("§7" + WorkstationRules.PRESERVE_PITY + " consecutive failures.");
@@ -153,7 +153,8 @@ public final class WorkstationUI implements Listener {
             }
             case SALVAGE -> {
                 lines.add("§7Effect: destroy the item for §erun coins§7");
-                lines.add("§7(per-run, lost on death — not shards)");
+                lines.add("§7(per-run currency, lost on death — does");
+                lines.add("§7NOT count toward boss persistent reward)");
                 lines.add("§7Value scales with rarity + stats.");
                 lines.add("§cRequires confirmation.");
             }
@@ -189,7 +190,27 @@ public final class WorkstationUI implements Listener {
         var pdc = meta.getPersistentDataContainer();
         String action = pdc.get(org.bukkit.NamespacedKey.minecraft(GUI_KEY),
                 org.bukkit.persistence.PersistentDataType.STRING);
-        if (action == null) return;
+
+        if (action == null) {
+            // Clicked an item in the player's own inventory (bottom slots) — treat as a selection
+            // if it's workstation-eligible gear. The raw slot from InventoryClickEvent maps to the
+            // player's inventory slot for bottom-area clicks.
+            int rawSlot = e.getRawSlot();
+            int invSize = e.getInventory().getSize();
+            if (rawSlot >= invSize) {
+                // Bottom area click — map to player inventory slot
+                int playerSlot = rawSlot - invSize;
+                if (playerSlot >= 0 && playerSlot < 41) {
+                    ItemStack playerItem = p.getInventory().getItem(playerSlot);
+                    if (playerItem != null && WorkstationRules.isWorkstationGear(playerItem)) {
+                        state.selected = playerSlot;
+                        state.confirmed = false;
+                        renderDetail(p, state, e.getInventory());
+                    }
+                }
+            }
+            return;
+        }
 
         if (ACTION_BACK.equals(action)) {
             state.confirmed = false;
@@ -235,18 +256,49 @@ public final class WorkstationUI implements Listener {
         switch (state.type) {
             case UPGRADE -> {
                 int lvl = GearFactory.getUpgradeLevel(item);
+                boolean isPersistent = GearFactory.isPersistent(item);
                 lines.add("§7Current level: §5" + lvl);
+                // Show base stat + upgrade bonus, e.g. "DMG: 32 (+4)"
+                String coreTag = GearFactory.coreStatTag(item);
+                if (coreTag != null) {
+                    var pdc = item.getItemMeta().getPersistentDataContainer();
+                    int current = pdc.getOrDefault(org.bukkit.NamespacedKey.minecraft(coreTag),
+                            org.bukkit.persistence.PersistentDataType.INTEGER, 0);
+                    double mult = WorkstationRules.upgradeStatMult(lvl);
+                    int base = (int) Math.round(current / mult);
+                    int bonus = current - base;
+                    String label = switch (coreTag) {
+                        case ItemTags.DAMAGE -> "§cDMG";
+                        case ItemTags.MAGIC_DAMAGE -> "§dMagic DMG";
+                        case ItemTags.DEFENSE -> "§aDEF";
+                        case ItemTags.SHIELD_MAX -> "§bShield";
+                        default -> "§7Stat";
+                    };
+                    lines.add(label + ": §f" + current + " §7(+" + bonus + ")");
+                }
                 lines.add("§5Next: Lv " + (lvl + 1) + " §7(+"
                         + (int) (WorkstationRules.UPGRADE_STAT_PER_LEVEL * 100) + "% core stat)");
-                lines.add("§eCost: " + WorkstationRules.scaledCost(WorkstationRules.upgradeCoinCost(lvl), floor) + " run coins");
-                lines.add("§3Cost: " + WorkstationRules.scaledCost(WorkstationRules.upgradeShardCost(lvl), floor) + " shards");
+                int coinCost = WorkstationRules.scaledCost(WorkstationRules.upgradeCoinCost(lvl), floor);
+                int shardCost = WorkstationRules.scaledCost(WorkstationRules.upgradeShardCost(lvl), floor);
+                if (isPersistent) {
+                    lines.add("§eCost: " + (coinCost * 2) + " run coins §7(§6persistent§7, 2x)");
+                    lines.add("§3Cost: " + (shardCost * 2) + " shards §7(§6persistent§7, 2x)");
+                } else {
+                    lines.add("§eCost: " + coinCost + " run coins");
+                    lines.add("§3Cost: " + shardCost + " shards");
+                }
             }
             case REFORGE -> {
                 int reforgeCount = GearFactory.getReforgeCount(item);
+                boolean isPersistent = GearFactory.isPersistent(item);
                 List<Affix.AffixRoll> rolled = state.di.previewReforge(item);
                 lines.add("§bNew affixes: " + affixSummary(rolled));
                 int cost = WorkstationRules.scaledCost(WorkstationRules.reforgeShardCost(reforgeCount), floor);
-                lines.add("§3Cost: " + cost + " shards");
+                if (isPersistent) {
+                    lines.add("§3Cost: " + (cost * 2) + " shards §7(§6persistent§7, 2x)");
+                } else {
+                    lines.add("§3Cost: " + cost + " shards");
+                }
                 if (reforgeCount > 0) {
                     lines.add("§7(+§3" + (cost - WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor))
                             + "§7 from " + reforgeCount + " prior reforge" + (reforgeCount == 1 ? "" : "s") + ")");
@@ -266,14 +318,16 @@ public final class WorkstationUI implements Listener {
                 }
                 lines.add("§7Success: §aques at half durability§7. §cFail: returned");
                 lines.add("§cone rarity worse§7.");
-                lines.add("§e" + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_COIN_COST, floor) + " run coins");
-                lines.add("§dAND " + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_PERSISTENT_COIN_COST, floor) + " persistent coins");
-                lines.add("§3AND " + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_SHARD_COST, floor) + " shards");
+                lines.add("§e" + WorkstationRules.PRESERVE_COIN_COST + " run coins");
+                lines.add("§dAND " + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " persistent coins");
+                lines.add("§3AND " + WorkstationRules.PRESERVE_SHARD_COST + " shards");
             }
             case SALVAGE -> {
                 int value = WorkstationRules.salvageValue(
                         GearFactory.getRarity(item), WorkstationRules.primaryStat(item));
                 lines.add("§e+ " + value + " run coins");
+                lines.add("§7(per-run, lost on death — not counted");
+                lines.add("§7toward boss persistent coin reward)");
                 lines.add("§cThis destroys the item!");
             }
             default -> {}
@@ -286,9 +340,9 @@ public final class WorkstationUI implements Listener {
         List<String> confirmLore = (destructive && state.confirmed)
                 ? List.of("§cClick once more to destroy/remove the item.")
                 : List.of("§7Apply the operation to the selected item");
-        inv.setItem(30, makeItem(Material.LIME_DYE, confirmName, confirmLore, ACTION_CONFIRM));
-        inv.setItem(40, makeItem(Material.ARROW, "§7← Back", List.of("§7Back to the item list"), ACTION_BACK));
-        inv.setItem(31, makeInfo(state.type, floor)); // keep the info panel anchored
+        inv.setItem(31, makeItem(Material.LIME_DYE, confirmName, confirmLore, ACTION_CONFIRM));
+        inv.setItem(41, makeItem(Material.ARROW, "§7← Back", List.of("§7Back to the item list"), ACTION_BACK));
+        inv.setItem(32, makeInfo(state.type, floor)); // keep the info panel anchored
     }
 
     private ItemStack currentItem(Player p, State state, int playerSlot) {
@@ -336,10 +390,18 @@ public final class WorkstationUI implements Listener {
             sb.append('|').append(m.getDisplayName());
             var pdc = m.getPersistentDataContainer();
             for (org.bukkit.NamespacedKey key : pdc.getKeys()) {
-                Object v = pdc.get(key, org.bukkit.persistence.PersistentDataType.STRING);
-                if (v == null) v = pdc.get(key, org.bukkit.persistence.PersistentDataType.INTEGER);
-                if (v == null) v = pdc.get(key, org.bukkit.persistence.PersistentDataType.DOUBLE);
-                if (v != null) sb.append('|').append(key.getKey()).append('=').append(v);
+                // Check the tag type before reading — pdc.get() throws IllegalArgumentException
+                // when the stored type doesn't match the requested type.
+                if (pdc.has(key, org.bukkit.persistence.PersistentDataType.STRING)) {
+                    sb.append('|').append(key.getKey()).append('=').append(
+                            pdc.get(key, org.bukkit.persistence.PersistentDataType.STRING));
+                } else if (pdc.has(key, org.bukkit.persistence.PersistentDataType.INTEGER)) {
+                    sb.append('|').append(key.getKey()).append('=').append(
+                            pdc.get(key, org.bukkit.persistence.PersistentDataType.INTEGER));
+                } else if (pdc.has(key, org.bukkit.persistence.PersistentDataType.DOUBLE)) {
+                    sb.append('|').append(key.getKey()).append('=').append(
+                            pdc.get(key, org.bukkit.persistence.PersistentDataType.DOUBLE));
+                }
             }
         }
         return sb.toString();

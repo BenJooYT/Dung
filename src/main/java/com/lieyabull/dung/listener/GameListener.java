@@ -384,7 +384,9 @@ public final class GameListener implements Listener {
             // Look up the enemy by its entity UUID
             com.lieyabull.dung.entity.Enemy enemy = di.enemyByEntity(shooter.getUniqueId());
             if (enemy != null && !enemy.dead) {
-                com.lieyabull.dung.game.GameManager.playerHurt(p, enemy.damage);
+                // Maw (ai=6) ranged attack does 3x its base damage
+                double projectileDmg = enemy.type.ai == 6 ? enemy.damage * 3.0 : enemy.damage;
+                com.lieyabull.dung.game.GameManager.playerHurt(p, projectileDmg);
             }
         }
     }
@@ -409,12 +411,19 @@ public final class GameListener implements Listener {
         if (hasAbility && (e.getAction() == Action.RIGHT_CLICK_AIR || e.getAction() == Action.RIGHT_CLICK_BLOCK)
                 && p.isSneaking()) {
             e.setCancelled(true);
-            // Life Drain: crouch + right-click heals the user with the weapon's stored health
-            // (instead of casting the AoE ability). Normal right-click on a player still heals them.
+            // Life Drain: shift + right-click casts the AoE Life Drain ability on enemies.
+            // Right-click on a player still heals them (handled in onInteractEntity).
+            di.tryCastAbility(p, held);
+            return;
+        }
+        // Life Drain: shift + left-click heals the user with the weapon's stored health
+        if (hasAbility && (e.getAction() == Action.LEFT_CLICK_AIR || e.getAction() == Action.LEFT_CLICK_BLOCK)
+                && p.isSneaking()) {
             String ability = held.getItemMeta().getPersistentDataContainer()
                     .get(org.bukkit.NamespacedKey.minecraft(ItemTags.ABILITY),
                          org.bukkit.persistence.PersistentDataType.STRING);
             if ("Life Drain".equals(ability)) {
+                e.setCancelled(true);
                 int stored = GearFactory.getStoredHealth(held);
                 if (stored > 0) {
                     PlayerState st = di.run().playerStateOf(p.getUniqueId());
@@ -422,6 +431,15 @@ public final class GameListener implements Listener {
                         st.heal(stored);
                         GearFactory.setStoredHealth(held, 0);
                         p.sendMessage("§aYou healed yourself for §c" + stored + "❤");
+                        // Spawn damage_indicator particles exploding outward from the player
+                        Location pLoc = p.getLocation().add(0, 1, 0);
+                        for (int i = 0; i < 12; i++) {
+                            double angle = i * Math.PI * 2 / 12;
+                            double dx = Math.cos(angle) * 0.5;
+                            double dz = Math.sin(angle) * 0.5;
+                            Location pt = pLoc.clone().add(dx, 0, dz);
+                            p.getWorld().spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
+                        }
                     } else {
                         p.sendMessage("§cYou have no health to heal!");
                     }
@@ -430,8 +448,6 @@ public final class GameListener implements Listener {
                 }
                 return;
             }
-            di.tryCastAbility(p, held);
-            return;
         }
         // pedestal: right-click a pedestal slab to claim the item
         // Check this BEFORE the armor-equip check so that holding an armor piece while
@@ -506,6 +522,14 @@ public final class GameListener implements Listener {
                                 GearFactory.setStoredHealth(held, 0);
                                 p.sendMessage("§aHealed " + target.getName() + " for §c" + stored + "❤");
                                 target.sendMessage("§a" + p.getName() + " healed you for §c" + stored + "❤");
+                                // Spawn damage_indicator particles from sender to receiver
+                                Location src = p.getLocation().add(0, 1, 0);
+                                Location dst = target.getLocation().add(0, 1, 0);
+                                org.bukkit.util.Vector step = dst.toVector().subtract(src.toVector()).multiply(0.1);
+                                for (int t = 0; t < 10; t++) {
+                                    Location pt = src.clone().add(step.clone().multiply(t));
+                                    p.getWorld().spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
+                                }
                                 e.setCancelled(true);
                                 return;
                             }

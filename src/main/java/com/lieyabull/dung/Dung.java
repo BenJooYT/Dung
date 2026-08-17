@@ -59,6 +59,8 @@ public final class Dung extends JavaPlugin {
         getCommand("upgrades").setExecutor(new DungCommand(this));
         getCommand("salvage").setExecutor(new DungCommand(this));
         getCommand("party").setExecutor(new DungCommand(this));
+        getCommand("balance").setExecutor(new DungCommand(this));
+        getCommand("leaderboard").setExecutor(new DungCommand(this));
         RoomCommand roomCmd = new RoomCommand(this, roomEditor);
         getCommand("room").setExecutor(roomCmd);
         getCommand("room").setTabCompleter(roomCmd);

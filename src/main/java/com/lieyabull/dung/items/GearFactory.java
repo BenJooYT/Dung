@@ -6,7 +6,10 @@ import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.block.banner.Pattern;
+import org.bukkit.block.banner.PatternType;
 import org.bukkit.inventory.meta.ArmorMeta;
+import org.bukkit.inventory.meta.BlockStateMeta;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.trim.ArmorTrim;
 import org.bukkit.inventory.meta.trim.TrimMaterial;
@@ -298,6 +301,24 @@ public final class GearFactory {
         });
     }
 
+    /** Get the repair count from an item's PDC. Returns 0 if not set. */
+    public static int getRepairCount(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return 0;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        var key = org.bukkit.NamespacedKey.minecraft(ItemTags.REPAIR_COUNT);
+        if (!pdc.has(key, org.bukkit.persistence.PersistentDataType.INTEGER)) return 0;
+        return pdc.get(key, org.bukkit.persistence.PersistentDataType.INTEGER);
+    }
+
+    /** Set the repair count on an item's PDC. */
+    public static void setRepairCount(ItemStack s, int count) {
+        s.editMeta(meta -> {
+            meta.getPersistentDataContainer().set(
+                    org.bukkit.NamespacedKey.minecraft(ItemTags.REPAIR_COUNT),
+                    org.bukkit.persistence.PersistentDataType.INTEGER, count);
+        });
+    }
+
     /** Reduce durability by the given amount. Returns true if the item is now broken (durability <= 0). */
     public static boolean damageItem(ItemStack s, int amount) {
         int dur = getDurability(s);
@@ -406,15 +427,28 @@ public final class GearFactory {
             scaleIntTag(pdc, ItemTags.SHIELD_MAX, scale);
             pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.RARITY),
                     org.bukkit.persistence.PersistentDataType.STRING, target.name());
-            // Recolor the display name (keep any ★ persistent prefix)
+            // Recolor the display name (keep any ★ persistent prefix and perfection star/suffix)
             String name = meta.getDisplayName();
             if (name != null) {
                 boolean star = name.startsWith("★ ");
                 String body = star ? name.substring(2) : name;
-                if (body.startsWith(cur.legacy)) {
-                    body = target.legacy + body.substring(cur.legacy.length());
+                boolean hasPerfection = body.contains("§e✦") && body.endsWith(" of Perfection");
+                // Strip perfection parts before recolor
+                String cleanBody = body;
+                if (hasPerfection) {
+                    if (cleanBody.endsWith(" of Perfection"))
+                        cleanBody = cleanBody.substring(0, cleanBody.length() - " of Perfection".length());
+                    if (cleanBody.startsWith("§e✦ "))
+                        cleanBody = cleanBody.substring(4);
                 }
-                meta.setDisplayName((star ? "★ " : "") + body);
+                if (cleanBody.startsWith(cur.legacy)) {
+                    cleanBody = target.legacy + cleanBody.substring(cur.legacy.length());
+                }
+                // Re-add perfection parts
+                if (hasPerfection) {
+                    cleanBody = "§e✦ " + cleanBody + " of Perfection";
+                }
+                meta.setDisplayName((star ? "★ " : "") + cleanBody);
             }
             // Rescale stat lore + rewrite the rarity line
             if (meta.hasLore()) {
@@ -629,6 +663,7 @@ public final class GearFactory {
             lore.add(LEGACY.deserialize(r.legacy + r.name()));
         }
         s.editMeta(meta -> meta.lore(lore));
+        applyPerfectionName(s, upLevel);
     }
 
     /** Apply the given affix set and current upgrade level to an item, rewriting lore. */
@@ -642,6 +677,45 @@ public final class GearFactory {
                     org.bukkit.persistence.PersistentDataType.INTEGER, newUpgradeLevel);
         });
         rebuildLoreWithAffixesAndUpgrade(s);
+    }
+
+    /**
+     * If the item is at max upgrade level, prepend a yellow star (after any persist star)
+     * and append " of Perfection" to the display name. If below max, strip any existing
+     * perfection star/suffix so the name stays clean after a downgrade or reforge.
+     */
+    private static void applyPerfectionName(ItemStack s, int upLevel) {
+        if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return;
+        s.editMeta(meta -> {
+            String name = meta.getDisplayName();
+            if (name == null || name.isEmpty()) return;
+            boolean isMaxed = upLevel >= com.lieyabull.dung.game.WorkstationRules.UPGRADE_MAX;
+            // Check if the name already has the perfection star and suffix
+            boolean hasPerfection = name.contains("§e✦") && name.endsWith(" of Perfection");
+
+            if (isMaxed && !hasPerfection) {
+                // Insert yellow star after any persist star (★)
+                if (name.startsWith("★ ")) {
+                    meta.setDisplayName("★ §e✦ " + name.substring(2) + " of Perfection");
+                } else {
+                    meta.setDisplayName("§e✦ " + name + " of Perfection");
+                }
+            } else if (!isMaxed && hasPerfection) {
+                // Strip perfection star and suffix
+                String cleaned = name;
+                // Remove " of Perfection" suffix
+                if (cleaned.endsWith(" of Perfection")) {
+                    cleaned = cleaned.substring(0, cleaned.length() - " of Perfection".length());
+                }
+                // Remove the yellow star (with or without persist star prefix)
+                if (cleaned.startsWith("★ §e✦ ")) {
+                    cleaned = "★ " + cleaned.substring(5);
+                } else if (cleaned.startsWith("§e✦ ")) {
+                    cleaned = cleaned.substring(4);
+                }
+                meta.setDisplayName(cleaned);
+            }
+        });
     }
 
     private static Affix byId(String id) {
@@ -708,17 +782,23 @@ public final class GearFactory {
             if (r.ordinal() >= Rarity.RARE.ordinal()) {
                 meta.addEnchant(Enchantment.UNBREAKING, 1, true);
             }
-            // Apply eye armor trim for epic and above, matching the rarity color
-            if (r.ordinal() >= Rarity.EPIC.ordinal() && meta instanceof ArmorMeta armorMeta) {
+            // Apply armor trim matching the rarity color and theme
+            if (meta instanceof ArmorMeta armorMeta) {
                 TrimMaterial trimMat = switch (r) {
+                    case COMMON -> TrimMaterial.QUARTZ;
+                    case UNCOMMON -> TrimMaterial.EMERALD;
+                    case RARE -> TrimMaterial.DIAMOND;
                     case EPIC -> TrimMaterial.AMETHYST;
                     case LEGENDARY -> TrimMaterial.GOLD;
                     case MYTHIC -> TrimMaterial.REDSTONE;
-                    default -> null;
                 };
-                if (trimMat != null) {
-                    armorMeta.setTrim(new ArmorTrim(trimMat, TrimPattern.EYE));
-                }
+                TrimPattern trimPattern = switch (r) {
+                    case COMMON -> TrimPattern.SENTRY;
+                    case UNCOMMON -> TrimPattern.DUNE;
+                    case RARE -> TrimPattern.COAST;
+                    case EPIC, LEGENDARY, MYTHIC -> TrimPattern.EYE;
+                };
+                armorMeta.setTrim(new ArmorTrim(trimMat, trimPattern));
             }
             var pdc = meta.getPersistentDataContainer();
             pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.GEAR),
@@ -768,6 +848,23 @@ public final class GearFactory {
             }
             if (r.ordinal() >= Rarity.RARE.ordinal()) {
                 meta.addEnchant(Enchantment.UNBREAKING, 1, true);
+            }
+            // Apply banner pattern: base color brown, pattern color matches rarity (black for COMMON)
+            if (meta instanceof BlockStateMeta blockMeta) {
+                org.bukkit.block.Banner banner = (org.bukkit.block.Banner) blockMeta.getBlockState();
+                banner.setBaseColor(org.bukkit.DyeColor.BROWN);
+                org.bukkit.DyeColor patternColor = switch (r) {
+                    case COMMON -> org.bukkit.DyeColor.BLACK;
+                    case UNCOMMON -> org.bukkit.DyeColor.GREEN;
+                    case RARE -> org.bukkit.DyeColor.LIGHT_BLUE;
+                    case EPIC -> org.bukkit.DyeColor.PURPLE;
+                    case LEGENDARY -> org.bukkit.DyeColor.ORANGE;
+                    case MYTHIC -> org.bukkit.DyeColor.RED;
+                };
+                banner.addPattern(new Pattern(patternColor, PatternType.FLOW));
+                banner.addPattern(new Pattern(patternColor, PatternType.GRADIENT_UP));
+                banner.addPattern(new Pattern(patternColor, PatternType.GRADIENT));
+                blockMeta.setBlockState(banner);
             }
             var pdc = meta.getPersistentDataContainer();
             pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.GEAR),

@@ -17,6 +17,9 @@ public final class Run {
     public int runCoinsEarned; // run coins earned so far (from clears/boss), lost on death
     public int bankedCoins;    // how much of runCoinsEarned has already been banked to persistent
     public int kills;          // enemies defeated this run
+    /** Per-player salvage shards earned this floor (added to persistent shards on boss defeat,
+     *  reset on floor entry, lost on death before boss defeat). */
+    public final Map<UUID, Integer> salvageShards = new HashMap<>();
     private final Map<UUID, PlayerState> playerStates = new HashMap<>();
 
     public Run(long seed) {

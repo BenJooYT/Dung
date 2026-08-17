@@ -29,6 +29,7 @@ public final class ItemTags {
     public static final String AFFIXES = "dung.affixes";      // list of "affixId:value" applied to a gear item
     public static final String UPGRADE_LEVEL = "dung.upgrade_level"; // int: how many times an item was upgraded
     public static final String REFORGE_COUNT = "dung.reforge_count"; // int: reforges since the last pity roll
+    public static final String REPAIR_COUNT = "dung.repair_count"; // int: how many times this persistent item has been repaired
 
     private ItemTags() {}
 }

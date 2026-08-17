@@ -31,7 +31,10 @@ commands:
     usage: /plot <claim|home|name|warp|unclaim>
   balance:
     description: Show your persistent coins and shards
-    usage: /balance
+    usage: /balance [player]
+  leaderboard:
+    description: View leaderboards for various categories
+    usage: /leaderboard [category] [page]
   room:
     description: Room editor and room-template commands
     usage: /room <new|pos1|pos2|region|spawnfloor|conn|marker|playerspawn|shopkeeper|capture|info|validate|export|test|testlocal|list|open>

@@ -149,6 +149,16 @@ public final class DungeonInstance {
     public Floor.RoomNode curRoom() { return curRoom; }
     /** Get the room a specific player is currently in (per-player tracking for party support). */
     public Floor.RoomNode playerRoomOf(UUID playerId) { return playerRoom.get(playerId); }
+
+    /** Find which room (if any) the given location is inside. Returns null if the location is in a
+     *  corridor or outside the floor. */
+    public Floor.RoomNode roomAt(Location loc) {
+        if (run == null || run.floor == null) return null;
+        for (Floor.RoomNode rn : run.floor.rooms()) {
+            if (insideRoom(loc, rn)) return rn;
+        }
+        return null;
+    }
     public BossController boss() { return boss; }
     public Map<Long, List<Enemy>> roomEnemies() { return roomEnemies; }
     public boolean isRunning() { return running; }
@@ -517,6 +527,22 @@ public final class DungeonInstance {
             p.teleport(startLoc);
             playerRoom.put(p.getUniqueId(), run.floor.start);
         }
+        // Equipped persistent armor loses 1-4 durability on descend
+        for (Player p : party.onlineMembers()) {
+            org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+            int[] armorSlots = {36, 37, 38, 39};
+            for (int slot : armorSlots) {
+                ItemStack s = inv.getItem(slot);
+                if (s == null || s.getType() == Material.AIR) continue;
+                if (!isPersistentGear(s)) continue;
+                int dmg = ThreadLocalRandom.current().nextInt(1, 5); // 1-4 durability loss
+                boolean broken = GearFactory.damageItem(s, dmg);
+                if (broken) {
+                    inv.setItem(slot, null);
+                    p.sendMessage("§cYour " + (s.getItemMeta() != null ? s.getItemMeta().getDisplayName() : s.getType().name()) + " §c broke from the descent!");
+                }
+            }
+        }
         refreshUI();
     }
 
@@ -847,11 +873,14 @@ public final class DungeonInstance {
         return ox >= 0 && ox < rn.sizeW && oz >= 0 && oz < rn.sizeH;
     }
 
+    /** Check whether every online party member is physically inside the given room (using their
+     *  actual location, not the stale playerRoom map). This prevents a player standing in the corridor
+     *  from being counted as inside the room, which would seal the door and lock them out. */
     private boolean allMembersInRoom(Floor.RoomNode n) {
         List<Player> members = party.onlineMembers();
         if (members.isEmpty()) return false;
         for (Player m : members) {
-            if (playerRoom.get(m.getUniqueId()) != n) return false;
+            if (!insideRoom(m.getLocation(), n)) return false;
         }
         return true;
     }
@@ -934,28 +963,36 @@ public final class DungeonInstance {
         long k = run.floor.key(n.x, n.z);
         if (!persistSpawned.add(k)) return;
         Location c = RoomGen.center(world, n, BASE_Y, spacing, offsetX, offsetZ);
+        int floor = currentFloorNumber();
         WorkstationType[] types = WorkstationType.values();
-        // Spread the five workstations in a row across the room (negative Z to positive Z).
-        double spread = types.length - 1;
+        // Spread the five workstations in a row across the room with 1-block gaps between them.
+        // Each workstation is placed at BASE_Y + 1 (one block above the floor) so they sit on a
+        // raised platform. t = -4, -2, 0, 2, 4 gives 2 apart (1-block gap between each).
+        double spread = (types.length - 1) * 2;
         for (int i = 0; i < types.length; i++) {
             WorkstationType wt = types[i];
-            double t = spread == 0 ? 0 : ((double) i - spread / 2.0);
-            // Place the workstation block on the floor (BASE_Y), offset toward the back wall so the
-            // row doesn't block the spawn point or the doorway lanes. center() returns feet level (BASE_Y+1).
+            double t = spread == 0 ? 0 : ((double) i * 2 - spread / 2.0);
+            // Place the workstation block one block above the floor (BASE_Y + 1), offset toward the
+            // back wall so the row doesn't block the spawn point or the doorway lanes.
+            // center() returns feet level (BASE_Y+1).
             Location blockLoc = new Location(world,
-                    c.getBlockX() + t, BASE_Y, c.getBlockZ() - 2);
-            placeWorkstation(blockLoc, wt);
+                    c.getBlockX() + t, BASE_Y + 1, c.getBlockZ() - 2);
+            placeWorkstation(blockLoc, wt, floor);
         }
     }
 
-    /** Place a single workstation block + its floating name tag, and register it for right-click. */
-    private void placeWorkstation(Location blockLoc, WorkstationType wt) {
+    /** Place a single workstation block + its floating name tag, and register it for right-click.
+     *  The name tag includes the relevant costs for that workstation type, scaled by floor tier. */
+    private void placeWorkstation(Location blockLoc, WorkstationType wt, int floor) {
         world.getBlockAt(blockLoc).setType(wt.block);
         workstations.put(blockLoc.getBlock().getLocation(), wt);
+        // Build a cost-annotated name tag so players can see prices at a glance.
+        String costLine = costAnnotation(wt, floor);
+        String name = wt.color + wt.label + (costLine.isEmpty() ? "" : "\n§7" + costLine);
         // Floating name tag: a small, invisible, non-interactive armor stand hovering above the block.
         org.bukkit.entity.ArmorStand stand = world.spawn(
                 blockLoc.clone().add(0.5, 1.6, 0.5), org.bukkit.entity.ArmorStand.class);
-        stand.setCustomName(wt.color + wt.label);
+        stand.setCustomName(name);
         stand.setCustomNameVisible(true);
         stand.setVisible(false);
         stand.setMarker(true);
@@ -965,6 +1002,29 @@ public final class DungeonInstance {
         stand.setCollidable(false);
         stand.addScoreboardTag(wt.marker);
         workstationTags.add(stand);
+    }
+
+    /** Build a one-line cost annotation for a workstation type, scaled by the current floor. */
+    private static String costAnnotation(WorkstationType wt, int floor) {
+        return switch (wt) {
+            case UPGRADE -> {
+                int coin = WorkstationRules.scaledCost(WorkstationRules.UPGRADE_COIN_BASE, floor);
+                int shard = WorkstationRules.scaledCost(WorkstationRules.UPGRADE_SHARD_BASE, floor);
+                yield "§e" + coin + " coins §3" + shard + " shards";
+            }
+            case REFORGE -> {
+                int shard = WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor);
+                yield "§3" + shard + " shards";
+            }
+            case PRESERVE -> {
+                int coin = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_COIN_COST, floor);
+                int pcoin = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_PERSISTENT_COIN_COST, floor);
+                int shard = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_SHARD_COST, floor);
+                yield "§e" + coin + " coins §6" + pcoin + " pcoins §3" + shard + " shards";
+            }
+            case SALVAGE -> "§7Gives run coins";
+            case STORAGE -> "";
+        };
     }
 
     /** The workstation registered at a block location, or null if none. */
@@ -1201,23 +1261,23 @@ public final class DungeonInstance {
 
         // Room clear + enemy ticking for EVERY room a party member currently occupies, so members
         // split across rooms each progress correctly (no global curRoom clobbering softlock).
-        // Also check locked rooms that no player is in (e.g. a player died in the room and was
-        // removed from playerRoom) so they still clear when all enemies are dead.
+        // Also check rooms that no player is in (e.g. a player died in the room and was removed
+        // from playerRoom) so they still clear when all enemies are dead. This applies to ALL
+        // room types, not just locked rooms — a Mulliboom explosion can kill the last player in
+        // a combat room, and without this fallback the dead enemies would never be cleaned up.
         java.util.Set<Floor.RoomNode> activeNodes = new java.util.LinkedHashSet<>();
         for (Player m : party.onlineMembers()) {
             Floor.RoomNode rn = playerRoom.get(m.getUniqueId());
             if (rn != null) activeNodes.add(rn);
         }
-        // Also include any locked rooms that still have enemies (orphaned by player death/leave)
+        // Also include any rooms that still have enemies (orphaned by player death/leave)
         for (java.util.Map.Entry<Long, List<Enemy>> entry : roomEnemies.entrySet()) {
-            if (roomLocked.getOrDefault(entry.getKey(), false)) {
-                // Reconstruct x,z from the key (same formula as Floor.key)
-                long k = entry.getKey();
-                int rx = (int) (k / 4096);
-                int rz = (int) (k % 4096);
-                Floor.RoomNode rn = run.floor.at(rx, rz);
-                if (rn != null) activeNodes.add(rn);
-            }
+            // Reconstruct x,z from the key (same formula as Floor.key)
+            long k = entry.getKey();
+            int rx = (int) (k / 4096);
+            int rz = (int) (k % 4096);
+            Floor.RoomNode rn = run.floor.at(rx, rz);
+            if (rn != null) activeNodes.add(rn);
         }
         for (Floor.RoomNode rn : activeNodes) {
             long k = run.floor.key(rn.x, rn.z);
@@ -1263,12 +1323,20 @@ public final class DungeonInstance {
             PlayerState st = run.playerStateOf(p.getUniqueId());
             if (st == null || st.dead) continue;
             st.regenHearts();
-            // Mana Shield: charge when sneaking with shield, decay otherwise
+            // Mana Shield: the charged shield is always active (absorbs damage even when not held).
+            // Find any shield item in the player's inventory to determine shieldMax.
             ItemStack held = p.getInventory().getItemInMainHand();
-            boolean hasShield = held != null && !held.getType().isAir() && GearFactory.isShield(held);
-            if (hasShield && p.isSneaking()) {
-                st.shieldActive = true;
-                st.shieldMax = GearFactory.getShieldMax(held);
+            boolean hasShieldInHand = held != null && !held.getType().isAir() && GearFactory.isShield(held);
+            // Find the shield item anywhere in inventory for shieldMax
+            ItemStack shieldItem = findShieldItem(p);
+            if (shieldItem != null) {
+                st.shieldMax = GearFactory.getShieldMax(shieldItem);
+                st.shieldActive = true; // always active when player has a shield
+            } else {
+                st.shieldMax = 0;
+                st.shieldActive = false;
+            }
+            if (hasShieldInHand && p.isSneaking()) {
                 // Spend ~15 mana per second (0.75 per tick) to charge the shield. Once fully
                 // charged, stop consuming mana (the shield sits at max instead of bleeding mana).
                 if (st.shield < st.shieldMax && st.mana >= 0.75) {
@@ -1276,28 +1344,48 @@ public final class DungeonInstance {
                     st.shield = Math.min(st.shieldMax, st.shield + 0.75);
                 }
             } else {
-                st.shieldActive = false;
-                // Deactivated: the shield keeps (stores) whatever mana it still has rather than
-                // draining it instantly, but that stored mana bleeds away every 0.5s (10 ticks).
+                // Not actively charging: the shield's stored charge bleeds away every 0.5s (10 ticks).
                 if (st.shield > 0 && tickCounter % 10 == 0) {
-                    st.shield = Math.max(0, st.shield - 2.0);
+                    st.shield = Math.max(0, st.shield - 1.0);
                 }
             }
+            // Always sync shield durability on the held item if it's a shield, so the charge
+            // bar updates even when the player switches back to the shield after it decayed.
+            syncShieldDurability(p, held, st);
             // A fully charged active shield halts mana regeneration (the shield is the active drain)
             if (!(st.shieldActive && st.shield >= st.shieldMax)) {
                 st.regenMana();
             }
-            // Reflect the current shield charge on the held shield's durability bar
-            syncShieldDurability(p, held, st);
             final double real = Math.min(20.0, Math.max(0.1, st.hearts / st.maxHearts * 20.0));
             if (Math.abs(p.getHealth() - real) > 1.0E-4) p.setHealth(real);
             p.setSaturation(0);
             p.setFoodLevel(10);
             // Sync key/bomb hotbar items
             syncHotbarItems(p);
+
+            // Perfection particles: END_ROD sparkles around items at max upgrade level
+            spawnPerfectionParticles(p);
         }
 
         refreshUI();
+    }
+
+    /** Find a mana shield item in the player's inventory (main hand, offhand, or any slot).
+     *  Returns the first shield found, or null if none. */
+    private ItemStack findShieldItem(Player p) {
+        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+        // Check main hand first
+        ItemStack held = inv.getItemInMainHand();
+        if (held != null && !held.getType().isAir() && GearFactory.isShield(held)) return held;
+        // Check offhand
+        ItemStack off = inv.getItemInOffHand();
+        if (off != null && !off.getType().isAir() && GearFactory.isShield(off)) return off;
+        // Check armor slots (36-39) and storage (9-35) and hotbar (0-8)
+        for (int slot = 0; slot < inv.getSize(); slot++) {
+            ItemStack s = inv.getItem(slot);
+            if (s != null && !s.getType().isAir() && GearFactory.isShield(s)) return s;
+        }
+        return null;
     }
 
     /** Reflect the current shield charge on the held mana-shield's durability bar. The charge is a
@@ -1314,6 +1402,40 @@ public final class DungeonInstance {
             dmg.setDamage(damage);
             held.setItemMeta((org.bukkit.inventory.meta.ItemMeta) dmg);
             p.getInventory().setItemInMainHand(held);
+        }
+    }
+
+    /** Spawn END_ROD perfection particles around items at max upgrade level.
+     *  Particles are nearly stationary and linger for a long time (low speed, high count).
+     *  Position depends on the item slot:
+     *  - Held item (main hand): around the player's hand area
+     *  - Helmet (slot 39): around the head
+     *  - Chestplate (slot 38): around the chest
+     *  - Leggings (slot 37): around the legs
+     *  - Boots (slot 36): around the feet
+     *  Runs every tick so particles are continuous. */
+    private void spawnPerfectionParticles(Player p) {
+        if (world == null) return;
+        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+        // Check main hand
+        ItemStack held = inv.getItemInMainHand();
+        if (held != null && !held.getType().isAir()
+                && GearFactory.getUpgradeLevel(held) >= WorkstationRules.UPGRADE_MAX) {
+            // Around the hand — offset slightly forward and to the right
+            Location handLoc = p.getLocation().add(p.getEyeLocation().getDirection().multiply(0.5))
+                    .add(0, -0.3, 0);
+            world.spawnParticle(org.bukkit.Particle.END_ROD, handLoc, 2, 0.15, 0.15, 0.15, 0.001);
+        }
+        // Check armor slots: 36=boots, 37=leggings, 38=chestplate, 39=helmet
+        int[] armorSlots = {39, 38, 37, 36};
+        double[] yOffsets = {1.7, 1.0, 0.5, 0.1}; // head, chest, legs, feet
+        for (int i = 0; i < armorSlots.length; i++) {
+            ItemStack armor = inv.getItem(armorSlots[i]);
+            if (armor != null && !armor.getType().isAir()
+                    && GearFactory.getUpgradeLevel(armor) >= WorkstationRules.UPGRADE_MAX) {
+                Location armorLoc = p.getLocation().add(0, yOffsets[i], 0);
+                world.spawnParticle(org.bukkit.Particle.END_ROD, armorLoc, 2, 0.2, 0.15, 0.2, 0.001);
+            }
         }
     }
 
@@ -1352,7 +1474,7 @@ public final class DungeonInstance {
 
         // A full Soul Siphon is unusable — it deals no damage until its stored health is spent.
         if (isLifeDrain && GearFactory.getStoredHealth(held) >= GearFactory.getStoredHealthMax(held)) {
-            p.sendMessage("§cSoul Siphon is full! Crouch+right-click to heal yourself with its stored health.");
+            p.sendMessage("§cSoul Siphon is full! Shift+left-click to heal yourself with its stored health.");
             return;
         }
 
@@ -1399,6 +1521,27 @@ public final class DungeonInstance {
             int stored = (int) Math.round(totalDmgDealt * 0.25);
             int current = GearFactory.getStoredHealth(held);
             GearFactory.setStoredHealth(held, current + stored);
+            // Spawn damage_indicator particles from each hit enemy to the player
+            Location pLoc = p.getLocation().add(0, 1, 0);
+            for (int i = 0; i < hitN; i++) {
+                Enemy e = meleeCand.get(i);
+                if (e.dead) continue;
+                Location eLoc = e.entity.getLocation().add(0, 1, 0);
+                org.bukkit.util.Vector step = eLoc.toVector().subtract(pLoc.toVector()).multiply(0.1);
+                for (int t = 0; t < 10; t++) {
+                    Location pt = pLoc.clone().add(step.clone().multiply(t));
+                    world.spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
+                }
+            }
+            // Also from boss if hit
+            if (boss != null && boss.isActive()) {
+                Location bl = boss.location().add(0, 1, 0);
+                org.bukkit.util.Vector step = bl.toVector().subtract(pLoc.toVector()).multiply(0.1);
+                for (int t = 0; t < 10; t++) {
+                    Location pt = pLoc.clone().add(step.clone().multiply(t));
+                    world.spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
+                }
+            }
         }
     }
 
@@ -1729,17 +1872,31 @@ public final class DungeonInstance {
             case "Life Drain": {
                 // AoE drain on all valid targets in the room
                 double totalDrained = 0;
+                Location casterLoc = caster.getLocation().add(0, 1, 0);
                 for (Enemy e : roomList) {
                     if (e.dead) continue;
                     double drainDmg = dmg * 0.5;
                     e.damage(drainDmg, caster, 0, 0);
                     totalDrained += drainDmg;
+                    // Spawn damage_indicator particles from each enemy to the caster
+                    Location eLoc = e.entity.getLocation().add(0, 1, 0);
+                    org.bukkit.util.Vector step = eLoc.toVector().subtract(casterLoc.toVector()).multiply(0.1);
+                    for (int t = 0; t < 10; t++) {
+                        Location pt = casterLoc.clone().add(step.clone().multiply(t));
+                        world.spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
+                    }
                 }
                 // Also drain the boss
                 if (boss != null && boss.isActive()) {
                     double bossDrain = dmg * 0.5;
                     boss.damage(bossDrain, caster);
                     totalDrained += bossDrain;
+                    Location bLoc = boss.location().add(0, 1, 0);
+                    org.bukkit.util.Vector step = bLoc.toVector().subtract(casterLoc.toVector()).multiply(0.1);
+                    for (int t = 0; t < 10; t++) {
+                        Location pt = casterLoc.clone().add(step.clone().multiply(t));
+                        world.spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
+                    }
                 }
                 // Add 25% of damage dealt to the weapon's stored health (capped at 50)
                 int stored = (int) Math.round(totalDrained * 0.25);
@@ -1809,25 +1966,72 @@ public final class DungeonInstance {
         plugin.workstationUI().openWorkstation(p, this, type);
     }
 
-    /** Inventory slots holding workstation-eligible run gear (weapon/armor/shield run items that are
-     *  not persistent and not starter-kit gear). Used by UPGRADE / REFORGE / PRESERVE / SALVAGE. */
+    /** Inventory slots holding workstation-eligible gear (weapon/armor/shield items that are
+     *  not starter-kit gear). Includes both run gear and persistent gear. Used by UPGRADE / REFORGE /
+     *  PRESERVE / SALVAGE. Equipped armor slots (36-39) are listed first so they appear in the first
+     *  4 GUI slots. Hotbar slots (0-8) are listed last so they appear at the bottom of the GUI. */
     public List<Integer> workstationSlots(Player p) {
         List<Integer> out = new ArrayList<>();
         if (!running) return out;
         PlayerInventory inv = p.getInventory();
-        for (int slot = 0; slot < inv.getSize(); slot++) {
-            if (WorkstationRules.isWorkstationGear(inv.getItem(slot))) out.add(slot);
+        // Armor slots first (36=boots, 37=leggings, 38=chestplate, 39=helmet)
+        int[] armorSlots = {36, 37, 38, 39};
+        for (int slot : armorSlots) {
+            if (isWorkstationOrPersistentGear(inv.getItem(slot))) out.add(slot);
+        }
+        // Storage slots (9-35) — bag items before hotbar
+        for (int slot = 9; slot < 36; slot++) {
+            if (isWorkstationOrPersistentGear(inv.getItem(slot))) out.add(slot);
+        }
+        // Offhand (40)
+        if (isWorkstationOrPersistentGear(inv.getItem(40))) out.add(40);
+        // Hotbar slots last (0-8) so they appear at the bottom of the GUI
+        for (int slot = 0; slot < 9; slot++) {
+            if (isWorkstationOrPersistentGear(inv.getItem(slot))) out.add(slot);
         }
         return out;
     }
 
+    /** Check if an item is eligible for workstation GUIs: must be gear (weapon/armor/shield),
+     *  not starter-kit gear. Includes both run gear and persistent gear. */
+    private static boolean isWorkstationOrPersistentGear(ItemStack s) {
+        if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return false;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        boolean gear = pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.GEAR),
+                org.bukkit.persistence.PersistentDataType.STRING);
+        if (!gear) return false;
+        if (pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.STARTER),
+                org.bukkit.persistence.PersistentDataType.STRING)) return false;
+        String kind = str(pdc, ItemTags.KIND);
+        return "weapon".equals(kind) || "armor".equals(kind) || "shield".equals(kind);
+    }
+
+    private static String str(org.bukkit.persistence.PersistentDataContainer pdc, String key) {
+        return pdc.get(org.bukkit.NamespacedKey.minecraft(key),
+                org.bukkit.persistence.PersistentDataType.STRING);
+    }
+
     /** Inventory slots (incl. armor) holding persistent items, for the read-only STORAGE view.
-     *  getSize() == 41 covers storage (0-35), armor (36-39) and offhand (40). */
+     *  getSize() == 41 covers storage (0-35), armor (36-39) and offhand (40).
+     *  Equipped armor slots (36-39) are listed first so they appear in the first 4 GUI slots.
+     *  Hotbar slots (0-8) are listed last so they appear at the bottom of the GUI. */
     public List<Integer> persistentSlots(Player p) {
         List<Integer> out = new ArrayList<>();
         if (!running) return out;
         PlayerInventory inv = p.getInventory();
-        for (int slot = 0; slot < inv.getSize(); slot++) {
+        // Armor slots first (36=boots, 37=leggings, 38=chestplate, 39=helmet)
+        int[] armorSlots = {36, 37, 38, 39};
+        for (int slot : armorSlots) {
+            if (isPersistentGear(inv.getItem(slot))) out.add(slot);
+        }
+        // Storage slots (9-35) — bag items before hotbar
+        for (int slot = 9; slot < 36; slot++) {
+            if (isPersistentGear(inv.getItem(slot))) out.add(slot);
+        }
+        // Offhand (40)
+        if (isPersistentGear(inv.getItem(40))) out.add(40);
+        // Hotbar slots last (0-8) so they appear at the bottom of the GUI
+        for (int slot = 0; slot < 9; slot++) {
             if (isPersistentGear(inv.getItem(slot))) out.add(slot);
         }
         return out;
@@ -1846,7 +2050,7 @@ public final class DungeonInstance {
         MetaManager.MetaProfile prof = plugin.meta().profile(pid);
 
         ItemStack item = p.getInventory().getItem(slot);
-        if (item == null || !WorkstationRules.isWorkstationGear(item)) {
+        if (item == null || !isWorkstationOrPersistentGear(item)) {
             p.sendMessage("§cThat item can't be upgraded.");
             return false;
         }
@@ -1855,9 +2059,14 @@ public final class DungeonInstance {
             p.sendMessage("§5This item is already at max upgrade level.");
             return false;
         }
+        boolean isPersistent = GearFactory.isPersistent(item);
         int floor = currentFloorNumber();
         int coinCost = WorkstationRules.scaledCost(WorkstationRules.upgradeCoinCost(level), floor);
         int shardCost = WorkstationRules.scaledCost(WorkstationRules.upgradeShardCost(level), floor);
+        if (isPersistent) {
+            coinCost *= 2;
+            shardCost *= 2;
+        }
         if (st.coins < coinCost) {
             p.sendMessage("§cYou need §e" + coinCost + " run coins§c (have §e" + st.coins + "§c).");
             return false;
@@ -1872,7 +2081,8 @@ public final class DungeonInstance {
         GearFactory.setUpgradeLevel(item, level + 1);
         recomputeStats(); // the equipped item's tags changed in place — refresh live combat stats
         world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_SMITHING_TABLE_USE, 1.0f, 1.2f);
-        p.sendMessage("§aUpgraded to §5Lv " + (level + 1) + "§a! §7(-§e" + coinCost + " coins§7, §3-" + shardCost + " shards§7)");
+        String persistNote = isPersistent ? " §7(§6persistent§7, 2x cost)" : "";
+        p.sendMessage("§aUpgraded to §5Lv " + (level + 1) + "§a! §7(-§e" + coinCost + " coins§7, §3-" + shardCost + " shards§7)" + persistNote);
         return true;
     }
 
@@ -1889,13 +2099,15 @@ public final class DungeonInstance {
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
 
         ItemStack item = p.getInventory().getItem(slot);
-        if (item == null || !WorkstationRules.isWorkstationGear(item)) {
+        if (item == null || !isWorkstationOrPersistentGear(item)) {
             p.sendMessage("§cThat item can't be reforged.");
             return false;
         }
+        boolean isPersistent = GearFactory.isPersistent(item);
         int floor = currentFloorNumber();
         int reforgeCount = GearFactory.getReforgeCount(item);
         int shardCost = WorkstationRules.scaledCost(WorkstationRules.reforgeShardCost(reforgeCount), floor);
+        if (isPersistent) shardCost *= 2;
         if (prof.shards < shardCost) {
             p.sendMessage("§3You need " + shardCost + " shards (have " + prof.shards + ").");
             return false;
@@ -1907,8 +2119,9 @@ public final class DungeonInstance {
         GearFactory.reforge(item, rolled, GearFactory.getUpgradeLevel(item));
         recomputeStats(); // equipped item's affixes changed in place — refresh live combat stats
         world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_GRINDSTONE_USE, 1.0f, 1.0f);
+        String persistNote = isPersistent ? " §7(§6persistent§7, 2x cost)" : "";
         p.sendMessage("§bReforged! §7New affixes: "
-                + affixSummary(rolled) + " §7(-§3" + shardCost + " shards§7)");
+                + affixSummary(rolled) + " §7(-§3" + shardCost + " shards§7)" + persistNote);
         return true;
     }
 
@@ -1945,10 +2158,9 @@ public final class DungeonInstance {
             p.sendMessage("§cThat item can't be preserved.");
             return false;
         }
-        int floor = currentFloorNumber();
-        int coinCost = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_COIN_COST, floor);
-        int pcCost = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_PERSISTENT_COIN_COST, floor);
-        int shardCost = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_SHARD_COST, floor);
+        int coinCost = WorkstationRules.PRESERVE_COIN_COST;
+        int pcCost = WorkstationRules.PRESERVE_PERSISTENT_COIN_COST;
+        int shardCost = WorkstationRules.PRESERVE_SHARD_COST;
         if (st.coins < coinCost) {
             p.sendMessage("§cYou need §e" + coinCost + " run coins§c (have §e" + st.coins + "§c).");
             return false;
@@ -1994,9 +2206,9 @@ public final class DungeonInstance {
         return true;
     }
 
-    /** SALVAGE: destroy a workstation-eligible item for run coins (a per-run currency, lost on death —
-     *  never persistent shards, so it can't be farmed between runs). Costs nothing. Caller is
-     *  responsible for a confirmation step. Returns the run coins granted, or 0 if rejected. */
+    /** SALVAGE: destroy a workstation-eligible item for run coins (a per-run currency, lost on death).
+     *  These coins do NOT count toward the boss persistent coin reward. Costs nothing. Caller is
+     *  responsible for a confirmation step. Returns the coin value, or 0 if rejected. */
     public int trySalvage(Player p, int slot) {
         if (!running) return 0;
         PlayerState st = run.playerStateOf(p.getUniqueId());
@@ -2097,7 +2309,7 @@ public final class DungeonInstance {
         dropGear(roomSpawn(defeated), 2, 6);
         // Bank coins for each player — calculate once, distribute to all
         int earned = run.runCoinsEarned - run.bankedCoins;
-        int bank = Math.min(40, Math.max(0, earned));
+        int bank = Math.min(40, Math.max(0, earned)) / 2;
         run.bankedCoins += bank;
         for (Player p : party.onlineMembers()) {
             MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
@@ -2729,6 +2941,17 @@ public final class DungeonInstance {
         PlayerState ps = run == null ? null : run.playerStateOf(p.getUniqueId());
         if (ps == null) return false;
         if (ps.isInvuln() || ps.dead) return false;
+        ps.hurt(dmg);
+        p.playHurtAnimation(0.0f);
+        p.playSound(p.getLocation(), org.bukkit.Sound.ENTITY_PLAYER_HURT, 1.0f, 0.9f);
+        return true;
+    }
+
+    /** Hurt a player, bypassing invulnerability frames. Used for Mulliboom explosions that should
+     *  always deal damage regardless of i-frames. */
+    public boolean playerHurtBypassInvuln(Player p, double dmg) {
+        PlayerState ps = run == null ? null : run.playerStateOf(p.getUniqueId());
+        if (ps == null || ps.dead) return false;
         ps.hurt(dmg);
         p.playHurtAnimation(0.0f);
         p.playSound(p.getLocation(), org.bukkit.Sound.ENTITY_PLAYER_HURT, 1.0f, 0.9f);

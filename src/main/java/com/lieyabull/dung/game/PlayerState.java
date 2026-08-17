@@ -70,6 +70,8 @@ public final class PlayerState {
     public double shield = 0;        // current shield charge
     public double shieldMax = 0;     // max shield capacity (from held item)
     public boolean shieldActive = false; // true when sneaking with mana shield
+    /** Tracks how many times the shield has absorbed damage; every 5 uses damages the shield item. */
+    public int shieldUseCount = 0;
     /** Sum of health-affix bonuses pending from equipped gear; folded into maxHearts in recomputeStats. */
     private int pendingHealthAffixes = 0;
 
@@ -247,6 +249,24 @@ public final class PlayerState {
             } else {
                 mitigated -= shield;
                 shield = 0;
+            }
+            // Track shield uses — every 5 uses damages the shield item
+            shieldUseCount++;
+            if (shieldUseCount >= 5) {
+                shieldUseCount = 0;
+                // Find the shield item in the player's inventory and damage it
+                org.bukkit.inventory.PlayerInventory inv = player.getInventory();
+                for (int slot = 0; slot < inv.getSize(); slot++) {
+                    ItemStack s = inv.getItem(slot);
+                    if (s != null && !s.getType().isAir() && com.lieyabull.dung.items.GearFactory.isShield(s)) {
+                        boolean broken = com.lieyabull.dung.items.GearFactory.damageItem(s, 1);
+                        if (broken) {
+                            inv.setItem(slot, null);
+                            player.sendMessage("§cYour mana shield broke!");
+                        }
+                        break;
+                    }
+                }
             }
         }
         if (mitigated > 0) {

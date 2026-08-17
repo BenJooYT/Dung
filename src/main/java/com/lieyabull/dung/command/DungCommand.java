@@ -3,6 +3,8 @@ package com.lieyabull.dung.command;
 import com.lieyabull.dung.Dung;
 import com.lieyabull.dung.game.DungeonInstance;
 import com.lieyabull.dung.game.GameManager;
+import com.lieyabull.dung.game.Run;
+import com.lieyabull.dung.game.WorkstationRules;
 import com.lieyabull.dung.items.GearFactory;
 import com.lieyabull.dung.items.ItemPool;
 import com.lieyabull.dung.items.ItemTags;
@@ -44,7 +46,8 @@ public final class DungCommand implements CommandExecutor {
             case "upgrades": return upgradesCmd(p, args);
             case "salvage": return salvageCmd(p, args);
             case "party": return partyCmd(p, args);
-            case "balance": balance(p); return true;
+            case "balance": balance(p, args); return true;
+            case "leaderboard": leaderboard(p, args); return true;
             default: return dungCmd(p, args);
         }
     }
@@ -138,7 +141,7 @@ public final class DungCommand implements CommandExecutor {
             case "shop": return shopCmd(p, args);
             case "upgrades": return upgradesCmd(p, args);
             case "salvage": return salvageCmd(p, args);
-            case "balance": balance(p); return true;
+            case "balance": balance(p, args); return true;
             case "stats": stats(p); return true;
             case "class": classCmd(p, args); return true;
             case "give":
@@ -301,13 +304,16 @@ public final class DungCommand implements CommandExecutor {
         return salvageHeld(p);
     }
 
-    /** Break the held Dung armor piece into permanent shards (only during a run). */
+    /** Break the held Dung armor piece into salvage shards (only during a run). Shards are added to
+     *  a per-floor counter and only become persistent shards when the floor boss is defeated. */
     private boolean salvageHeld(Player p) {
         GameManager gm = plugin.game();
         if (!gm.isInInstance(p)) {
             p.sendMessage("§cSalvage only works while inside a run. Start one with /dung start.");
             return true;
         }
+        DungeonInstance di = gm.instanceOf(p);
+        if (di == null) return true;
         ItemStack held = p.getInventory().getItemInMainHand();
         String kind = tag(held, ItemTags.KIND);
         if (!"armor".equals(kind)) {
@@ -322,12 +328,15 @@ public final class DungCommand implements CommandExecutor {
             p.sendMessage("§8That's your free starter kit — it can't be salvaged.");
             return true;
         }
-        int shards = salvageValue(held);
+        int value = salvageValue(held);
         held.setAmount(held.getAmount() - 1);
-        addShards(p, shards);
+        UUID pid = p.getUniqueId();
+        Run run = di.run();
+        run.salvageShards.merge(pid, value, Integer::sum);
+        int total = run.salvageShards.getOrDefault(pid, 0);
         p.sendMessage("§bSalvaged " + rarityColor(held)
                 + (held.getItemMeta() == null ? held.getType().name() : held.getItemMeta().getDisplayName())
-                + "§b → §b+" + shards + " shards§7 (total §b" + plugin.meta().profile(p.getUniqueId()).shards + "§7). Spend them with /upgrades.");
+                + "§b → §b+" + value + " shards§7 (floor total §b" + total + "§7).");
         return true;
     }
 
@@ -353,24 +362,29 @@ public final class DungCommand implements CommandExecutor {
             p.sendMessage("§cSalvage only works while inside a run. Start one with /dung start.");
             return true;
         }
+        DungeonInstance di = gm.instanceOf(p);
+        if (di == null) return true;
         org.bukkit.inventory.PlayerInventory inv = p.getInventory();
-        int pieces = 0, shards = 0;
+        int pieces = 0, totalValue = 0;
         // main storage only (0-35); slots 36+ are armor/offhand which getSize() ALSO includes,
         // and those are armed/equipped, not "in the bag".
         for (int slot = 9; slot < 36; slot++) {
             org.bukkit.inventory.ItemStack s = inv.getItem(slot);
             if (!isSalvableArmor(s)) continue;
             pieces++;
-            shards += salvageValue(s);
+            totalValue += salvageValue(s);
             inv.setItem(slot, null);
         }
         if (pieces == 0) {
             p.sendMessage("§7Nothing to salvage — no Dung armor in your bag that isn't favorited, hotbar, or equipped.");
             return true;
         }
-        addShards(p, shards);
-        p.sendMessage("§bSalvaged §f" + pieces + "§b armor pieces §b→ §b+" + shards
-                + " shards§7 (total §b" + plugin.meta().profile(p.getUniqueId()).shards + "§7). Spend them with /upgrades.");
+        UUID pid = p.getUniqueId();
+        Run run = di.run();
+        run.salvageShards.merge(pid, totalValue, Integer::sum);
+        int total = run.salvageShards.getOrDefault(pid, 0);
+        p.sendMessage("§bSalvaged §f" + pieces + "§b armor pieces §b→ §b+" + totalValue
+                + " shards§7 (floor total §b" + total + "§7).");
         return true;
     }
 
@@ -429,11 +443,168 @@ public final class DungCommand implements CommandExecutor {
 
     // ---------- balance ----------
 
-    private void balance(Player p) {
-        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
-        p.sendMessage("§6--- " + p.getName() + "'s Balance ---");
-        p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins);
-        p.sendMessage("§7Shards: §b" + prof.shards);
+    private void balance(Player p, String[] args) {
+        if (args.length > 1) {
+            // Check another player's balance
+            Player target = Bukkit.getPlayerExact(args[1]);
+            if (target == null) {
+                p.sendMessage("§cPlayer not found.");
+                return;
+            }
+            MetaManager.MetaProfile prof = plugin.meta().profile(target.getUniqueId());
+            p.sendMessage("§6--- " + target.getName() + "'s Balance ---");
+            p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins);
+            p.sendMessage("§7Shards: §b" + prof.shards);
+        } else {
+            MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+            p.sendMessage("§6--- " + p.getName() + "'s Balance ---");
+            p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins);
+            p.sendMessage("§7Shards: §b" + prof.shards);
+        }
+    }
+
+    // ---------- leaderboard ----------
+
+    private static final String[] LB_CATEGORIES = {
+            "persistent_coins", "shards", "kills", "clears", "max_floor"
+    };
+    private static final String[] LB_LABELS = {
+            "§6Persistent Coins", "§bShards", "§cKills", "§aFloors Cleared", "§5Max Floor"
+    };
+    private static final int LB_PER_PAGE = 5;
+
+    private void leaderboard(Player p, String[] args) {
+        int catIdx = 0; // default: persistent_coins
+        int page = 1;
+
+        if (args.length > 1) {
+            for (int i = 0; i < LB_CATEGORIES.length; i++) {
+                if (LB_CATEGORIES[i].equalsIgnoreCase(args[1])) {
+                    catIdx = i;
+                    break;
+                }
+            }
+        }
+        if (args.length > 2) {
+            try {
+                page = Math.max(1, Integer.parseInt(args[2]));
+            } catch (NumberFormatException ignored) {}
+        }
+
+        // Collect all profiles
+        var meta = plugin.meta();
+        java.util.List<java.util.Map.Entry<java.util.UUID, MetaManager.MetaProfile>> sorted = new java.util.ArrayList<>();
+        try {
+            var field = MetaManager.class.getDeclaredField("profiles");
+            field.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            java.util.Map<java.util.UUID, MetaManager.MetaProfile> map =
+                    (java.util.Map<java.util.UUID, MetaManager.MetaProfile>) field.get(meta);
+            sorted.addAll(map.entrySet());
+        } catch (Exception e) {
+            p.sendMessage("§cError reading profiles.");
+            return;
+        }
+
+        // Sort by the selected category descending
+        java.util.Comparator<java.util.Map.Entry<java.util.UUID, MetaManager.MetaProfile>> comp;
+        switch (catIdx) {
+            case 0: comp = java.util.Map.Entry.comparingByValue(
+                    java.util.Comparator.comparingInt(prof -> prof.persistentCoins)); break;
+            case 1: comp = java.util.Map.Entry.comparingByValue(
+                    java.util.Comparator.comparingInt(prof -> prof.shards)); break;
+            case 2: comp = java.util.Map.Entry.comparingByValue(
+                    java.util.Comparator.comparingInt(prof -> prof.kills)); break;
+            case 3: comp = java.util.Map.Entry.comparingByValue(
+                    java.util.Comparator.comparingInt(prof -> prof.clears)); break;
+            case 4: comp = java.util.Map.Entry.comparingByValue(
+                    java.util.Comparator.comparingInt(prof -> prof.bestFloor)); break;
+            default: comp = java.util.Map.Entry.comparingByValue(
+                    java.util.Comparator.comparingInt(prof -> prof.persistentCoins));
+        }
+        sorted.sort(comp.reversed());
+
+        int totalPages = Math.max(1, (int) Math.ceil((double) sorted.size() / LB_PER_PAGE));
+        if (page > totalPages) page = totalPages;
+        int start = (page - 1) * LB_PER_PAGE;
+        int end = Math.min(start + LB_PER_PAGE, sorted.size());
+
+        // Build header
+        p.sendMessage("");
+        p.sendMessage("§6§l--- " + LB_LABELS[catIdx] + " §6§lLeaderboard ---");
+        p.sendMessage("");
+
+        if (sorted.isEmpty()) {
+            p.sendMessage("§7No data yet.");
+        } else {
+            for (int i = start; i < end; i++) {
+                var entry = sorted.get(i);
+                String name = org.bukkit.Bukkit.getOfflinePlayer(entry.getKey()).getName();
+                if (name == null) name = "§7Unknown";
+                int rank = i + 1;
+                String rankStr = rank <= 3 ? getRankColor(rank) + "#" + rank : "§7#" + rank;
+                int value = switch (catIdx) {
+                    case 0 -> entry.getValue().persistentCoins;
+                    case 1 -> entry.getValue().shards;
+                    case 2 -> entry.getValue().kills;
+                    case 3 -> entry.getValue().clears;
+                    case 4 -> entry.getValue().bestFloor;
+                    default -> 0;
+                };
+                p.sendMessage(rankStr + " §f" + name + " §7- §e" + value);
+            }
+        }
+
+        p.sendMessage("");
+        // Page navigation
+        var line = net.kyori.adventure.text.Component.empty();
+        if (page > 1) {
+            line = line.append(ChatUI.command("§7[§f◀ Prev§7]", "/leaderboard " + LB_CATEGORIES[catIdx] + " " + (page - 1), "Previous page"));
+        } else {
+            line = line.append(net.kyori.adventure.text.Component.text("§8[ ◀ Prev ]"));
+        }
+        line = line.append(net.kyori.adventure.text.Component.text(" §7Page " + page + "/" + totalPages + " "));
+        if (page < totalPages) {
+            line = line.append(ChatUI.command("§7[§fNext ▶§7]", "/leaderboard " + LB_CATEGORIES[catIdx] + " " + (page + 1), "Next page"));
+        } else {
+            line = line.append(net.kyori.adventure.text.Component.text("§8[ Next ▶ ]"));
+        }
+        p.sendMessage(line);
+
+        // Category switcher buttons
+        var catLine = net.kyori.adventure.text.Component.text("§7Categories: ");
+        for (int i = 0; i < LB_CATEGORIES.length; i++) {
+            if (i == catIdx) {
+                catLine = catLine.append(net.kyori.adventure.text.Component.text("§a§l" + getShortLabel(i) + "§7"));
+            } else {
+                catLine = catLine.append(ChatUI.command("§7" + getShortLabel(i), "/leaderboard " + LB_CATEGORIES[i] + " 1", LB_LABELS[i]));
+            }
+            if (i < LB_CATEGORIES.length - 1) {
+                catLine = catLine.append(net.kyori.adventure.text.Component.text(" §8| "));
+            }
+        }
+        p.sendMessage(catLine);
+        p.sendMessage("");
+    }
+
+    private static String getRankColor(int rank) {
+        return switch (rank) {
+            case 1 -> "§6"; // gold
+            case 2 -> "§7"; // silver
+            case 3 -> "§6"; // bronze-ish (gold on dark bg)
+            default -> "§7";
+        };
+    }
+
+    private static String getShortLabel(int idx) {
+        return switch (idx) {
+            case 0 -> "Coins";
+            case 1 -> "Shards";
+            case 2 -> "Kills";
+            case 3 -> "Clears";
+            case 4 -> "MaxFloor";
+            default -> "?";
+        };
     }
 
     // ---------- existing: stats / class / give ----------

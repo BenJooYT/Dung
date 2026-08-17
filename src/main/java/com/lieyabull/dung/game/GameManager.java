@@ -114,6 +114,14 @@ public final class GameManager {
         return di.playerHurt(p, dmg);
     }
 
+    /** Static helper for Mulliboom explosions that bypass invulnerability frames. */
+    public static boolean playerHurtBypassInvuln(Player p, double dmg) {
+        if (instance == null) return false;
+        DungeonInstance di = instance.playerInstance.get(p.getUniqueId());
+        if (di == null) return false;
+        return di.playerHurtBypassInvuln(p, dmg);
+    }
+
     // ---------- tick ----------
 
     public void tick() {

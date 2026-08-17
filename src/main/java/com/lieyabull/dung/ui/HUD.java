@@ -68,9 +68,16 @@ public final class HUD {
         setLine(o, 5, "§e⛁ Coins §f" + st.coins + "   §9⛂ Keys §f" + st.keys + " §7[slot 7]");
         setLine(o, 6, "§4✹ Bombs §f" + st.bombs + " §7[slot 8]   §cKills §f" + run.kills);
         setLine(o, 7, "");
-        Floor.RoomNode playerRoom = di.playerRoomOf(p.getUniqueId());
-        Floor.RoomNode displayRoom = playerRoom != null ? playerRoom : di.curRoom();
-        setLine(o, 8, "§6Room: §f" + (displayRoom != null ? displayRoom.type.label : "?"));
+        // Determine which room the player is physically inside. If they're in the corridor
+        // (between rooms), show "Corridor" instead of the stale previous room.
+        Floor.RoomNode physicalRoom = di.roomAt(p.getLocation());
+        String roomLabel;
+        if (physicalRoom != null) {
+            roomLabel = physicalRoom.type.label;
+        } else {
+            roomLabel = "§7Corridor";
+        }
+        setLine(o, 8, "§6Room: §f" + roomLabel);
         // Gear condition: show worst durability among persistent gear
         String gearCond = gearCondition(p);
         if (!gearCond.isEmpty()) {
@@ -80,7 +87,7 @@ public final class HUD {
         }
         // Check if any adjacent room is a LOCKED room
         String lockedHint = "";
-        Floor.RoomNode cur = displayRoom;
+        Floor.RoomNode cur = physicalRoom;
         if (cur != null) {
             int[] DX = {0, 1, 0, -1};
             int[] DZ = {-1, 0, 1, 0};
@@ -163,8 +170,14 @@ public final class HUD {
         String pct = String.format("%.0f%%", st.maxHearts <= 0 ? 100 : st.hearts / st.maxHearts * 100);
         String hearts = "§c♥ " + (int) st.hearts + "§8/" + (int) st.maxHearts + " §8(" + pct + ")";
         String mana = "§b✦ " + (int) st.mana + "§8/" + (int) st.maxMana;
+        // Show shield charge if the player has shield capacity (from a held shield or affixes)
+        String shieldStr = "";
+        if (st.shieldMax > 0) {
+            int shieldPct = (int) (st.shieldMax <= 0 ? 0 : st.shield / st.shieldMax * 100);
+            shieldStr = "   §7🛡 " + (int) st.shield + "§8/" + (int) st.shieldMax + " §8(" + shieldPct + "%)";
+        }
         String suffix = (hint == null || hint.isEmpty()) ? "" : "   " + hint;
-        p.sendActionBar(LegacyComponentSerializer.legacySection().deserialize(hearts + "   " + mana + suffix));
+        p.sendActionBar(LegacyComponentSerializer.legacySection().deserialize(hearts + "   " + mana + shieldStr + suffix));
     }
 
     /** Register all rows (team + invisible entry + static score) exactly once per objective so the

@@ -111,8 +111,9 @@ public final class WorkstationRules {
     }
 
     // ---------- SALVAGE ----------
-    /** Salvage returns run coins (a per-run currency, lost on death) scaled by rarity + the item's
-     *  primary defensive/offensive stat — never persistent shards, so it can't be farmed between runs. */
+    /** Salvage returns run-coin value scaled by rarity + the item's primary defensive/offensive stat.
+     *  These run coins are added directly to the player's per-run coin balance and do NOT count
+     *  toward the boss persistent coin reward. Lost on death like all run coins. */
     public static int salvageValue(Rarity r, int stat) {
         int rarityBase = (r == null ? Rarity.COMMON.ordinal() : r.ordinal()) + 1;
         return Math.max(1, rarityBase * 2 + stat / 10);

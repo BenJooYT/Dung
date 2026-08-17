@@ -160,11 +160,11 @@ public final class ShopUI implements Listener {
 
         // Slot 3: Repair Item (repair first damaged persistent item in inventory)
         inv.setItem(3, makeShopItem(Material.ANVIL, "§aRepair Item",
-                List.of("§7Repair a damaged persistent item", "§7Cost: §6" + REPAIR_COST_PER_10 + " coins§7 per 10 durability"),
+                List.of("§7Repair a damaged persistent item", "§7Cost scales with repair count", "§7Base: §6" + REPAIR_COST_PER_10 + " coins§7 per 10 durability"),
                 GUI_PERSISTENT_SHOP, "repair"));
         // Slot 4: Repair All
         inv.setItem(4, makeShopItem(Material.DIAMOND, "§bRepair All",
-                List.of("§7Repair all damaged persistent gear", "§7Cost: §6" + REPAIR_COST_PER_10 + " coins§7 per 10 durability each"),
+                List.of("§7Repair all damaged persistent gear", "§7Cost scales with repair count", "§7Base: §6" + REPAIR_COST_PER_10 + " coins§7 per 10 durability each"),
                 GUI_PERSISTENT_SHOP, "repair_all"));
 
         // Slot 5: Upgrades (opens upgrades GUI)
@@ -352,7 +352,7 @@ public final class ShopUI implements Listener {
                 }
                 prof.persistentCoins -= PERSISTENT_WEAPON_COST;
                 plugin.meta().save();
-                ItemStack s = GearFactory.markPersistent(ItemPool.randomWeapon(2));
+                ItemStack s = GearFactory.markPersistent(ItemPool.randomWeapon(0));
                 GearFactory.initDurability(s);
                 p.getInventory().addItem(s);
                 p.sendMessage("§aPurchased weapon! §7(-§6" + PERSISTENT_WEAPON_COST + " coins§7)");
@@ -365,7 +365,7 @@ public final class ShopUI implements Listener {
                 }
                 prof.persistentCoins -= PERSISTENT_ARMOR_COST;
                 plugin.meta().save();
-                ItemStack s = GearFactory.markPersistent(ItemPool.randomArmor(2, ThreadLocalRandom.current().nextInt(4)));
+                ItemStack s = GearFactory.markPersistent(ItemPool.randomArmor(0, ThreadLocalRandom.current().nextInt(4)));
                 GearFactory.initDurability(s);
                 p.getInventory().addItem(s);
                 p.sendMessage("§aPurchased armor! §7(-§6" + PERSISTENT_ARMOR_COST + " coins§7)");
@@ -378,7 +378,7 @@ public final class ShopUI implements Listener {
                 }
                 prof.persistentCoins -= PERSISTENT_ARMOR_COST;
                 plugin.meta().save();
-                ItemStack s = GearFactory.markPersistent(ItemPool.randomShield(2));
+                ItemStack s = GearFactory.markPersistent(ItemPool.randomShield(0));
                 GearFactory.initDurability(s);
                 p.getInventory().addItem(s);
                 p.sendMessage("§aPurchased shield! §7(-§6" + PERSISTENT_ARMOR_COST + " coins§7)");
@@ -426,16 +426,19 @@ public final class ShopUI implements Listener {
                 int max = GearFactory.getMaxDurability(target);
                 int missing = max - dur;
                 int repairAmt = Math.min(missing, 10);
-                int cost = (repairAmt / 10) * REPAIR_COST_PER_10;
-                if (repairAmt % 10 != 0) cost += REPAIR_COST_PER_10; // round up
+                int repairCount = GearFactory.getRepairCount(target);
+                int costMult = 1 + repairCount; // cost multiplier: 1x, 2x, 3x, ...
+                int cost = (repairAmt / 10) * REPAIR_COST_PER_10 * costMult;
+                if (repairAmt % 10 != 0) cost += REPAIR_COST_PER_10 * costMult; // round up
                 if (prof.persistentCoins < cost) {
-                    p.sendMessage("§cYou need " + cost + " coins to repair this item.");
+                    p.sendMessage("§cYou need " + cost + " coins to repair this item (repair #" + (repairCount + 1) + ").");
                     return;
                 }
                 prof.persistentCoins -= cost;
                 GearFactory.repairItem(target, repairAmt);
+                GearFactory.setRepairCount(target, repairCount + 1);
                 plugin.meta().save();
-                p.sendMessage("§aRepaired item! §7(-§6" + cost + " coins§7)");
+                p.sendMessage("§aRepaired item! §7(-§6" + cost + " coins§7) §7(repair #" + (repairCount + 1) + ")");
                 reopen(() -> openPersistentShop(p)); // refresh
             }
             case "repair_all" -> {
@@ -475,8 +478,10 @@ public final class ShopUI implements Listener {
                     int m = GearFactory.getMaxDurability(s);
                     int missing = m - d;
                     int repairAmt = Math.min(missing, 10);
-                    int itemCost = (repairAmt / 10) * REPAIR_COST_PER_10;
-                    if (repairAmt % 10 != 0) itemCost += REPAIR_COST_PER_10;
+                    int repairCount = GearFactory.getRepairCount(s);
+                    int costMult = 1 + repairCount;
+                    int itemCost = (repairAmt / 10) * REPAIR_COST_PER_10 * costMult;
+                    if (repairAmt % 10 != 0) itemCost += REPAIR_COST_PER_10 * costMult;
                     totalCost += itemCost;
                 }
                 if (prof.persistentCoins < totalCost) {
@@ -489,7 +494,9 @@ public final class ShopUI implements Listener {
                     int m = GearFactory.getMaxDurability(s);
                     int missing = m - d;
                     int repairAmt = Math.min(missing, 10);
+                    int repairCount = GearFactory.getRepairCount(s);
                     GearFactory.repairItem(s, repairAmt);
+                    GearFactory.setRepairCount(s, repairCount + 1);
                 }
                 plugin.meta().save();
                 p.sendMessage("§aRepaired " + toRepair.size() + " item(s)! §7(-§6" + totalCost + " coins§7)");
