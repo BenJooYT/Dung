@@ -77,6 +77,18 @@ public class AffixTest {
     }
 
     @Test
+    void rollMaxedReturnsEveryKindEligibleAffixAtMaxValue() {
+        List<Affix.AffixRoll> rolls = Affix.rollMaxed(Rarity.MYTHIC, "weapon");
+        assertEquals(Affix.poolFor("weapon").size(), rolls.size());
+        for (Affix.AffixRoll r : rolls) {
+            assertEquals(r.affix().valueFor(Rarity.MYTHIC), r.value());
+            assertTrue(r.affix().appliesTo("weapon"));
+        }
+        // empty pool for a bogus kind -> empty
+        assertTrue(Affix.rollMaxed(Rarity.MYTHIC, "bogus").isEmpty());
+    }
+
+    @Test
     void serializeRoundTrips() {
         Affix.AffixRoll roll = new Affix.AffixRoll(Affix.VICIOUS, 7);
         String s = Affix.serialize(roll);

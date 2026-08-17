@@ -1792,6 +1792,11 @@ public final class DungeonInstance {
         plugin.shopUI().openRunShop(p, this);
     }
 
+    /** 1-based number of the floor the run is currently on (used to scale workstation costs). */
+    public int currentFloorNumber() {
+        return (run == null || run.floorIndex < 0) ? 1 : run.floorIndex + 1;
+    }
+
     /** Open a workstation GUI (only valid inside an UPGRADE room, in the same run). */
     public void openWorkstation(Player p, WorkstationType type) {
         if (!running) return;
@@ -1847,8 +1852,9 @@ public final class DungeonInstance {
             p.sendMessage("§5This item is already at max upgrade level.");
             return false;
         }
-        int coinCost = WorkstationRules.upgradeCoinCost(level);
-        int shardCost = WorkstationRules.upgradeShardCost(level);
+        int floor = currentFloorNumber();
+        int coinCost = WorkstationRules.scaledCost(WorkstationRules.upgradeCoinCost(level), floor);
+        int shardCost = WorkstationRules.scaledCost(WorkstationRules.upgradeShardCost(level), floor);
         if (st.coins < coinCost) {
             p.sendMessage("§cYou need §e" + coinCost + " run coins§c (have §e" + st.coins + "§c).");
             return false;
@@ -1870,7 +1876,10 @@ public final class DungeonInstance {
     /** REFORGE: reroll an item's affix set for shards. Keeps base stats, rarity, ability, and upgrade
      *  level; only the affixes change. Returns a preview of the new affixes without applying them. */
     public List<Affix.AffixRoll> previewReforge(ItemStack item) {
-        return Affix.roll(GearFactory.getRarity(item), kindOf(item), new java.util.Random());
+        boolean pity = WorkstationRules.reforgePityActive(GearFactory.getReforgeCount(item));
+        return pity
+                ? Affix.rollMaxed(GearFactory.getRarity(item), kindOf(item))
+                : Affix.roll(GearFactory.getRarity(item), kindOf(item), new java.util.Random());
     }
 
     public boolean tryReforge(Player p, int slot) {
@@ -1884,18 +1893,25 @@ public final class DungeonInstance {
             p.sendMessage("§cThat item can't be reforged.");
             return false;
         }
-        if (prof.shards < WorkstationRules.REFORGE_SHARD_COST) {
-            p.sendMessage("§3You need " + WorkstationRules.REFORGE_SHARD_COST + " shards (have " + prof.shards + ").");
+        int floor = currentFloorNumber();
+        int shardCost = WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor);
+        if (prof.shards < shardCost) {
+            p.sendMessage("§3You need " + shardCost + " shards (have " + prof.shards + ").");
             return false;
         }
-        prof.shards -= WorkstationRules.REFORGE_SHARD_COST;
+        prof.shards -= shardCost;
         plugin.meta().save();
-        List<Affix.AffixRoll> rolled = Affix.roll(GearFactory.getRarity(item), kindOf(item), new java.util.Random());
+        int count = GearFactory.getReforgeCount(item);
+        boolean pity = WorkstationRules.reforgePityActive(count);
+        List<Affix.AffixRoll> rolled = pity
+                ? Affix.rollMaxed(GearFactory.getRarity(item), kindOf(item))
+                : Affix.roll(GearFactory.getRarity(item), kindOf(item), new java.util.Random());
+        GearFactory.setReforgeCount(item, WorkstationRules.reforgeCountAfter(count, pity));
         GearFactory.reforge(item, rolled, GearFactory.getUpgradeLevel(item));
         recomputeStats(); // equipped item's affixes changed in place — refresh live combat stats
         world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_GRINDSTONE_USE, 1.0f, 1.0f);
-        p.sendMessage("§bReforged! §7New affixes: " + affixSummary(rolled) + " §7(-§3"
-                + WorkstationRules.REFORGE_SHARD_COST + " shards§7)");
+        p.sendMessage((pity ? "§d§lPITY ROLL! §dEvery affix at max! §7New affixes: " : "§bReforged! §7New affixes: ")
+                + affixSummary(rolled) + " §7(-§3" + shardCost + " shards§7)");
         return true;
     }
 
@@ -1932,23 +1948,27 @@ public final class DungeonInstance {
             p.sendMessage("§cThat item can't be preserved.");
             return false;
         }
-        if (st.coins < WorkstationRules.PRESERVE_COIN_COST) {
-            p.sendMessage("§cYou need §e" + WorkstationRules.PRESERVE_COIN_COST + " run coins§c (have §e" + st.coins + "§c).");
+        int floor = currentFloorNumber();
+        int coinCost = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_COIN_COST, floor);
+        int pcCost = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_PERSISTENT_COIN_COST, floor);
+        int shardCost = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_SHARD_COST, floor);
+        if (st.coins < coinCost) {
+            p.sendMessage("§cYou need §e" + coinCost + " run coins§c (have §e" + st.coins + "§c).");
             return false;
         }
-        if (prof.persistentCoins < WorkstationRules.PRESERVE_PERSISTENT_COIN_COST) {
-            p.sendMessage("§dYou need §b" + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " persistent coins§d (have §b"
+        if (prof.persistentCoins < pcCost) {
+            p.sendMessage("§dYou need §b" + pcCost + " persistent coins§d (have §b"
                     + prof.persistentCoins + "§d).");
             return false;
         }
-        if (prof.shards < WorkstationRules.PRESERVE_SHARD_COST) {
-            p.sendMessage("§3You need " + WorkstationRules.PRESERVE_SHARD_COST + " shards (have " + prof.shards + ").");
+        if (prof.shards < shardCost) {
+            p.sendMessage("§3You need " + shardCost + " shards (have " + prof.shards + ").");
             return false;
         }
         // Charge ALL THREE currencies (run coins + persistent coins + shards), not either/or.
-        st.coins -= WorkstationRules.PRESERVE_COIN_COST;
-        prof.persistentCoins -= WorkstationRules.PRESERVE_PERSISTENT_COIN_COST;
-        prof.shards -= WorkstationRules.PRESERVE_SHARD_COST;
+        st.coins -= coinCost;
+        prof.persistentCoins -= pcCost;
+        prof.shards -= shardCost;
         plugin.meta().save();
 
         boolean success = WorkstationRules.preserveSucceeds(new java.util.Random().nextDouble());
@@ -1969,8 +1989,9 @@ public final class DungeonInstance {
         return true;
     }
 
-    /** SALVAGE: destroy a workstation-eligible item for shards. Costs nothing. Caller is responsible
-     *  for a confirmation step. Returns the shards granted, or 0 if rejected. */
+    /** SALVAGE: destroy a workstation-eligible item for run coins (a per-run currency, lost on death —
+     *  never persistent shards, so it can't be farmed between runs). Costs nothing. Caller is
+     *  responsible for a confirmation step. Returns the run coins granted, or 0 if rejected. */
     public int trySalvage(Player p, int slot) {
         if (!running) return 0;
         PlayerState st = run.playerStateOf(p.getUniqueId());
@@ -1984,11 +2005,9 @@ public final class DungeonInstance {
         int value = WorkstationRules.salvageValue(r, WorkstationRules.primaryStat(item));
         p.getInventory().setItem(slot, null);
         recomputeStats(); // item removed from (possibly) equipped slot — refresh live combat stats
-        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
-        prof.shards += value;
-        plugin.meta().save();
+        st.coins += value;
         world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f);
-        p.sendMessage("§cSalvaged the item §b→ +" + value + " shards§7 (total §b" + prof.shards + "§7).");
+        p.sendMessage("§cSalvaged the item §e→ +" + value + " run coins§7 (total §e" + st.coins + "§7).");
         return value;
     }
 

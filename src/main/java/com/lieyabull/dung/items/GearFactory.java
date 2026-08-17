@@ -534,6 +534,23 @@ public final class GearFactory {
         return v == null ? 0 : v;
     }
 
+    /** Reforges performed on an item since its last pity roll (0 if none). */
+    public static int getReforgeCount(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return 0;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        Integer v = pdc.get(org.bukkit.NamespacedKey.minecraft(ItemTags.REFORGE_COUNT),
+                org.bukkit.persistence.PersistentDataType.INTEGER);
+        return v == null ? 0 : v;
+    }
+
+    /** Set the item's reforge-pity counter. */
+    public static void setReforgeCount(ItemStack s, int count) {
+        if (s == null || s.getType() == Material.AIR) return;
+        s.editMeta(meta -> meta.getPersistentDataContainer().set(
+                org.bukkit.NamespacedKey.minecraft(ItemTags.REFORGE_COUNT),
+                org.bukkit.persistence.PersistentDataType.INTEGER, count));
+    }
+
     /** The item's core stat tag (the one UPGRADE boosts): MAGIC_DAMAGE/DAMAGE for weapons, DEFENSE for
      *  armor, SHIELD_MAX for shields. Returns the tag name, or null if the item has no core stat. */
     public static String coreStatTag(ItemStack s) {

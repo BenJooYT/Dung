@@ -103,6 +103,16 @@ public enum Affix {
         return out;
     }
 
+    /** Roll the full kind-eligible affix pool for an item (every eligible affix, at its max rarity
+     *  value). Used as the guaranteed REFORGE pity roll so the RNG slot-machine always eventually
+     *  pays out a definitive "best" set. */
+    public static List<AffixRoll> rollMaxed(Rarity rarity, String kind) {
+        List<Affix> pool = new ArrayList<>(poolFor(kind));
+        List<AffixRoll> out = new ArrayList<>(pool.size());
+        for (Affix a : pool) out.add(new AffixRoll(a, a.valueFor(rarity)));
+        return out;
+    }
+
     /** How many affixes an item of this rarity carries (0..3). */
     public static int countFor(Rarity r) {
         if (r == null) return 0;

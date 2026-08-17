@@ -99,7 +99,7 @@ public final class WorkstationUI implements Listener {
 
         // Info panel
         int infoSlot = type == WorkstationType.STORAGE ? 31 : 30;
-        inv.setItem(infoSlot, makeInfo(type));
+        inv.setItem(infoSlot, makeInfo(type, di.currentFloorNumber()));
 
         fillEmpty(inv);
         openStates.put(inv, state);
@@ -120,7 +120,7 @@ public final class WorkstationUI implements Listener {
         return p.getInventory().getItem(playerSlot);
     }
 
-    private ItemStack makeInfo(WorkstationType type) {
+    private ItemStack makeInfo(WorkstationType type, int floor) {
         List<String> lines = new ArrayList<>();
         lines.add(type.color + type.label);
         lines.add("§7" + type.description);
@@ -128,26 +128,31 @@ public final class WorkstationUI implements Listener {
         switch (type) {
             case UPGRADE -> {
                 lines.add("§eCosts: run coins + shards");
-                lines.add("§7(scales with current level)");
+                lines.add("§7(scales with level AND floor)");
                 lines.add("§7Effect: raises the item's core stat");
                 lines.add("§7by §5+" + (int) (WorkstationRules.UPGRADE_STAT_PER_LEVEL * 100) + "%§7/level");
             }
             case REFORGE -> {
-                lines.add("§3Cost: " + WorkstationRules.REFORGE_SHARD_COST + " shards");
+                lines.add("§3Cost: " + WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor) + " shards");
+                lines.add("§7(scales with floor)");
                 lines.add("§7Effect: rerolls the item's affixes");
                 lines.add("§7Keeps base stats, rarity, ability.");
+                lines.add("§7Pity: every " + WorkstationRules.REFORGE_PITY + " rerolls is a");
+                lines.add("§7guaranteed §dmax-affix roll§7.");
             }
             case PRESERVE -> {
-                lines.add("§e" + WorkstationRules.PRESERVE_COIN_COST + " run coins");
-                lines.add("§dAND " + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " persistent coins");
-                lines.add("§3AND " + WorkstationRules.PRESERVE_SHARD_COST + " shards");
+                lines.add("§e" + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_COIN_COST, floor) + " run coins");
+                lines.add("§dAND " + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_PERSISTENT_COIN_COST, floor) + " persistent coins");
+                lines.add("§3AND " + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_SHARD_COST, floor) + " shards");
+                lines.add("§7(scales with floor)");
                 lines.add("§7Chance: §a" + (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100) + "%");
                 lines.add("§7Success: persists past the run");
                 lines.add("§7(§ehalf durability§7). §cFail: returned one");
                 lines.add("§crarity worse.");
             }
             case SALVAGE -> {
-                lines.add("§7Effect: destroy the item for shards");
+                lines.add("§7Effect: destroy the item for §erun coins§7");
+                lines.add("§7(per-run, lost on death — not shards)");
                 lines.add("§7Value scales with rarity + stats.");
                 lines.add("§cRequires confirmation.");
             }
@@ -225,33 +230,35 @@ public final class WorkstationUI implements Listener {
         List<String> lines = new ArrayList<>();
         lines.add("§7Selected: §f" + (item.getItemMeta() == null ? item.getType().name()
                 : item.getItemMeta().getDisplayName()));
+        int floor = state.di.currentFloorNumber();
         switch (state.type) {
             case UPGRADE -> {
                 int lvl = GearFactory.getUpgradeLevel(item);
                 lines.add("§7Current level: §5" + lvl);
                 lines.add("§5Next: Lv " + (lvl + 1) + " §7(+"
                         + (int) (WorkstationRules.UPGRADE_STAT_PER_LEVEL * 100) + "% core stat)");
-                lines.add("§eCost: " + WorkstationRules.upgradeCoinCost(lvl) + " run coins");
-                lines.add("§3Cost: " + WorkstationRules.upgradeShardCost(lvl) + " shards");
+                lines.add("§eCost: " + WorkstationRules.scaledCost(WorkstationRules.upgradeCoinCost(lvl), floor) + " run coins");
+                lines.add("§3Cost: " + WorkstationRules.scaledCost(WorkstationRules.upgradeShardCost(lvl), floor) + " shards");
             }
             case REFORGE -> {
                 List<Affix.AffixRoll> rolled = state.di.previewReforge(item);
-                lines.add("§bNew affixes: " + affixSummary(rolled));
-                lines.add("§3Cost: " + WorkstationRules.REFORGE_SHARD_COST + " shards");
+                boolean pity = WorkstationRules.reforgePityActive(GearFactory.getReforgeCount(item));
+                lines.add((pity ? "§d§lPITY! §dEvery affix max:" : "§bNew affixes: ") + affixSummary(rolled));
+                lines.add("§3Cost: " + WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor) + " shards");
             }
             case PRESERVE -> {
                 lines.add("§dAttempts to preserve this item past the run");
                 lines.add("§7Chance: §a" + (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100) + "%");
                 lines.add("§7Success: §aques at half durability§7. §cFail: returned");
                 lines.add("§cone rarity worse§7.");
-                lines.add("§e" + WorkstationRules.PRESERVE_COIN_COST + " run coins");
-                lines.add("§dAND " + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " persistent coins");
-                lines.add("§3AND " + WorkstationRules.PRESERVE_SHARD_COST + " shards");
+                lines.add("§e" + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_COIN_COST, floor) + " run coins");
+                lines.add("§dAND " + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_PERSISTENT_COIN_COST, floor) + " persistent coins");
+                lines.add("§3AND " + WorkstationRules.scaledCost(WorkstationRules.PRESERVE_SHARD_COST, floor) + " shards");
             }
             case SALVAGE -> {
                 int value = WorkstationRules.salvageValue(
                         GearFactory.getRarity(item), WorkstationRules.primaryStat(item));
-                lines.add("§b+ " + value + " shards");
+                lines.add("§e+ " + value + " run coins");
                 lines.add("§cThis destroys the item!");
             }
             default -> {}
@@ -266,7 +273,7 @@ public final class WorkstationUI implements Listener {
                 : List.of("§7Apply the operation to the selected item");
         inv.setItem(30, makeItem(Material.LIME_DYE, confirmName, confirmLore, ACTION_CONFIRM));
         inv.setItem(40, makeItem(Material.ARROW, "§7← Back", List.of("§7Back to the item list"), ACTION_BACK));
-        inv.setItem(31, makeInfo(state.type)); // keep the info panel anchored
+        inv.setItem(31, makeInfo(state.type, floor)); // keep the info panel anchored
     }
 
     private ItemStack currentItem(Player p, State state, int playerSlot) {

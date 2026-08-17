@@ -17,6 +17,23 @@ import java.util.List;
 public final class WorkstationRules {
     private WorkstationRules() {}
 
+    /** Floors between workstation (UPGRADE) rooms. */
+    public static final int FLOOR_PER = 5;
+
+    /**
+     * Floor tier for a 1-based dungeon floor number. The workstation room appears on floors 5, 10, 15,
+     * … so {@code tier = floor / FLOOR_PER}, clamped to at least 1. Costs scale linearly with tier so
+     * late-game workstation decisions keep pace with rising per-floor income.
+     */
+    public static int tierOfFloor(int floor) {
+        return Math.max(1, floor / FLOOR_PER);
+    }
+
+    /** Scale a base cost by the current dungeon floor number (1-based). */
+    public static int scaledCost(int base, int floor) {
+        return base * tierOfFloor(floor);
+    }
+
     // ---------- UPGRADE ----------
     /** Max times an item can be upgraded at a workstation. */
     public static final int UPGRADE_MAX = 5;
@@ -54,6 +71,18 @@ public final class WorkstationRules {
     // ---------- REFORGE ----------
     public static final int REFORGE_COIN_COST = 0;
     public static final int REFORGE_SHARD_COST = 15;
+    /** Reforges (on one item) before the next one is a guaranteed full-pool "pity" roll. */
+    public static final int REFORGE_PITY = 10;
+
+    /** Whether a reforge with the given running reforge count (0-based) should be a pity (maxed) roll. */
+    public static boolean reforgePityActive(int count) {
+        return count >= REFORGE_PITY;
+    }
+
+    /** Reforge count to store on the item after a reforge: resets to 0 on a pity roll, else increments. */
+    public static int reforgeCountAfter(int count, boolean pity) {
+        return pity ? 0 : count + 1;
+    }
 
     // ---------- PRESERVE ----------
     /** Run-coin cost for a preserve attempt (required AND with persistent coins and shards). */
@@ -71,7 +100,8 @@ public final class WorkstationRules {
     }
 
     // ---------- SALVAGE ----------
-    /** Salvage returns shards scaled by rarity + the item's primary defensive/offensive stat. */
+    /** Salvage returns run coins (a per-run currency, lost on death) scaled by rarity + the item's
+     *  primary defensive/offensive stat — never persistent shards, so it can't be farmed between runs. */
     public static int salvageValue(Rarity r, int stat) {
         int rarityBase = (r == null ? Rarity.COMMON.ordinal() : r.ordinal()) + 1;
         return Math.max(1, rarityBase * 2 + stat / 10);

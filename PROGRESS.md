@@ -384,19 +384,26 @@ tab = detailed build/run/progression).
       `PlayerState.recomputeStats` from the weapon + all armor slots.
 - [x] **Item upgrades.** UPGRADE raises an item's `dung.upgrade_level` (max 5), boosting its core stat
       (weapon → damage/magic damage, armor → defense, shield → shield capacity) by 10% per level, folded
-      into the stored stat tag. Cost scales with current level (base 20 + 5/level run coins, base 10 +
-      5/level shards).
-- [x] **REFORGE** rerolls an item's affixes for 15 shards, keeping base stats, rarity, ability, and
-      upgrade level (with a preview before committing).
+      into the stored stat tag. Cost scales with current level AND with floor depth.
+- [x] **REFORGE** rerolls an item's affixes, keeping base stats, rarity, ability, and upgrade level
+      (with a preview before committing). Cost scales with floor. **Pity:** every 10 rerolls is a
+      guaranteed **max-affix roll** (all kind-eligible affixes at their rarity value), so reforge is
+      never a pure RNG sink.
 - [x] **PRESERVE** is a **gamble**, costing **all three** currencies (run coins + persistent coins +
-      shards, AND not either/or): pays 50 run coins + 200 persistent coins + 250 shards for a **40%
+      shards, AND not either/or) at floor-scaled prices: pays 50/200/250 (×floor tier) for a **40%
       chance** to queue the item at half durability for post-run delivery via the existing
       `pendingPersists` path; on **failure** the item is returned immediately **one rarity worse**
       (`downgradeRarity`).
-- [x] **SALVAGE** destroys the selected item for shards, `max(1, (rarityOrdinal+1)*2 + stat/10)`, gated
-      behind a two-click confirm.
+- [x] **SALVAGE** destroys the selected item for **run coins** (`max(1, (rarityOrdinal+1)*2 + stat/10)`,
+      a per-run currency lost on death — never persistent shards, so it can't be farmed between runs),
+      gated behind a two-click confirm.
 - [x] **PERSISTENT STORAGE** is a **read-only** in-run view of the player's persistent items (storage,
       armor and offhand slots). Withdraw is impossible inside a run via any path.
+- [x] **Floor-scaled costs.** UPGRADE / REFORGE / PRESERVE costs scale linearly with the workstation
+      tier (`floor / 5`, clamped ≥1) via pure `WorkstationRules.scaledCost`, so decisions stay meaningful
+      as per-floor income grows late-game.
+- [x] **Workstation blocks are protected** from breaking (`BlockBreakEvent`), so the registered function
+      isn't lost mid-floor.
 - [x] **Reliability:** all costs and validity checks live in pure, unit-tested `WorkstationRules`
       (`isWorkstationGear`, `primaryStat`, `salvageValue`, upgrade costs); every operation is applied
       server-side after re-validating the item is still present, still eligible, and the exact item the
@@ -404,9 +411,10 @@ tab = detailed build/run/progression).
       `recomputeStats` runs after UPGRADE/REFORGE/SALVAGE/PRESERVE so equipped-item changes take effect
       immediately; live combat stats refresh without waiting for a re-equip. Keys/bombs (run items)
       are never workstation-eligible.
-- [x] **Tests:** `AffixTest` (kind masks, pools, countFor, value scaling, distinct rolls, serialization)
-      and `WorkstationRulesTest` (upgrade/reforge/preserve/salvage costs, salvage scaling, upgrade
-      bounds, affix-id parsing) — all pure JUnit, no Bukkit mocks.
+- [x] **Tests:** `AffixTest` (kind masks, pools, countFor, value scaling, distinct rolls, serialization,
+      maxed pity rolls) and `WorkstationRulesTest` (upgrade/reforge/preserve/salvage costs, salvage
+      scaling, upgrade bounds, floor scaling, reforge pity, affix-id parsing) — all pure JUnit, no
+      Bukkit mocks.
 - [x] **UI:** single unified `WorkstationUI` chest GUI for all five stations — item list → detail panel
       with exact costs and result preview → CONFIRM (two-click for destructive ops) → BACK. Removed the
       old `PersistUI` and its villager wiring in `GameListener`/`Dung`.

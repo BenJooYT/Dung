@@ -233,6 +233,10 @@ public final class GameListener implements Listener {
         if (t == Material.TNT || t == Material.TRIPWIRE_HOOK) {
             e.setCancelled(true);
         }
+        // Workstation blocks must survive so their function isn't lost for the floor.
+        if (di.workstationAt(e.getBlock().getLocation()) != null) {
+            e.setCancelled(true);
+        }
     }
 
     @EventHandler

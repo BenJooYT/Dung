@@ -380,7 +380,7 @@ typos into compile errors instead of silent save incompatibility. All tags live 
 - `persistize(s)` — converts a run item to a persistent copy delivered at **half durability**
   (used by the PRESERVE workstation).
 - `downgradeRarity(s)` — returns a copy one rarity tier lower with stats scaled by the rarity
-  multiplier and lore recolored (legacy helper; the deterministic PRESERVE workstation no longer uses it).
+  multiplier and lore recolored (used on a failed PRESERVE attempt; COMMON is unchanged).
 - `setStoredHealth(s, n)` / `getStoredHealthMax(s)` — Life Drain stored-health pool, capped by
   rarity (COMMON=25 → MYTHIC=180).
 - Durability helpers: `initDurability`, `getDurability`/`setDurability`,
@@ -498,11 +498,13 @@ Combat:
   workstations in an UPGRADE room (see [Workstations](#workstations)).
 - `tryUpgrade` / `previewReforge` / `tryReforge` / `tryPreserve` / `trySalvage` — server-side
   operations applied after re-validating the item is still present, still eligible, and is the
-  exact item the player selected. UPGRADE raises the item's core stat by 10%/level (max 5) for
-  run coins + shards; REFORGE rerolls affixes for shards; PRESERVE is a **gamble** (50 run coins +
-  200 persistent coins + 250 shards, all AND) — 40% chance to queue the item for post-run delivery
-  as persistent half-durability gear, on failure it's returned one rarity worse; SALVAGE destroys
-  the item for shards.
+  exact item the player selected. All UPGRADE/REFORGE/PRESERVE costs scale with floor depth
+  (`WorkstationRules.scaledCost`). UPGRADE raises the item's core stat by 10%/level (max 5) for
+  run coins + shards; REFORGE rerolls affixes for shards, with a guaranteed max-affix **pity** roll
+  every 10 rerolls; PRESERVE is a **gamble** (50 run coins + 200 persistent coins + 250 shards,
+  all AND, ×floor tier) — 40% chance to queue the item for post-run delivery as persistent
+  half-durability gear, on failure it's returned one rarity worse; SALVAGE destroys the item for
+  **run coins** (per-run, lost on death — not bankable shards).
 - `tryUnlockRoom(p, loc)` — right-click an IRON_BLOCK barrier with a key item to unlock a
   LOCKED room (consumes 1 key, spawns pedestal loot).
 - `tryBombWall(p, loc)` — right-click a CRACKED_STONE_BRICKS wall with a bomb item to blast
@@ -748,13 +750,14 @@ immediately and spent in `/upgrades`.
   durability (min 1); a piece that breaks is removed from the inventory. Death now costs
   persistent gear, not just the run.
 - **Workstation (UPGRADE) rooms** — every 5th floor has five physical workstations for
-  progression: **UPGRADE** raises an item's core stat by 10%/level (max 5) for run coins + shards;
-  **REFORGE** rerolls an item's procedural affixes for shards; **PRESERVE** is a gamble costing 50 run
+  progression (costs scale with floor depth): **UPGRADE** raises an item's core stat by 10%/level
+  (max 5) for run coins + shards; **REFORGE** rerolls an item's procedural affixes for shards, with
+  a guaranteed max-affix **pity** roll every 10 rerolls; **PRESERVE** is a gamble costing 50 run
   coins + 200 persistent coins + 250 shards (all AND): 40% chance queues a run item for post-run
   delivery as persistent half-durability gear, on failure it's returned one rarity worse;
-  **SALVAGE** destroys an item for shards (two-click
-  confirm); **STORAGE** is a read-only in-run view of your persistent items (withdraw impossible).
-  A successful preserve is never lost to death.
+  **SALVAGE** destroys an item for **run coins** (per-run, lost on death — not bankable shards)
+  (two-click confirm); **STORAGE** is a read-only in-run view of your persistent items (withdraw
+  impossible). A successful preserve is never lost to death.
 - **Tab throttle** — `TabUI.refresh` runs every 10 ticks; only the HUD action bar keeps a
   per-tick cadence.
 - **Return to pre-run location** — `/dung leave` and mid-run death teleport you back to where

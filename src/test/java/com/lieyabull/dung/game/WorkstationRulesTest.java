@@ -74,6 +74,38 @@ public class WorkstationRulesTest {
         assertTrue(WorkstationRules.PRESERVE_SUCCESS_CHANCE > 0.0 && WorkstationRules.PRESERVE_SUCCESS_CHANCE < 1.0);
     }
 
+    // ---- floor scaling ----
+
+    @Test
+    void tierOfFloorIsFiveFloorStepsClampedToAtLeastOne() {
+        assertEquals(1, WorkstationRules.tierOfFloor(1));
+        assertEquals(1, WorkstationRules.tierOfFloor(4));
+        assertEquals(1, WorkstationRules.tierOfFloor(5));  // first workstation room = base cost
+        assertEquals(2, WorkstationRules.tierOfFloor(10));
+        assertEquals(3, WorkstationRules.tierOfFloor(15));
+        assertEquals(6, WorkstationRules.tierOfFloor(30));
+    }
+
+    @Test
+    void scaledCostScalesWithFloor() {
+        assertEquals(WorkstationRules.REFORGE_SHARD_COST, WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, 5));
+        assertEquals(WorkstationRules.REFORGE_SHARD_COST * 2, WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, 10));
+        assertEquals(WorkstationRules.REFORGE_SHARD_COST * 3, WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, 15));
+    }
+
+    // ---- reforge pity ----
+
+    @Test
+    void reforgePityActivatesAfterThresholdAndResets() {
+        assertFalse(WorkstationRules.reforgePityActive(0));
+        assertFalse(WorkstationRules.reforgePityActive(WorkstationRules.REFORGE_PITY - 1));
+        assertTrue(WorkstationRules.reforgePityActive(WorkstationRules.REFORGE_PITY));
+        // a pity roll resets the counter; a normal roll increments it
+        assertEquals(1, WorkstationRules.reforgeCountAfter(0, false));
+        assertEquals(WorkstationRules.REFORGE_PITY, WorkstationRules.reforgeCountAfter(WorkstationRules.REFORGE_PITY - 1, false));
+        assertEquals(0, WorkstationRules.reforgeCountAfter(WorkstationRules.REFORGE_PITY, true));
+    }
+
     // ---- SALVAGE ----
 
     @Test
