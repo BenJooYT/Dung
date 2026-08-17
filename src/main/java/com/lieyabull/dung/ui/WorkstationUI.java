@@ -138,11 +138,13 @@ public final class WorkstationUI implements Listener {
                 lines.add("§7Keeps base stats, rarity, ability.");
             }
             case PRESERVE -> {
-                lines.add("§eCost: " + WorkstationRules.PRESERVE_COIN_COST + " run coins");
-                lines.add("§3Cost: " + WorkstationRules.PRESERVE_SHARD_COST + " shards");
-                lines.add("§7Effect: item persists past this run");
-                lines.add("§7(§ehalf durability§7). Persistent coins are");
-                lines.add("§7NOT spent here.");
+                lines.add("§e" + WorkstationRules.PRESERVE_COIN_COST + " run coins");
+                lines.add("§dAND " + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " persistent coins");
+                lines.add("§3AND " + WorkstationRules.PRESERVE_SHARD_COST + " shards");
+                lines.add("§7Chance: §a" + (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100) + "%");
+                lines.add("§7Success: persists past the run");
+                lines.add("§7(§ehalf durability§7). §cFail: returned one");
+                lines.add("§crarity worse.");
             }
             case SALVAGE -> {
                 lines.add("§7Effect: destroy the item for shards");
@@ -238,10 +240,13 @@ public final class WorkstationUI implements Listener {
                 lines.add("§3Cost: " + WorkstationRules.REFORGE_SHARD_COST + " shards");
             }
             case PRESERVE -> {
-                lines.add("§dPreserves this item past the run");
-                lines.add("§7(§ehalf durability§7).");
-                lines.add("§eCost: " + WorkstationRules.PRESERVE_COIN_COST + " run coins");
-                lines.add("§3Cost: " + WorkstationRules.PRESERVE_SHARD_COST + " shards");
+                lines.add("§dAttempts to preserve this item past the run");
+                lines.add("§7Chance: §a" + (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100) + "%");
+                lines.add("§7Success: §aques at half durability§7. §cFail: returned");
+                lines.add("§cone rarity worse§7.");
+                lines.add("§e" + WorkstationRules.PRESERVE_COIN_COST + " run coins");
+                lines.add("§dAND " + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " persistent coins");
+                lines.add("§3AND " + WorkstationRules.PRESERVE_SHARD_COST + " shards");
             }
             case SALVAGE -> {
                 int value = WorkstationRules.salvageValue(

@@ -499,9 +499,10 @@ Combat:
 - `tryUpgrade` / `previewReforge` / `tryReforge` / `tryPreserve` / `trySalvage` — server-side
   operations applied after re-validating the item is still present, still eligible, and is the
   exact item the player selected. UPGRADE raises the item's core stat by 10%/level (max 5) for
-  run coins + shards; REFORGE rerolls affixes for shards; PRESERVE deterministically queues the
-  item (40 run coins + 60 shards) for post-run delivery as persistent half-durability gear —
-  **persistent coins are never spent**; SALVAGE destroys the item for shards.
+  run coins + shards; REFORGE rerolls affixes for shards; PRESERVE is a **gamble** (50 run coins +
+  200 persistent coins + 250 shards, all AND) — 40% chance to queue the item for post-run delivery
+  as persistent half-durability gear, on failure it's returned one rarity worse; SALVAGE destroys
+  the item for shards.
 - `tryUnlockRoom(p, loc)` — right-click an IRON_BLOCK barrier with a key item to unlock a
   LOCKED room (consumes 1 key, spawns pedestal loot).
 - `tryBombWall(p, loc)` — right-click a CRACKED_STONE_BRICKS wall with a bomb item to blast
@@ -748,9 +749,10 @@ immediately and spent in `/upgrades`.
   persistent gear, not just the run.
 - **Workstation (UPGRADE) rooms** — every 5th floor has five physical workstations for
   progression: **UPGRADE** raises an item's core stat by 10%/level (max 5) for run coins + shards;
-  **REFORGE** rerolls an item's procedural affixes for shards; **PRESERVE** deterministically
-  queues a run item for post-run delivery as persistent half-durability gear (40 run coins + 60
-  shards — persistent coins are never spent); **SALVAGE** destroys an item for shards (two-click
+  **REFORGE** rerolls an item's procedural affixes for shards; **PRESERVE** is a gamble costing 50 run
+  coins + 200 persistent coins + 250 shards (all AND): 40% chance queues a run item for post-run
+  delivery as persistent half-durability gear, on failure it's returned one rarity worse;
+  **SALVAGE** destroys an item for shards (two-click
   confirm); **STORAGE** is a read-only in-run view of your persistent items (withdraw impossible).
   A successful preserve is never lost to death.
 - **Tab throttle** — `TabUI.refresh` runs every 10 ticks; only the HUD action bar keeps a

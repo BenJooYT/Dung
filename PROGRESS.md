@@ -388,9 +388,11 @@ tab = detailed build/run/progression).
       5/level shards).
 - [x] **REFORGE** rerolls an item's affixes for 15 shards, keeping base stats, rarity, ability, and
       upgrade level (with a preview before committing).
-- [x] **PRESERVE** is now **deterministic** (no 40/60 gamble, no rarity downgrade): pays 40 run coins +
-      60 shards and queues the item at half durability for post-run delivery via the existing
-      `pendingPersists` path. **Persistent coins are never spent by this room.**
+- [x] **PRESERVE** is a **gamble**, costing **all three** currencies (run coins + persistent coins +
+      shards, AND not either/or): pays 50 run coins + 200 persistent coins + 250 shards for a **40%
+      chance** to queue the item at half durability for post-run delivery via the existing
+      `pendingPersists` path; on **failure** the item is returned immediately **one rarity worse**
+      (`downgradeRarity`).
 - [x] **SALVAGE** destroys the selected item for shards, `max(1, (rarityOrdinal+1)*2 + stat/10)`, gated
       behind a two-click confirm.
 - [x] **PERSISTENT STORAGE** is a **read-only** in-run view of the player's persistent items (storage,

@@ -56,9 +56,22 @@ public class WorkstationRulesTest {
     // ---- PRESERVE ----
 
     @Test
-    void preserveCostsArePositiveAndUseNoPersistentCoins() {
+    void preserveCostsArePositiveAcrossAllThreeCurrencies() {
+        // all three currencies are charged (AND), not either/or
         assertTrue(WorkstationRules.PRESERVE_COIN_COST > 0);
+        assertTrue(WorkstationRules.PRESERVE_PERSISTENT_COIN_COST > 0);
         assertTrue(WorkstationRules.PRESERVE_SHARD_COST > 0);
+    }
+
+    @Test
+    void preserveSucceedsBoundary() {
+        // roll below the threshold succeeds, at/above fails
+        assertTrue(WorkstationRules.preserveSucceeds(0.0));
+        assertTrue(WorkstationRules.preserveSucceeds(WorkstationRules.PRESERVE_SUCCESS_CHANCE - 0.0001));
+        assertFalse(WorkstationRules.preserveSucceeds(WorkstationRules.PRESERVE_SUCCESS_CHANCE));
+        assertFalse(WorkstationRules.preserveSucceeds(0.999));
+        // within the valid [0,1) range
+        assertTrue(WorkstationRules.PRESERVE_SUCCESS_CHANCE > 0.0 && WorkstationRules.PRESERVE_SUCCESS_CHANCE < 1.0);
     }
 
     // ---- SALVAGE ----

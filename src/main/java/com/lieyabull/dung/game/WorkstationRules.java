@@ -56,8 +56,19 @@ public final class WorkstationRules {
     public static final int REFORGE_SHARD_COST = 15;
 
     // ---------- PRESERVE ----------
-    public static final int PRESERVE_COIN_COST = 40;
-    public static final int PRESERVE_SHARD_COST = 60;
+    /** Run-coin cost for a preserve attempt (required AND with persistent coins and shards). */
+    public static final int PRESERVE_COIN_COST = 50;
+    /** Persistent-coin cost for a preserve attempt (required AND with run coins and shards). */
+    public static final int PRESERVE_PERSISTENT_COIN_COST = 200;
+    /** Shard cost for a preserve attempt (required AND with run coins and persistent coins). */
+    public static final int PRESERVE_SHARD_COST = 250;
+    /** Base chance (0.0-1.0) a preserve attempt succeeds and queues the item for post-run delivery. */
+    public static final double PRESERVE_SUCCESS_CHANCE = 0.40;
+
+    /** Whether a preserve attempt with a uniform random {@code roll} in [0,1) succeeds. */
+    public static boolean preserveSucceeds(double roll) {
+        return roll < PRESERVE_SUCCESS_CHANCE;
+    }
 
     // ---------- SALVAGE ----------
     /** Salvage returns shards scaled by rarity + the item's primary defensive/offensive stat. */

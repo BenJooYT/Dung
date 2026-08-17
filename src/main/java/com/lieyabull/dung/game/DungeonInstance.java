@@ -1916,9 +1916,10 @@ public final class DungeonInstance {
         return sb.toString();
     }
 
-    /** PRESERVE: make a run item persistent. Deterministic — pay run coins + shards and the item is
-     *  queued for delivery after the run as persistent half-durability gear (via the existing
-     *  pendingPersists delivery path). Persistent coins are NOT spent by this room. */
+    /** PRESERVE: gamble to make a run item persistent. Paying run coins + persistent coins + shards
+     *  (all AND), a preserve attempt has a {@code PRESERVE_SUCCESS_CHANCE} chance to queue the item
+     *  for post-run delivery as persistent half-durability gear (via the existing pendingPersists
+     *  delivery path); on failure the item is returned immediately, one rarity worse. */
     public boolean tryPreserve(Player p, int slot) {
         if (!running) return false;
         PlayerState st = run.playerStateOf(p.getUniqueId());
@@ -1935,20 +1936,36 @@ public final class DungeonInstance {
             p.sendMessage("§cYou need §e" + WorkstationRules.PRESERVE_COIN_COST + " run coins§c (have §e" + st.coins + "§c).");
             return false;
         }
+        if (prof.persistentCoins < WorkstationRules.PRESERVE_PERSISTENT_COIN_COST) {
+            p.sendMessage("§dYou need §b" + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " persistent coins§d (have §b"
+                    + prof.persistentCoins + "§d).");
+            return false;
+        }
         if (prof.shards < WorkstationRules.PRESERVE_SHARD_COST) {
             p.sendMessage("§3You need " + WorkstationRules.PRESERVE_SHARD_COST + " shards (have " + prof.shards + ").");
             return false;
         }
+        // Charge ALL THREE currencies (run coins + persistent coins + shards), not either/or.
         st.coins -= WorkstationRules.PRESERVE_COIN_COST;
+        prof.persistentCoins -= WorkstationRules.PRESERVE_PERSISTENT_COIN_COST;
         prof.shards -= WorkstationRules.PRESERVE_SHARD_COST;
         plugin.meta().save();
 
-        p.getInventory().setItem(slot, null);
-        pendingPersists.computeIfAbsent(pid, k -> new ArrayList<>()).add(GearFactory.persistize(item));
-        recomputeStats(); // item removed from (possibly) equipped slot — refresh live combat stats
-        world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_BEACON_ACTIVATE, 1.0f, 1.5f);
-        p.sendMessage("§d§l✦ PRESERVED! §dYour item will persist past this run (at half durability).");
-        p.sendMessage("§7  You'll receive it when the run ends.");
+        boolean success = WorkstationRules.preserveSucceeds(new java.util.Random().nextDouble());
+        if (success) {
+            p.getInventory().setItem(slot, null);
+            pendingPersists.computeIfAbsent(pid, k -> new ArrayList<>()).add(GearFactory.persistize(item));
+            world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_BEACON_ACTIVATE, 1.0f, 1.5f);
+            p.sendMessage("§d§l✦ PRESERVED! §dYour item will persist past this run (at half durability).");
+            p.sendMessage("§7  You'll receive it when the run ends.");
+        } else {
+            // Failed: return the item, one rarity worse (stats scaled down, recolored).
+            ItemStack downgraded = GearFactory.downgradeRarity(item);
+            p.getInventory().setItem(slot, downgraded);
+            world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_ANVIL_LAND, 1.0f, 1.0f);
+            p.sendMessage("§cThe preserve failed. Your item was returned, §lone rarity worse§r§c.");
+        }
+        recomputeStats(); // equipped slot changed (removed or downgraded) — refresh live combat stats
         return true;
     }
 
