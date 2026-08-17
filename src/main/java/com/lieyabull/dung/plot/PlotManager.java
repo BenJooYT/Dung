@@ -44,9 +44,9 @@ public final class PlotManager {
     private static final int SURFACE_Y = 51;
 
     // Plot origin: plots start at x=0, z=0. Plot (0,0) occupies x=[0..19], z=[0..19]
-    // Buildable area: x=[1..16], z=[1..16] (offset by 1 for border)
-    // Border: x=0, x=17, z=0, z=17 (oak slabs)
-    // Path: x=18..19, z=18..19 (between plots)
+    // Buildable area: x=[0..17], z=[0..17] (includes the oak slab border)
+    // Border: x=0, x=17, z=0, z=17 (oak slabs) — now breakable
+    // Path: x=18..19, z=18..19 (between plots) — still protected
 
     public static final int CLAIM_SHARD_COST = 250;
     public static final int CLAIM_COIN_COST = 150;
@@ -77,7 +77,7 @@ public final class PlotManager {
             wc.generateStructures(false);
             plotsWorld = wc.createWorld();
             if (plotsWorld != null) {
-                plotsWorld.setGameRule(GameRules.SPAWN_MOBS, false);
+                plotsWorld.setGameRule(GameRules.SPAWN_MOBS, true);
                 plotsWorld.setGameRule(GameRules.ADVANCE_TIME, false);
                 plotsWorld.setGameRule(GameRules.ADVANCE_WEATHER, false);
                 plotsWorld.setGameRule(GameRules.FIRE_SPREAD_RADIUS_AROUND_PLAYER, 0);
@@ -166,7 +166,7 @@ public final class PlotManager {
         return new Location(w, ox, SURFACE_Y, oz);
     }
 
-    /** Check if a location is within the buildable area of its plot (not on border/path). */
+    /** Check if a location is within the buildable area of its plot (includes border, excludes path). */
     public boolean isBuildableArea(Location loc) {
         PlotCoord coord = plotAt(loc);
         if (coord == null) return false;
@@ -174,8 +174,8 @@ public final class PlotManager {
         if (origin == null) return false;
         int dx = loc.getBlockX() - origin.getBlockX();
         int dz = loc.getBlockZ() - origin.getBlockZ();
-        // Buildable area: x=[1..16], z=[1..16] (offset 1 from origin for border)
-        return dx >= 1 && dx <= PLOT_SIZE && dz >= 1 && dz <= PLOT_SIZE;
+        // Buildable area: x=[0..17], z=[0..17] (includes the oak slab border, excludes the path at 18-19)
+        return dx >= 0 && dx <= PLOT_SIZE + 1 && dz >= 0 && dz <= PLOT_SIZE + 1;
     }
 
     /**

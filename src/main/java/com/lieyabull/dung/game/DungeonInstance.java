@@ -539,7 +539,7 @@ public final class DungeonInstance {
                 boolean broken = GearFactory.damageItem(s, dmg);
                 if (broken) {
                     inv.setItem(slot, null);
-                    p.sendMessage("§cYour " + (s.getItemMeta() != null ? s.getItemMeta().getDisplayName() : s.getType().name()) + " §c broke from the descent!");
+                    p.sendMessage("§cYour " + (s.getItemMeta() != null ? s.getItemMeta().getDisplayName() : s.getType().name()) + " §c broke from the descent! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability).");
                 }
             }
         }
@@ -1497,14 +1497,16 @@ public final class DungeonInstance {
                 e -> e.entity.getLocation().distanceSquared(eyeBase)));
         int meleeTargets = 3;
         int hitN = Math.min(meleeTargets, meleeCand.size());
-        double totalDmgDealt = 0;
+        // Track per-enemy damage for Life Drain (each enemy contributes independently)
+        double[] enemyDmg = new double[hitN];
         for (int i = 0; i < hitN; i++) {
             Enemy e = meleeCand.get(i);
             boolean crit = guaranteeCrit || Math.random() < ps.critChance;
             double dmg = baseDmg * (crit ? ps.critMult : 1.0);
             e.damage(dmg, p, dir.getX(), dir.getZ());
-            totalDmgDealt += dmg;
+            enemyDmg[i] = dmg;
         }
+        double bossDmg = 0;
         if (boss != null && boss.isActive()) {
             Location bl = boss.location();
             double horiz = Math.hypot(bl.getX() - eyeBase.getX(), bl.getZ() - eyeBase.getZ());
@@ -1513,19 +1515,22 @@ public final class DungeonInstance {
                 boolean crit = guaranteeCrit || Math.random() < ps.critChance;
                 double dmg = baseDmg * (crit ? ps.critMult : 1.0);
                 boss.damage(dmg, p);
-                totalDmgDealt += dmg;
+                bossDmg = dmg;
             }
         }
-        // Life Drain: add 25% of damage dealt to the weapon's stored health (capped at 50)
-        if (isLifeDrain && totalDmgDealt > 0) {
-            int stored = (int) Math.round(totalDmgDealt * 0.25);
-            int current = GearFactory.getStoredHealth(held);
-            GearFactory.setStoredHealth(held, current + stored);
-            // Spawn damage_indicator particles from each hit enemy to the player
+        // Life Drain: add 12.5% of actual damage dealt per enemy to the weapon's stored health.
+        // Each enemy contributes independently (not summed), so hitting 3 enemies stores 3x.
+        if (isLifeDrain) {
             Location pLoc = p.getLocation().add(0, 1, 0);
             for (int i = 0; i < hitN; i++) {
                 Enemy e = meleeCand.get(i);
                 if (e.dead) continue;
+                int stored = (int) Math.round(enemyDmg[i] * 0.125);
+                if (stored > 0) {
+                    int current = GearFactory.getStoredHealth(held);
+                    GearFactory.setStoredHealth(held, current + stored);
+                }
+                // Spawn damage_indicator particles from this enemy to the player
                 Location eLoc = e.entity.getLocation().add(0, 1, 0);
                 org.bukkit.util.Vector step = eLoc.toVector().subtract(pLoc.toVector()).multiply(0.1);
                 for (int t = 0; t < 10; t++) {
@@ -1534,8 +1539,13 @@ public final class DungeonInstance {
                 }
             }
             // Also from boss if hit
-            if (boss != null && boss.isActive()) {
+            if (bossDmg > 0) {
                 Location bl = boss.location().add(0, 1, 0);
+                int stored = (int) Math.round(bossDmg * 0.125);
+                if (stored > 0) {
+                    int current = GearFactory.getStoredHealth(held);
+                    GearFactory.setStoredHealth(held, current + stored);
+                }
                 org.bukkit.util.Vector step = bl.toVector().subtract(pLoc.toVector()).multiply(0.1);
                 for (int t = 0; t < 10; t++) {
                     Location pt = pLoc.clone().add(step.clone().multiply(t));
@@ -1602,7 +1612,7 @@ public final class DungeonInstance {
             boolean broken = GearFactory.damageItem(item, dmg);
             if (broken) {
                 p.getInventory().setItemInMainHand(null);
-                p.sendMessage("§cYour " + item.getItemMeta().getDisplayName() + " §c broke!");
+                p.sendMessage("§cYour " + item.getItemMeta().getDisplayName() + " §c broke! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability).");
             }
         }
     }
@@ -1870,14 +1880,21 @@ public final class DungeonInstance {
                 break;
             }
             case "Life Drain": {
-                // AoE drain on all valid targets in the room
-                double totalDrained = 0;
+                // AoE drain on all valid targets in the room — each enemy contributes 12.5% of its
+                // drain damage to stored health independently (not summed).
                 Location casterLoc = caster.getLocation().add(0, 1, 0);
                 for (Enemy e : roomList) {
                     if (e.dead) continue;
                     double drainDmg = dmg * 0.5;
                     e.damage(drainDmg, caster, 0, 0);
-                    totalDrained += drainDmg;
+                    int stored = (int) Math.round(drainDmg * 0.125);
+                    if (stored > 0) {
+                        ItemStack held = caster.getInventory().getItemInMainHand();
+                        if (held != null && !held.getType().isAir()) {
+                            int current = GearFactory.getStoredHealth(held);
+                            GearFactory.setStoredHealth(held, current + stored);
+                        }
+                    }
                     // Spawn damage_indicator particles from each enemy to the caster
                     Location eLoc = e.entity.getLocation().add(0, 1, 0);
                     org.bukkit.util.Vector step = eLoc.toVector().subtract(casterLoc.toVector()).multiply(0.1);
@@ -1890,21 +1907,19 @@ public final class DungeonInstance {
                 if (boss != null && boss.isActive()) {
                     double bossDrain = dmg * 0.5;
                     boss.damage(bossDrain, caster);
-                    totalDrained += bossDrain;
+                    int stored = (int) Math.round(bossDrain * 0.125);
+                    if (stored > 0) {
+                        ItemStack held = caster.getInventory().getItemInMainHand();
+                        if (held != null && !held.getType().isAir()) {
+                            int current = GearFactory.getStoredHealth(held);
+                            GearFactory.setStoredHealth(held, current + stored);
+                        }
+                    }
                     Location bLoc = boss.location().add(0, 1, 0);
                     org.bukkit.util.Vector step = bLoc.toVector().subtract(casterLoc.toVector()).multiply(0.1);
                     for (int t = 0; t < 10; t++) {
                         Location pt = casterLoc.clone().add(step.clone().multiply(t));
                         world.spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
-                    }
-                }
-                // Add 25% of damage dealt to the weapon's stored health (capped at 50)
-                int stored = (int) Math.round(totalDrained * 0.25);
-                if (stored > 0) {
-                    ItemStack held = caster.getInventory().getItemInMainHand();
-                    if (held != null && !held.getType().isAir()) {
-                        int current = GearFactory.getStoredHealth(held);
-                        GearFactory.setStoredHealth(held, current + stored);
                     }
                 }
                 world.spawnParticle(org.bukkit.Particle.WITCH, caster.getLocation().add(0, 1, 0), 20, 2, 1, 2, 0);
@@ -2229,6 +2244,7 @@ public final class DungeonInstance {
     }
 
     private void onRoomClear(Floor.RoomNode n, long k) {
+        if (n.cleared) return; // prevent double-processing
         n.cleared = true;
         roomLocked.put(k, false);
         openDoors(n);
@@ -2488,6 +2504,17 @@ public final class DungeonInstance {
         frame.setItem(item);
         frame.setInvulnerable(true);
         frame.setVisible(false);
+        // Floating name tag: a small, invisible, non-interactive armor stand hovering above the item
+        String itemName = item.getItemMeta() != null && item.getItemMeta().hasDisplayName()
+                ? item.getItemMeta().getDisplayName()
+                : com.lieyabull.dung.util.TextUtil.capital(item.getType().name().toLowerCase().replace('_', ' '));
+        org.bukkit.entity.ArmorStand stand = world.spawn(
+                blockLoc.clone().add(0.5, 1.8, 0.5), org.bukkit.entity.ArmorStand.class);
+        stand.setCustomName(itemName);
+        stand.setCustomNameVisible(true);
+        stand.setVisible(false);
+        stand.setMarker(true);
+        stand.setGravity(false);
         // Track the pedestal
         pedestals.add(blockLoc);
         pedestalItems.put(blockLoc, item);
@@ -2500,9 +2527,9 @@ public final class DungeonInstance {
         ItemStack item = pedestalItems.remove(key);
         if (item == null) return false;
         pedestals.remove(key);
-        // Remove item frame entities at this location
-        world.getNearbyEntities(key.clone().add(0.5, 1, 0.5), 0.1, 0.1, 0.1).stream()
-                .filter(e -> e instanceof ItemFrame)
+        // Remove item frame and armor stand entities at this location
+        world.getNearbyEntities(key.clone().add(0.5, 1, 0.5), 0.5, 1.0, 0.5).stream()
+                .filter(e -> e instanceof ItemFrame || e instanceof org.bukkit.entity.ArmorStand)
                 .forEach(e -> e.remove());
         // Remove the slab block
         world.getBlockAt(key).setType(Material.AIR);
@@ -2515,12 +2542,12 @@ public final class DungeonInstance {
         return true;
     }
 
-    /** Remove all pedestal item frames and blocks. */
+    /** Remove all pedestal item frames, armor stands, and blocks. */
     private void clearPedestals() {
         for (Location loc : pedestals) {
-            // Remove item frames
-            world.getNearbyEntities(loc.clone().add(0.5, 1, 0.5), 0.1, 0.1, 0.1).stream()
-                    .filter(e -> e instanceof ItemFrame)
+            // Remove item frames and armor stands
+            world.getNearbyEntities(loc.clone().add(0.5, 1, 0.5), 0.5, 1.0, 0.5).stream()
+                    .filter(e -> e instanceof ItemFrame || e instanceof org.bukkit.entity.ArmorStand)
                     .forEach(e -> e.remove());
             // Remove the slab block
             world.getBlockAt(loc).setType(Material.AIR);
@@ -3215,7 +3242,7 @@ public final class DungeonInstance {
                     break;
                 }
             }
-            p.sendMessage("§cYour " + s.getItemMeta().getDisplayName() + " §c broke!");
+            p.sendMessage("§cYour " + s.getItemMeta().getDisplayName() + " §c broke! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability).");
         }
     }
 

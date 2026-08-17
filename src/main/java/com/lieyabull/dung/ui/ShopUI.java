@@ -172,6 +172,11 @@ public final class ShopUI implements Listener {
                 List.of("§7Spend shards on permanent stat upgrades", "§7You have §b" + prof.shards + " shards"),
                 GUI_PERSISTENT_SHOP, "upgrades"));
 
+        // Slot 6: Repair Broken (repair a broken item for 150 coins + 100 shards)
+        inv.setItem(6, makeShopItem(Material.CRACKED_STONE_BRICKS, "§cRepair Broken Item",
+                List.of("§7Repair a broken persistent item", "§7Cost: §6150 coins§7 + §3100 shards§7", "§7Adds 10 durability"),
+                GUI_PERSISTENT_SHOP, "repair_broken"));
+
         fillEmpty(inv);
 
         openGuis.put(inv, GUI_PERSISTENT_SHOP);
@@ -197,12 +202,12 @@ public final class ShopUI implements Listener {
 
             Material mat = switch (t.id()) {
                 case "damage" -> Material.IRON_SWORD;
+                case "magic_damage" -> Material.BLAZE_ROD;
                 case "hearts" -> Material.RED_DYE;
                 case "defense" -> Material.SHIELD;
                 case "crit" -> Material.ARROW;
                 case "speed" -> Material.FEATHER;
                 case "mana" -> Material.EXPERIENCE_BOTTLE;
-                case "magic_damage" -> Material.BLAZE_ROD;
                 default -> Material.BARRIER;
             };
 
@@ -385,7 +390,7 @@ public final class ShopUI implements Listener {
                 reopen(() -> openPersistentShop(p)); // refresh
             }
             case "repair" -> {
-                // Find the first damaged persistent item in the player's inventory
+                // Find the first damaged (but not broken) persistent item in the player's inventory
                 ItemStack target = null;
                 int targetSlot = -1;
                 for (int slot = 0; slot < p.getInventory().getSize(); slot++) {
@@ -393,7 +398,7 @@ public final class ShopUI implements Listener {
                     if (s == null || s.getType() == Material.AIR) continue;
                     int dur = GearFactory.getDurability(s);
                     int max = GearFactory.getMaxDurability(s);
-                    if (dur >= 0 && max > 0 && dur < max) {
+                    if (dur > 0 && max > 0 && dur < max) {
                         target = s;
                         targetSlot = slot;
                         break;
@@ -412,7 +417,7 @@ public final class ShopUI implements Listener {
                         if (s == null || s.getType() == Material.AIR) continue;
                         int dur = GearFactory.getDurability(s);
                         int max = GearFactory.getMaxDurability(s);
-                        if (dur >= 0 && max > 0 && dur < max) {
+                        if (dur > 0 && max > 0 && dur < max) {
                             target = s;
                             break;
                         }
@@ -444,13 +449,13 @@ public final class ShopUI implements Listener {
             case "repair_all" -> {
                 int totalCost = 0;
                 java.util.List<ItemStack> toRepair = new java.util.ArrayList<>();
-                // Collect all persistent items with missing durability
+                // Collect all persistent items with missing durability (but not broken — dur > 0)
                 for (int slot = 0; slot < p.getInventory().getSize(); slot++) {
                     ItemStack s = p.getInventory().getItem(slot);
                     if (s == null || s.getType() == Material.AIR) continue;
                     int d = GearFactory.getDurability(s);
                     int m = GearFactory.getMaxDurability(s);
-                    if (d >= 0 && m > 0 && d < m) {
+                    if (d > 0 && m > 0 && d < m) {
                         toRepair.add(s);
                     }
                 }
@@ -465,7 +470,7 @@ public final class ShopUI implements Listener {
                     if (s == null || s.getType() == Material.AIR) continue;
                     int d = GearFactory.getDurability(s);
                     int m = GearFactory.getMaxDurability(s);
-                    if (d >= 0 && m > 0 && d < m) {
+                    if (d > 0 && m > 0 && d < m) {
                         toRepair.add(s);
                     }
                 }
@@ -500,6 +505,29 @@ public final class ShopUI implements Listener {
                 }
                 plugin.meta().save();
                 p.sendMessage("§aRepaired " + toRepair.size() + " item(s)! §7(-§6" + totalCost + " coins§7)");
+                reopen(() -> openPersistentShop(p)); // refresh
+            }
+            case "repair_broken" -> {
+                // Repair the player's held broken item (main hand)
+                ItemStack target = p.getInventory().getItemInMainHand();
+                if (target == null || target.getType() == Material.AIR
+                        || !GearFactory.isPersistent(target) || !GearFactory.isBroken(target)) {
+                    p.sendMessage("§cHold a broken persistent item in your main hand to repair it.");
+                    return;
+                }
+                if (prof.persistentCoins < 150) {
+                    p.sendMessage("§cYou need 150 persistent coins to repair a broken item.");
+                    return;
+                }
+                if (prof.shards < 100) {
+                    p.sendMessage("§cYou need 100 shards to repair a broken item.");
+                    return;
+                }
+                prof.persistentCoins -= 150;
+                prof.shards -= 100;
+                GearFactory.repairItem(target, 10);
+                plugin.meta().save();
+                p.sendMessage("§aRepaired broken item! §7(-§6150 coins§7, §3-100 shards§7) §7(+10 durability)");
                 reopen(() -> openPersistentShop(p)); // refresh
             }
             case "upgrades" -> reopen(() -> openUpgrades(p));
@@ -574,13 +602,13 @@ public final class ShopUI implements Listener {
 
     private String effectDesc(Upgrades.Track t, int level) {
         return switch (t.id()) {
-            case "damage" -> "+" + (level * Upgrades.delta(t)) + " damage";
+            case "damage" -> "+" + (level * Upgrades.delta(t)) + " melee damage";
+            case "magic_damage" -> "+" + (level * Upgrades.delta(t)) + " magic damage";
             case "hearts" -> "+" + (level * Upgrades.delta(t)) + " max HP";
             case "defense" -> "+" + (level * Upgrades.delta(t)) + " defense";
             case "crit" -> "+" + (level * 0.5) + "% crit chance";
             case "speed" -> "+" + (level * Upgrades.delta(t)) + "% move speed";
             case "mana" -> "+" + (level * Upgrades.delta(t)) + " max mana";
-            case "magic_damage" -> "+" + (level * Upgrades.delta(t)) + " magic damage";
             default -> "";
         };
     }

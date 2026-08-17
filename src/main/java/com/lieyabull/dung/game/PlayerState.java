@@ -94,8 +94,9 @@ public final class PlayerState {
         // weapon damage from mainhand — only a real weapon counts. Holding an armor piece in-hand
         // (which carries HEALTH/DEFENSE/RARITY tags) must NOT grant its stats; it only applies when
         // actually equipped, so players can't get the bonuses by just carrying the item.
+        // Broken items (durability == 0) are also skipped — they provide no stats until repaired.
         ItemStack weapon = inv.getItemInMainHand();
-        boolean mainhandIsWeapon = isWeaponKind(weapon);
+        boolean mainhandIsWeapon = isWeaponKind(weapon) && !com.lieyabull.dung.items.GearFactory.isBroken(weapon);
         Integer wdmg = mainhandIsWeapon ? intTag(weapon, ItemTags.DAMAGE) : null;
         if (wdmg != null) damage = wdmg;
         // some weapons extend melee reach (tags set by GearFactory)
@@ -115,8 +116,9 @@ public final class PlayerState {
         magicWeapon = mainhandIsWeapon && wmagic != null;
         // Affix bonuses from the held weapon (procedural affixes boost stats on top of the base tags)
         applyAffixBonuses(weapon, mainhandIsWeapon);
-        // armor defense from 4 armor slots; rarity pushes crit
+        // armor defense from 4 armor slots; rarity pushes crit. Broken items provide no stats.
         for (ItemStack s : inv.getArmorContents()) {
+            if (com.lieyabull.dung.items.GearFactory.isBroken(s)) continue;
             Integer def = intTag(s, ItemTags.DEFENSE);
             if (def != null) defense += def;
             Rarity r = rarityOf(s);
@@ -262,7 +264,7 @@ public final class PlayerState {
                         boolean broken = com.lieyabull.dung.items.GearFactory.damageItem(s, 1);
                         if (broken) {
                             inv.setItem(slot, null);
-                            player.sendMessage("§cYour mana shield broke!");
+                            player.sendMessage("§cYour mana shield broke! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability).");
                         }
                         break;
                     }

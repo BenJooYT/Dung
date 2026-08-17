@@ -16,9 +16,20 @@ public class UpgradesTest {
         Upgrades.Track t = Upgrades.byId("damage");
         assertNotNull(t);
         assertEquals("damage", t.id());
-        assertEquals("Permanent Damage", t.label());
+        assertEquals("Melee Damage", t.label());
         assertEquals(6, t.baseCost());
         assertEquals(3, t.costPerLevel());
+        assertEquals(15, t.maxLevel());
+    }
+
+    @Test
+    void byIdReturnsMagicDamageTrack() {
+        Upgrades.Track t = Upgrades.byId("magic_damage");
+        assertNotNull(t);
+        assertEquals("magic_damage", t.id());
+        assertEquals("Magic Damage", t.label());
+        assertEquals(8, t.baseCost());
+        assertEquals(4, t.costPerLevel());
         assertEquals(15, t.maxLevel());
     }
 
@@ -41,7 +52,7 @@ assertEquals("Max Hearts", t.label());
 assertEquals("Defense", t.label());
         assertEquals(8, t.baseCost());
         assertEquals(5, t.costPerLevel());
-        assertEquals(15, t.maxLevel());
+        assertEquals(25, t.maxLevel());
     }
 
     @Test
@@ -63,7 +74,7 @@ assertEquals("Crit Chance", t.label());
 assertEquals("Move Speed", t.label());
         assertEquals(10, t.baseCost());
         assertEquals(6, t.costPerLevel());
-        assertEquals(8, t.maxLevel());
+        assertEquals(20, t.maxLevel());
     }
 
     @Test
@@ -226,12 +237,12 @@ assertEquals("Move Speed", t.label());
     @Test
     void allContainsAllTracks() {
         assertTrue(Upgrades.ALL.contains(Upgrades.DAMAGE));
+        assertTrue(Upgrades.ALL.contains(Upgrades.MAGIC_DAMAGE));
         assertTrue(Upgrades.ALL.contains(Upgrades.HEARTS));
         assertTrue(Upgrades.ALL.contains(Upgrades.DEFENSE));
         assertTrue(Upgrades.ALL.contains(Upgrades.CRIT));
         assertTrue(Upgrades.ALL.contains(Upgrades.SPEED));
         assertTrue(Upgrades.ALL.contains(Upgrades.MANA));
-        assertTrue(Upgrades.ALL.contains(Upgrades.MAGIC_DAMAGE));
     }
 
     @Test

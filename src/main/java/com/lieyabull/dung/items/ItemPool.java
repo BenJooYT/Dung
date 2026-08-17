@@ -13,6 +13,7 @@ import java.util.concurrent.ThreadLocalRandom;
  */
 public final class ItemPool {
     // weapon templates: name, material, base dmg, ability, mana cost
+    // Each entry has a weight; Doomblade has half weight (1) vs others (2) so it drops half as often.
     private static final String[][] WEAPONS = {
         {"Frayed Blade", "IRON_SWORD", "5", "Rush", "15"},
         {"Crude Axe", "STONE_AXE", "6", "Cleave", "20"},
@@ -25,6 +26,8 @@ public final class ItemPool {
         {"Blaze Staff", "BLAZE_ROD", "12", "Fireball", "25"},
         {"Soul Siphon", "NETHERITE_HOE", "12", "Life Drain", "20"},
     };
+    // Weapon selection weights — Doomblade has half weight (1) vs others (2) so it drops half as often.
+    private static final int[] WEAPON_WEIGHTS = {2, 2, 2, 2, 2, 2, 1, 2, 2, 2};
     // armor templates (head/chest/legs/boots) per base set
     private static final String[][] ARMOR_BASES = {
         {"Cloth", "LEATHER_HELMET", "LEATHER_CHESTPLATE", "LEATHER_LEGGINGS", "LEATHER_BOOTS", "1"},
@@ -100,7 +103,16 @@ public final class ItemPool {
     }
 
     public static ItemStack randomWeapon(int floor) {
-        String[] w = WEAPONS[ThreadLocalRandom.current().nextInt(WEAPONS.length)];
+        // Weighted selection — Doomblade has half weight
+        int totalWeight = 0;
+        for (int wgt : WEAPON_WEIGHTS) totalWeight += wgt;
+        int roll = ThreadLocalRandom.current().nextInt(totalWeight);
+        int idx = 0;
+        for (int i = 0; i < WEAPON_WEIGHTS.length; i++) {
+            roll -= WEAPON_WEIGHTS[i];
+            if (roll < 0) { idx = i; break; }
+        }
+        String[] w = WEAPONS[idx];
         Rarity r = rollRarity(floor);
         int base = Integer.parseInt(w[2]);
         int dmg = (int) Math.round(base * r.statMult);
@@ -124,7 +136,38 @@ public final class ItemPool {
             s = GearFactory.withMagicDamage(s, scaledMagic);
         }
         double reach = reachOf(id);
-        return reach > 0 ? GearFactory.withReach(s, reach) : s;
+        s = reach > 0 ? GearFactory.withReach(s, reach) : s;
+        // Doomblade: halve the mythic chance by re-rolling rarity if it rolled MYTHIC
+        if ("doomblade".equals(id) && r == Rarity.MYTHIC && ThreadLocalRandom.current().nextBoolean()) {
+            // Downgrade to a non-mythic rarity by re-rolling without MYTHIC eligible
+            Rarity downgrade = rollRarityNoMythic(floor);
+            int newDmg = (int) Math.round(base * downgrade.statMult);
+            int newHealth = rollWeaponHealth(id, downgrade);
+            int newMagic = magicDmg > 0 ? (int) Math.round(magicDmg * downgrade.statMult) : 0;
+            ItemStack ds = s;
+            ds.editMeta(meta -> {
+                var pdc = meta.getPersistentDataContainer();
+                pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.RARITY),
+                        org.bukkit.persistence.PersistentDataType.STRING, downgrade.name());
+                pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.DAMAGE),
+                        org.bukkit.persistence.PersistentDataType.INTEGER, newDmg);
+                pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.HEALTH),
+                        org.bukkit.persistence.PersistentDataType.INTEGER, newHealth);
+                if (newMagic > 0) {
+                    pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.MAGIC_DAMAGE),
+                            org.bukkit.persistence.PersistentDataType.INTEGER, newMagic);
+                }
+                // Recolor the display name for the new rarity
+                String dn = meta.getDisplayName();
+                if (dn != null) {
+                    // Strip old color codes and re-apply the new rarity color
+                    String stripped = dn.replaceAll("§[0-9a-fklmnor]", "");
+                    meta.setDisplayName(downgrade.legacy + stripped);
+                }
+            });
+            s = ds;
+        }
+        return s;
     }
 
     /** Roll a random armor piece. slot: 0=head,1=chest,2=legs,3=boots. */
@@ -138,6 +181,31 @@ public final class ItemPool {
         Material mat = Material.matchMaterial(b[slot + 1]);
         if (mat == null) mat = Material.LEATHER_HELMET; // defensive fallback: never crash loot
         return GearFactory.armor(id, b[0], mat, r, def, rollArmorHealth(set, slot, r));
+    }
+
+    /** Roll rarity but exclude MYTHIC (for Doomblade mythic-halving). */
+    private static Rarity rollRarityNoMythic(int floor) {
+        double push = floor * 0.05;
+        List<Rarity> eligible = new ArrayList<>();
+        for (Rarity r : Rarity.values()) {
+            if (r == Rarity.MYTHIC) continue;
+            if (floor >= r.floorUnlock) eligible.add(r);
+        }
+        if (eligible.isEmpty()) eligible.add(Rarity.COMMON);
+        double[] weights = new double[eligible.size()];
+        double total = 0;
+        for (int i = 0; i < eligible.size(); i++) {
+            Rarity r = eligible.get(i);
+            double w = r.baseChance * (1.0 + push * r.ordinal() * 0.5);
+            weights[i] = w;
+            total += w;
+        }
+        double roll = ThreadLocalRandom.current().nextDouble() * total;
+        for (int i = 0; i < weights.length; i++) {
+            roll -= weights[i];
+            if (roll <= 0) return eligible.get(i);
+        }
+        return eligible.get(eligible.size() - 1);
     }
 
     /** Roll a random shield item. Shields drop at a lower rate than weapons/armor. */

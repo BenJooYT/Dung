@@ -13,6 +13,8 @@ import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.party.Party;
 import com.lieyabull.dung.party.PartyManager;
 import com.lieyabull.dung.ui.ChatUI;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import com.lieyabull.dung.util.TextUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
@@ -207,7 +209,13 @@ public final class DungCommand implements CommandExecutor {
                 }
                 if (pm.invite(p, target)) {
                     p.sendMessage("§aInvited " + target.getName() + " to the party.");
-                    target.sendMessage("§a" + p.getName() + " invited you to a party! §f/party accept§a or §f/party decline");
+                    target.sendMessage(
+                            com.lieyabull.dung.ui.ChatUI.command("§a[Accept]", "/party accept", "Join the party")
+                                    .append(Component.text("  "))
+                                    .append(com.lieyabull.dung.ui.ChatUI.command("§c[Decline]", "/party decline", "Decline the invite"))
+                                    .hoverEvent(null) // remove hover from the container
+                    );
+                    target.sendMessage("§a" + p.getName() + " invited you to a party!");
                 } else {
                     p.sendMessage("§cCould not invite. They may already be in a party, or the party is full.");
                 }
@@ -561,26 +569,26 @@ public final class DungCommand implements CommandExecutor {
         if (page > 1) {
             line = line.append(ChatUI.command("§7[§f◀ Prev§7]", "/leaderboard " + LB_CATEGORIES[catIdx] + " " + (page - 1), "Previous page"));
         } else {
-            line = line.append(net.kyori.adventure.text.Component.text("§8[ ◀ Prev ]"));
+            line = line.append(LegacyComponentSerializer.legacySection().deserialize("§8[ ◀ Prev ]"));
         }
-        line = line.append(net.kyori.adventure.text.Component.text(" §7Page " + page + "/" + totalPages + " "));
+        line = line.append(LegacyComponentSerializer.legacySection().deserialize(" §7Page " + page + "/" + totalPages + " "));
         if (page < totalPages) {
             line = line.append(ChatUI.command("§7[§fNext ▶§7]", "/leaderboard " + LB_CATEGORIES[catIdx] + " " + (page + 1), "Next page"));
         } else {
-            line = line.append(net.kyori.adventure.text.Component.text("§8[ Next ▶ ]"));
+            line = line.append(LegacyComponentSerializer.legacySection().deserialize("§8[ Next ▶ ]"));
         }
         p.sendMessage(line);
 
         // Category switcher buttons
-        var catLine = net.kyori.adventure.text.Component.text("§7Categories: ");
+        var catLine = LegacyComponentSerializer.legacySection().deserialize("§7Categories: ");
         for (int i = 0; i < LB_CATEGORIES.length; i++) {
             if (i == catIdx) {
-                catLine = catLine.append(net.kyori.adventure.text.Component.text("§a§l" + getShortLabel(i) + "§7"));
+                catLine = catLine.append(LegacyComponentSerializer.legacySection().deserialize("§a§l" + getShortLabel(i) + "§7"));
             } else {
                 catLine = catLine.append(ChatUI.command("§7" + getShortLabel(i), "/leaderboard " + LB_CATEGORIES[i] + " 1", LB_LABELS[i]));
             }
             if (i < LB_CATEGORIES.length - 1) {
-                catLine = catLine.append(net.kyori.adventure.text.Component.text(" §8| "));
+                catLine = catLine.append(LegacyComponentSerializer.legacySection().deserialize(" §8| "));
             }
         }
         p.sendMessage(catLine);

@@ -319,6 +319,12 @@ public final class GearFactory {
         });
     }
 
+    /** Check if an item is broken (durability <= 0). */
+    public static boolean isBroken(ItemStack s) {
+        int dur = getDurability(s);
+        return dur == 0;
+    }
+
     /** Reduce durability by the given amount. Returns true if the item is now broken (durability <= 0). */
     public static boolean damageItem(ItemStack s, int amount) {
         int dur = getDurability(s);
