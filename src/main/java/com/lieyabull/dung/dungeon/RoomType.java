@@ -9,7 +9,8 @@ public enum RoomType {
     SECRET(4, "Secret"),
     ELITE(5, "Elite"),
     BOSS(6, "Boss"),
-    LOCKED(7, "Locked");
+    LOCKED(7, "Locked"),
+    UPGRADE(8, "Upgrade");
 
     public final int kind;
     public final String label;

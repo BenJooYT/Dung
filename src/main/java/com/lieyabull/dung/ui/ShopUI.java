@@ -93,6 +93,10 @@ public final class ShopUI implements Listener {
         inv.setItem(1, makeShopItem(Material.IRON_CHESTPLATE, "§fRandom Armor",
                 List.of("§7Buy a random armor piece", "§7(scales with floor depth)", "", "§e" + RUN_ARMOR_COST + " coins"),
                 GUI_RUN_SHOP, "armor"));
+        // Slot 2: Random Shield
+        inv.setItem(2, makeShopItem(Material.SHIELD, "§bRandom Shield",
+                List.of("§7Buy a random mana shield", "§7Sneak to charge with mana", "§7Absorbs damage while active", "", "§e" + RUN_ARMOR_COST + " coins"),
+                GUI_RUN_SHOP, "shield"));
 
         // Row 0: Consumables
         // Slot 3: Red Heart (heal)
@@ -149,18 +153,22 @@ public final class ShopUI implements Listener {
         inv.setItem(1, makeShopItem(Material.DIAMOND_CHESTPLATE, "§fRandom Armor",
                 List.of("§7Buy a random armor piece", "§7(persists through death)", "", "§6" + PERSISTENT_ARMOR_COST + " coins"),
                 GUI_PERSISTENT_SHOP, "armor"));
+        // Slot 2: Random Shield (persistent)
+        inv.setItem(2, makeShopItem(Material.SHIELD, "§bRandom Shield",
+                List.of("§7Buy a random mana shield", "§7(persists through death)", "§7Sneak to charge with mana", "", "§6" + PERSISTENT_ARMOR_COST + " coins"),
+                GUI_PERSISTENT_SHOP, "shield"));
 
-        // Slot 2: Repair Item (repair first damaged persistent item in inventory)
-        inv.setItem(2, makeShopItem(Material.ANVIL, "§aRepair Item",
+        // Slot 3: Repair Item (repair first damaged persistent item in inventory)
+        inv.setItem(3, makeShopItem(Material.ANVIL, "§aRepair Item",
                 List.of("§7Repair a damaged persistent item", "§7Cost: §6" + REPAIR_COST_PER_10 + " coins§7 per 10 durability"),
                 GUI_PERSISTENT_SHOP, "repair"));
-        // Slot 3: Repair All
-        inv.setItem(3, makeShopItem(Material.DIAMOND, "§bRepair All",
+        // Slot 4: Repair All
+        inv.setItem(4, makeShopItem(Material.DIAMOND, "§bRepair All",
                 List.of("§7Repair all damaged persistent gear", "§7Cost: §6" + REPAIR_COST_PER_10 + " coins§7 per 10 durability each"),
                 GUI_PERSISTENT_SHOP, "repair_all"));
 
-        // Slot 4: Upgrades (opens upgrades GUI)
-        inv.setItem(4, makeShopItem(Material.NETHER_STAR, "§bPermanent Upgrades",
+        // Slot 5: Upgrades (opens upgrades GUI)
+        inv.setItem(5, makeShopItem(Material.NETHER_STAR, "§bPermanent Upgrades",
                 List.of("§7Spend shards on permanent stat upgrades", "§7You have §b" + prof.shards + " shards"),
                 GUI_PERSISTENT_SHOP, "upgrades"));
 
@@ -298,6 +306,11 @@ public final class ShopUI implements Listener {
                 p.getInventory().addItem(s);
                 p.sendMessage("§aPurchased armor! §7(-§e" + RUN_ARMOR_COST + " coins§7)");
             });
+            case "shield" -> buyRunItem(p, di, st, RUN_ARMOR_COST, () -> {
+                ItemStack s = ItemPool.randomShield(di.run().floorIndex);
+                p.getInventory().addItem(s);
+                p.sendMessage("§aPurchased shield! §7(-§e" + RUN_ARMOR_COST + " coins§7)");
+            });
             case "heart" -> buyRunItem(p, di, st, RUN_HEART_COST, () -> {
                 st.heal(8.0);
                 p.sendMessage("§aHealed 8 HP! §7(-§e" + RUN_HEART_COST + " coins§7)");
@@ -355,6 +368,19 @@ public final class ShopUI implements Listener {
                 GearFactory.initDurability(s);
                 p.getInventory().addItem(s);
                 p.sendMessage("§aPurchased armor! §7(-§6" + PERSISTENT_ARMOR_COST + " coins§7)");
+                reopen(() -> openPersistentShop(p)); // refresh
+            }
+            case "shield" -> {
+                if (prof.persistentCoins < PERSISTENT_ARMOR_COST) {
+                    p.sendMessage("§cYou need " + PERSISTENT_ARMOR_COST + " coins.");
+                    return;
+                }
+                prof.persistentCoins -= PERSISTENT_ARMOR_COST;
+                plugin.meta().save();
+                ItemStack s = GearFactory.markPersistent(ItemPool.randomShield(2));
+                GearFactory.initDurability(s);
+                p.getInventory().addItem(s);
+                p.sendMessage("§aPurchased shield! §7(-§6" + PERSISTENT_ARMOR_COST + " coins§7)");
                 reopen(() -> openPersistentShop(p)); // refresh
             }
             case "repair" -> {

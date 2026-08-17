@@ -83,6 +83,11 @@ public final class RoomGen {
                 floorMat = Material.DARK_PRISMARINE;
                 lightMat = Material.GLOWSTONE;
                 break;
+            case UPGRADE:
+                wallMat = Material.AMETHYST_BLOCK;
+                floorMat = Material.PURPUR_BLOCK;
+                lightMat = Material.SEA_LANTERN;
+                break;
             case BOSS:
                 wallMat = Material.DEEPSLATE_BRICKS;
                 floorMat = Material.POLISHED_BLACKSTONE_BRICKS;
@@ -109,17 +114,6 @@ public final class RoomGen {
                 }
             }
         }
-        // carve door passages: a 3-wide tunnel from this room's interior through its wall and
-        // across the open corridor into the neighbor's interior. Both neighbors carve their own
-        // door, so the overlapping strips merge into one continuous passage. The PERPENDICULAR
-        // center of the passage is anchored to the grid cell (a FIXED offset scaled to the largest
-        // room), NOT to each room's own center — otherwise a square (13) + long (17) pair carve at
-        // different centers and the corridor splits into two staggered tubes.
-        int cx0 = sx + WALL + n.sizeW / 2;   // interior center column (along-axis origin)
-        int cz0 = sz + WALL + n.sizeH / 2;
-        int perpRef = PERP_CENTER;           // fixed off-axis line for ALL rooms
-        int[] DX = {0, 1, 0, -1};
-        int[] DZ = {-1, 0, 1, 0};
         // SECRET rooms: no door passages. The destructible wall is placed on the combat room's
         // side in enterFloor() post-processing. Here we just record where the wall should go.
         boolean secret = n.type == RoomType.SECRET && n.secretParent != null;
@@ -137,6 +131,17 @@ public final class RoomGen {
             }
             n.destructibleWallLoc = new Location(w, wallX, baseY + ROOM_HEIGHT / 2.0 + 1, wallZ);
         } else {
+            // carve door passages: a 3-wide tunnel from this room's interior through its wall and
+            // across the open corridor into the neighbor's interior. Both neighbors carve their own
+            // door, so the overlapping strips merge into one continuous passage. The PERPENDICULAR
+            // center of the passage is anchored to the grid cell (a FIXED offset scaled to the largest
+            // room), NOT to each room's own center — otherwise a square (13) + long (17) pair carve at
+            // different centers and the corridor splits into two staggered tubes.
+            int cx0 = sx + WALL + n.sizeW / 2;   // interior center column (along-axis origin)
+            int cz0 = sz + WALL + n.sizeH / 2;
+            int perpRef = PERP_CENTER;           // fixed off-axis line for ALL rooms
+            int[] DX = {0, 1, 0, -1};
+            int[] DZ = {-1, 0, 1, 0};
             for (int d = 0; d < 4; d++) {
                 if (!n.doors[d]) continue;
                 boolean horiz = d == 1 || d == 3;            // E/W runs along x, perp is z

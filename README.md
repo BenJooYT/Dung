@@ -254,6 +254,18 @@ authoring sessions, the production registry, and asset export.
 
 **`RoomIo`** — JSON serialization/deserialization for `RoomTemplate` (Gson-based).
 
+**`RoomTemplateRotator`** — creates a rotated copy of a `RoomTemplate` so its connectors align with
+the door directions required by the floor graph.
+
+- `requiredRotation(template, openDoors)` — determines the rotation (0&deg;/90&deg;/180&deg;/270&deg; CW)
+  needed to align the template's connectors with the room's open door directions. Returns null if no
+  rotation makes all doors match.
+- `rotate(template, rotation)` — creates a rotated copy of the template, transforming blocks,
+  connectors, bounds, markers, and spawn floors around the template's vertical center axis using
+  double-precision arithmetic for symmetric results on odd-dimensioned templates.
+- `Rotation` enum — `NONE`, `CW_90`, `CW_180`, `CW_270` with helper methods `applyToDirection(dir)`
+  and `applyInverseToDirection(dir)`.
+
 **`RoomValidator`** — validates a room template for self-containment, connectivity, and safety.
 
 - `validate(tpl)` — returns a `Result` with `valid` flag and a list of `Issue`s.
@@ -416,7 +428,9 @@ Lifecycle:
   class + permanent upgrades, applies held gear), sets up scoreboards, grants starter kits,
   fires tutorial (including key/bomb hotbar instructions) for new profiles, then `enterFloor(0)`.
 - `enterFloor(i)` — randomizes spacing (22–28), generates + builds the floor, teleports all
-  party members to the START room.
+  party members to the START room. Templates are rotated as needed to align connectors with
+  room door directions; corridors span the full vertical range between template and procedural
+  rooms so multi-level templates connect correctly.
 - `enterRoom(n)` — marks visited, applies spawn-grace invuln, spawns enemies for un-cleared
   COMBAT/ELITE rooms (locks doors), spawns room pickups, opens the shop GUI on SHOP rooms,
   and checks the boss on BOSS rooms.

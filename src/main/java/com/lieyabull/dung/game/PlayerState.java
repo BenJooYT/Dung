@@ -33,6 +33,7 @@ public final class PlayerState {
     public int bombs;  // placeholder: no sink yet; reserved for future destructible-wall costs
     // computed combat stats
     public double damage = 3;
+    public double magicDamage = 0; // separate magic damage stat (for magic weapons)
     public double defense = 0;
     public double reach = 3.0;   // melee attack range, blocks
     public double critChance = 0.05;
@@ -41,6 +42,9 @@ public final class PlayerState {
     public int fireRateTicks = 3;
     /** Per-player attack cooldown counter (ticks remaining before next swing). */
     public int fireCd = 0;
+    /** True when the held mainhand weapon is a magic weapon (its basic melee stays negligible and
+     *  ignores the melee-damage upgrade — only the magic-damage upgrade scales it). */
+    public boolean magicWeapon = false;
     // class
     public String classId = "warrior";
     // permanent (shard-bought) upgrades: track id -> owned level
@@ -60,6 +64,10 @@ public final class PlayerState {
     public double damageBoostMult = 1.0;
     // class ability: guaranteed crit (Shadow Step)
     public long guaranteedCritUntil = 0;
+    // Mana Shield
+    public double shield = 0;        // current shield charge
+    public double shieldMax = 0;     // max shield capacity (from held item)
+    public boolean shieldActive = false; // true when sneaking with mana shield
 
     public PlayerState(Player p) {
         this.player = p;
@@ -69,6 +77,7 @@ public final class PlayerState {
     public void recomputeStats() {
         PlayerInventory inv = player.getInventory();
         damage = 3;
+        magicDamage = 0;
         defense = 0;
         reach = 3.0;
         critChance = 0.05;
@@ -94,6 +103,10 @@ public final class PlayerState {
         }
         Integer whealth = mainhandIsWeapon ? intTag(weapon, ItemTags.HEALTH) : null;
         if (whealth != null) healthBonus += whealth;
+        // Magic damage from held weapon (separate from melee damage)
+        Integer wmagic = mainhandIsWeapon ? intTag(weapon, ItemTags.MAGIC_DAMAGE) : null;
+        if (wmagic != null) magicDamage = wmagic;
+        magicWeapon = mainhandIsWeapon && wmagic != null;
         // armor defense from 4 armor slots; rarity pushes crit
         for (ItemStack s : inv.getArmorContents()) {
             Integer def = intTag(s, ItemTags.DEFENSE);
@@ -125,7 +138,11 @@ public final class PlayerState {
     /** Apply permanent shard-bought upgrades on top of gear + class passives. */
     private void applyUpgrades() {
         int dmg = upgrades.getOrDefault("damage", 0);
-        if (dmg > 0) damage += dmg * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.DAMAGE);
+        // The melee-damage upgrade scales melee weapons only; a magic weapon's basic melee stays
+        // negligible (1) — it scales through the magic-damage upgrade instead.
+        if (dmg > 0 && !magicWeapon) damage += dmg * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.DAMAGE);
+        int magic = upgrades.getOrDefault("magic_damage", 0);
+        if (magic > 0) magicDamage += magic * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.MAGIC_DAMAGE);
         int def = upgrades.getOrDefault("defense", 0);
         if (def > 0) defense += def * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.DEFENSE);
         int crit = upgrades.getOrDefault("crit", 0);
@@ -197,7 +214,19 @@ public final class PlayerState {
     public void hurt(double dmg) {
         if (isInvuln() || dead) return;
         double mitigated = Math.max(1.0, dmg * (100.0 / (100.0 + defense)));
-        hearts -= mitigated;
+        // Mana Shield: absorb damage with shield first if active
+        if (shieldActive && shield > 0) {
+            if (shield >= mitigated) {
+                shield -= mitigated;
+                mitigated = 0;
+            } else {
+                mitigated -= shield;
+                shield = 0;
+            }
+        }
+        if (mitigated > 0) {
+            hearts -= mitigated;
+        }
         invulnUntil = System.currentTimeMillis() + 500; // short i-frame: dodges stunlock, keeps the pressure on
         lastDamageTime = System.currentTimeMillis();
         if (hearts <= 0) dead = true;

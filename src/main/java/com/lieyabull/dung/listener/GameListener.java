@@ -6,6 +6,7 @@ import com.lieyabull.dung.game.GameManager;
 import com.lieyabull.dung.game.PlayerState;
 import com.lieyabull.dung.game.Run;
 import com.lieyabull.dung.pickup.Pickup;
+import com.lieyabull.dung.items.GearFactory;
 import com.lieyabull.dung.items.ItemTags;
 import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.ui.ChatUI;
@@ -23,9 +24,12 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason;
+import org.bukkit.event.entity.ExplosionPrimeEvent;
+import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
@@ -63,12 +67,26 @@ public final class GameListener implements Listener {
         // sending them to the main world spawn. The location is saved on quit.
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
         if (prof.lastWorld != null) {
-            org.bukkit.World w = org.bukkit.Bukkit.getWorld(prof.lastWorld);
+            org.bukkit.World w = resolveWorld(prof.lastWorld);
             if (w != null) {
                 p.teleport(new org.bukkit.Location(w, prof.lastX, prof.lastY, prof.lastZ, prof.lastYaw, prof.lastPitch));
             }
         }
         ChatUI.startPrompt(p);
+        // Migrate any persistent items in the player's inventory that lack UUIDs
+        plugin.migratePersistentItemUuids();
+    }
+
+    /** Resolve a world by name for rejoin. The plots world is created lazily, so it isn't loaded
+     *  into {@link org.bukkit.Bukkit#getWorld(String)} until the first visit — load it on demand so
+     *  a player who logged out in the plots world actually rejoins there instead of the main world. */
+    private org.bukkit.World resolveWorld(String name) {
+        org.bukkit.World w = org.bukkit.Bukkit.getWorld(name);
+        if (w != null) return w;
+        if (name != null && name.equals(com.lieyabull.dung.plot.PlotManager.PLOTS_WORLD_NAME)) {
+            return plugin.plotManager().getPlotsWorld();
+        }
+        return null;
     }
 
     /** Stop natural/world mob spawning, but ONLY inside the run's world while a run is active.
@@ -190,7 +208,16 @@ public final class GameListener implements Listener {
         if (di == null) return;
         if (DungeonInstance.isRunItem(e.getItemInHand())) {
             e.setCancelled(true);
-            p.sendActionBar("§cKeys and bombs stay in your hotbar!");
+            di.setStatus(p, "§cKeys and bombs stay in your hotbar!");
+            return;
+        }
+        // Run gear that uses a placeable material (e.g. Storm Rod = LIGHTNING_ROD) must not be
+        // placed as a block — it's a weapon, not a buildable.
+        org.bukkit.inventory.meta.ItemMeta im = e.getItemInHand().getItemMeta();
+        if (im != null && im.getPersistentDataContainer()
+                .has(org.bukkit.NamespacedKey.minecraft(ItemTags.KIND),
+                     org.bukkit.persistence.PersistentDataType.STRING)) {
+            e.setCancelled(true);
         }
     }
 
@@ -270,6 +297,25 @@ public final class GameListener implements Listener {
         }
     }
 
+    /** Prevent Creeper (Mulliboom) native explosions from destroying blocks in the dungeon.
+     *  The Mulliboom's custom death explosion is handled in Enemy.mulliboomExplode() with
+     *  a visual-only explosion (0 power, no block damage). This cancels the Creeper's native
+     *  explosion that would otherwise destroy blocks. */
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onExplosionPrime(ExplosionPrimeEvent e) {
+        if (e.getEntity().getScoreboardTags().contains("dung.entity")) {
+            e.setCancelled(true);
+        }
+    }
+
+    /** Backup: cancel any explosion that happens in a dungeon world to prevent block damage. */
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onEntityExplode(EntityExplodeEvent e) {
+        if (e.getEntity().getScoreboardTags().contains("dung.entity")) {
+            e.setCancelled(true);
+        }
+    }
+
     /** True if the damage came from a Dung-created entity, or a projectile fired by one. */
     private boolean isDungSource(org.bukkit.entity.Entity source) {
         if (source == null) return false;
@@ -281,6 +327,65 @@ public final class GameListener implements Listener {
         return false;
     }
 
+    /** Handle projectiles fired by Dung mobs (Gaper spit, Maw sonic boom) hitting players,
+     *  and Fireball projectiles from the Blaze Staff hitting enemies/boss.
+     *  Snowballs deal 0 damage in vanilla Minecraft, and the onEnemyDamage handler cancels
+     *  all dung-source damage events — so we need a separate handler to apply the mob's
+     *  damage through Dung's PlayerState-based system when a dung projectile hits a player. */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onProjectileHit(ProjectileHitEvent e) {
+        org.bukkit.entity.Projectile proj = e.getEntity();
+        // Handle Fireball from Blaze Staff hitting enemies/boss
+        if (proj.getScoreboardTags().contains("dung.fireball")) {
+            if (proj.getShooter() instanceof Player caster && isInRun(caster)) {
+                DungeonInstance di = instanceOf(caster);
+                if (di == null) return;
+                // Get the stored damage value
+                double dmg = 0;
+                if (proj.hasMetadata("dung.damage")) {
+                    dmg = proj.getMetadata("dung.damage").get(0).asDouble();
+                }
+                if (dmg <= 0) return;
+                org.bukkit.Location impact = proj.getLocation();
+                org.bukkit.World w = impact.getWorld();
+                // AoE damage to all enemies within 3 blocks
+                long k = di.run().floor.key(di.curRoom().x, di.curRoom().z);
+                java.util.List<com.lieyabull.dung.entity.Enemy> roomList = di.roomEnemies().getOrDefault(k, java.util.List.of());
+                for (com.lieyabull.dung.entity.Enemy e2 : roomList) {
+                    if (e2.dead) continue;
+                    if (e2.entity.getLocation().distance(impact) < 3.0) {
+                        e2.damage(dmg, caster, 0, 0);
+                    }
+                }
+                // Also damage boss if within range
+                if (di.boss() != null && di.boss().isActive() && di.boss().location().distance(impact) < 3.0) {
+                    di.boss().damage(dmg, caster);
+                }
+                // Visual effects
+                w.spawnParticle(org.bukkit.Particle.FLAME, impact, 30, 1.5, 1.5, 1.5, 0.1);
+                w.spawnParticle(org.bukkit.Particle.LAVA, impact, 15, 1, 1, 1, 0);
+                w.playSound(impact, org.bukkit.Sound.ENTITY_GENERIC_EXPLODE, 1.0f, 1.2f);
+            }
+            return;
+        }
+        // Handle dung mob projectiles hitting players
+        if (!(e.getHitEntity() instanceof Player p)) return;
+        if (!isInRun(p)) return;
+        if (proj.getShooter() instanceof org.bukkit.entity.Entity shooter
+                && shooter.getScoreboardTags().contains("dung.entity")) {
+            // Find the Enemy instance for this shooter to get its damage value
+            DungeonInstance di = instanceOf(p);
+            if (di == null) return;
+            // Look up the enemy by its entity UUID
+            com.lieyabull.dung.entity.Enemy enemy = di.enemyByEntity(shooter.getUniqueId());
+            if (enemy != null && !enemy.dead) {
+                com.lieyabull.dung.game.GameManager.playerHurt(p, enemy.damage);
+            }
+        }
+    }
+
+    /** Some run gear (e.g. the Storm Rod, which uses the placeable LIGHTNING_ROD material) would
+     *  otherwise be placed as a block. Cancel placing any run-gear item held in the main hand. */
     @EventHandler(priority = EventPriority.HIGH)
     public void onInteract(PlayerInteractEvent e) {
         Player p = e.getPlayer();
@@ -299,6 +404,27 @@ public final class GameListener implements Listener {
         if (hasAbility && (e.getAction() == Action.RIGHT_CLICK_AIR || e.getAction() == Action.RIGHT_CLICK_BLOCK)
                 && p.isSneaking()) {
             e.setCancelled(true);
+            // Life Drain: crouch + right-click heals the user with the weapon's stored health
+            // (instead of casting the AoE ability). Normal right-click on a player still heals them.
+            String ability = held.getItemMeta().getPersistentDataContainer()
+                    .get(org.bukkit.NamespacedKey.minecraft(ItemTags.ABILITY),
+                         org.bukkit.persistence.PersistentDataType.STRING);
+            if ("Life Drain".equals(ability)) {
+                int stored = GearFactory.getStoredHealth(held);
+                if (stored > 0) {
+                    PlayerState st = di.run().playerStateOf(p.getUniqueId());
+                    if (st != null && !st.dead) {
+                        st.heal(stored);
+                        GearFactory.setStoredHealth(held, 0);
+                        p.sendMessage("§aYou healed yourself for §c" + stored + "❤");
+                    } else {
+                        p.sendMessage("§cYou have no health to heal!");
+                    }
+                } else {
+                    p.sendMessage("§cNo stored health to spend! Attack enemies to charge it.");
+                }
+                return;
+            }
             di.tryCastAbility(p, held);
             return;
         }
@@ -340,12 +466,44 @@ public final class GameListener implements Listener {
         }
     }
 
-    /** Right-click an item frame on a pedestal to claim the item. */
+    /** Right-click an item frame on a pedestal to claim the item, or right-click a player
+     *  with Life Drain (Soul Siphon) to heal them with stored health. */
     @EventHandler
     public void onInteractEntity(PlayerInteractEntityEvent e) {
         Player p = e.getPlayer();
         DungeonInstance di = instanceOf(p);
         if (di == null) return;
+        // Life Drain: right-click a player to heal them with stored health
+        if (e.getRightClicked() instanceof Player target && p != target) {
+            ItemStack held = p.getInventory().getItemInMainHand();
+            if (held != null && !held.getType().isAir() && held.getItemMeta() != null) {
+                var pdc = held.getItemMeta().getPersistentDataContainer();
+                String ability = pdc.get(org.bukkit.NamespacedKey.minecraft(ItemTags.ABILITY),
+                        org.bukkit.persistence.PersistentDataType.STRING);
+                if ("Life Drain".equals(ability)) {
+                    int stored = GearFactory.getStoredHealth(held);
+                    if (stored > 0) {
+                        // Both must be in the same run/party
+                        DungeonInstance targetDi = instanceOf(target);
+                        if (targetDi == di) {
+                            PlayerState targetSt = di.run().playerStateOf(target.getUniqueId());
+                            if (targetSt != null && !targetSt.dead) {
+                                targetSt.heal(stored);
+                                GearFactory.setStoredHealth(held, 0);
+                                p.sendMessage("§aHealed " + target.getName() + " for §c" + stored + "❤");
+                                target.sendMessage("§a" + p.getName() + " healed you for §c" + stored + "❤");
+                                e.setCancelled(true);
+                                return;
+                            }
+                        }
+                    } else {
+                        p.sendMessage("§cNo stored health to transfer! Attack enemies to charge it.");
+                        e.setCancelled(true);
+                        return;
+                    }
+                }
+            }
+        }
         if (e.getRightClicked() instanceof ItemFrame frame) {
             Location frameLoc = frame.getLocation();
             Location slabLoc = new Location(frameLoc.getWorld(), frameLoc.getBlockX(), frameLoc.getBlockY() - 1, frameLoc.getBlockZ());
@@ -356,6 +514,10 @@ public final class GameListener implements Listener {
                 && v.getScoreboardTags().contains("dung.shopkeeper")) {
             e.setCancelled(true);
             di.openShop(p);
+        } else if (e.getRightClicked() instanceof org.bukkit.entity.Villager v2
+                && v2.getScoreboardTags().contains("dung.persistmaster")) {
+            e.setCancelled(true);
+            di.openPersist(p);
         }
     }
 

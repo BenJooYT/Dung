@@ -32,7 +32,7 @@ import java.util.stream.Collectors;
  */
 public final class PlotManager {
 
-    private static final String PLOTS_WORLD_NAME = "dung_plots";
+    public static final String PLOTS_WORLD_NAME = "dung_plots";
     private static final int PLOT_SIZE = 16;          // 16x16 buildable area per plot
     private static final int PATH_WIDTH = 2;           // 2-block-wide paths between plots
     private static final int BORDER_WIDTH = 1;         // 1-block border (oak slab) per side

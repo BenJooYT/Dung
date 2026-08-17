@@ -21,6 +21,11 @@ public final class ItemTags {
     public static final String MAX_DURABILITY = "dung.maxdurability";
     public static final String RUN_ITEM = "dung.runitem";   // key|bomb — run-only hotbar item
     public static final String STARTER = "dung.starter";    // free starter-kit gear — never salvageable
+    public static final String UUID = "dung.uuid";        // unique persistent item identifier
+    public static final String MANA_SHIELD = "dung.mana_shield"; // "true" if this is a mana shield item
+    public static final String SHIELD_MAX = "dung.shield_max";   // max shield capacity for mana shield
+    public static final String STORED_HEALTH = "dung.storedhealth"; // stored health for Life Drain weapon
+    public static final String MAGIC_DAMAGE = "dung.magic_damage"; // magic damage value (separate from melee)
 
     private ItemTags() {}
 }

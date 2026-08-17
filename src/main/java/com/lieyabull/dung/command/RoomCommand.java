@@ -30,7 +30,7 @@ import java.util.List;
 public final class RoomCommand implements CommandExecutor, TabCompleter {
     private static final String[] SUB = {
         "help","new","pos1","pos2","region","spawnfloor","conn","marker","playerspawn",
-        "shopkeeper","capture","info","validate","export","test","testlocal","list","open","tutorial"
+        "shopkeeper","capture","info","validate","export","test","testlocal","list","open","tutorial","toggle"
     };
 
     private final Dung plugin;
@@ -74,6 +74,7 @@ public final class RoomCommand implements CommandExecutor, TabCompleter {
             case "testlocal": return test(p, args, true);
             case "list": return list(p);
             case "tutorial": return tutorial(p, args);
+            case "toggle": return toggle(p);
             default: p.sendMessage("§cUnknown subcommand §f" + args[0] + "§c. Use §f/room help§c."); break;
         }
         return true;
@@ -96,6 +97,7 @@ public final class RoomCommand implements CommandExecutor, TabCompleter {
         p.sendMessage("§f/room test <id> §7- test a registered room; §f/room testlocal §7- test the in-progress one");
         p.sendMessage("§f/room list §7- list registered production templates");
         p.sendMessage("§f/room tutorial [next|back|reset|skip <n>] §7- walk-through tutorial (replayable)");
+        p.sendMessage("§f/room toggle §7- enable/disable custom room templates (saves to config)");
     }
 
     private boolean newRoom(Player p, String[] args) {
@@ -314,6 +316,16 @@ public final class RoomCommand implements CommandExecutor, TabCompleter {
         if (all.isEmpty()) { p.sendMessage("§7No registered room templates."); return true; }
         p.sendMessage("§9Registered rooms:");
         for (RoomTemplate t : all) p.sendMessage("  §f" + t.id + "§7 [" + String.join(",", t.types) + "]");
+        return true;
+    }
+
+    private boolean toggle(Player p) {
+        boolean current = plugin.getConfig().getBoolean("custom-rooms", true);
+        boolean newVal = !current;
+        plugin.getConfig().set("custom-rooms", newVal);
+        plugin.saveConfig();
+        p.sendMessage("§aCustom rooms are now " + (newVal ? "§2ENABLED" : "§cDISABLED") + "§a. "
+                + "New dungeon floors will " + (newVal ? "" : "§cnot ") + "§ause custom room templates.");
         return true;
     }
 

@@ -21,6 +21,9 @@ public final class ItemPool {
         {"Crystal Shard", "DIAMOND_SWORD", "13", "Blade Storm", "35"},
         {"Arcane Staff", "BLAZE_ROD", "12", "Arcane Bolt", "25"},
         {"Doomblade", "DIAMOND_SWORD", "18", "Ravage", "45"},
+        {"Storm Rod", "LIGHTNING_ROD", "14", "Chain Lightning", "35"},
+        {"Blaze Staff", "BLAZE_ROD", "12", "Fireball", "25"},
+        {"Soul Siphon", "NETHERITE_HOE", "12", "Life Drain", "20"},
     };
     // armor templates (head/chest/legs/boots) per base set
     private static final String[][] ARMOR_BASES = {
@@ -40,6 +43,7 @@ public final class ItemPool {
             case "longsword": return 3.8;
             case "arcane_staff": return 4.5;
             case "doomblade": return 4.0;
+            case "storm_rod": return 4.5;
             default: return 0.0;
         }
     }
@@ -105,6 +109,20 @@ public final class ItemPool {
         if (mat == null) mat = Material.WOODEN_SWORD; // defensive fallback: never crash loot
         ItemStack s = GearFactory.weapon(id,
                 w[0], mat, r, dmg, rollWeaponHealth(id, r), w[3], Integer.parseInt(w[4]));
+        // Magic weapons (Arcane Staff, Storm Rod, Blaze Staff, Soul Siphon) have separate
+        // magic damage and only deal 1 melee damage. The magic damage is stored in a separate PDC tag.
+        String name = w[0];
+        int magicDmg = switch (name) {
+            case "Arcane Staff" -> 12;
+            case "Storm Rod" -> 14;
+            case "Blaze Staff" -> 12;
+            case "Soul Siphon" -> 12;
+            default -> 0;
+        };
+        if (magicDmg > 0) {
+            int scaledMagic = (int) Math.round(magicDmg * r.statMult);
+            s = GearFactory.withMagicDamage(s, scaledMagic);
+        }
         double reach = reachOf(id);
         return reach > 0 ? GearFactory.withReach(s, reach) : s;
     }
@@ -122,6 +140,12 @@ public final class ItemPool {
         return GearFactory.armor(id, b[0], mat, r, def, rollArmorHealth(set, slot, r));
     }
 
+    /** Roll a random shield item. Shields drop at a lower rate than weapons/armor. */
+    public static ItemStack randomShield(int floor) {
+        Rarity r = rollRarity(floor);
+        return GearFactory.shield(r);
+    }
+
     /** A full "loot reward" for clearing a room: chance of gear + always some coins. */
     public static List<ItemStack> roomReward(int floor, int roomKind) {
         List<ItemStack> out = new ArrayList<>();
@@ -135,10 +159,13 @@ public final class ItemPool {
             default -> 0.0;
         };
         if (ThreadLocalRandom.current().nextDouble() < gearChance) {
-            if (ThreadLocalRandom.current().nextBoolean()) {
+            double roll = ThreadLocalRandom.current().nextDouble();
+            if (roll < 0.40) { // 40% weapon
                 out.add(randomWeapon(floor));
-            } else {
+            } else if (roll < 0.75) { // 35% armor
                 out.add(randomArmor(floor, ThreadLocalRandom.current().nextInt(4)));
+            } else { // 25% shield (lower weight than weapons/armor)
+                out.add(randomShield(floor));
             }
         }
         return out;

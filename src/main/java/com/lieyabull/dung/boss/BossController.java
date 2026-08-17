@@ -204,7 +204,9 @@ public final class BossController {
         return boss.getLocation();
     }
 
-    public void damage(double dmg) {
+    /** Damage the boss. When the boss takes damage, it dashes behind the nearest player
+     *  (a fast, non-teleport movement) so ranged attackers can't just kite it from afar. */
+    public void damage(double dmg, Player attacker) {
         if (defeated) return;
         hp -= dmg;
         bar.setProgress(Math.max(0, hp / maxHp));
@@ -213,6 +215,10 @@ public final class BossController {
         world.playSound(boss.getLocation(), org.bukkit.Sound.ENTITY_PLAYER_HURT, 0.8f, 1.0f);
         world.spawnParticle(org.bukkit.Particle.CRIT,
                 boss.getLocation().clone().add(0, 1.5, 0), 12, 0.5, 0.8, 0.5, 0.05);
+        // Flanking dash: move behind the attacker so the boss stays close and aggressive
+        if (attacker != null && attacker.isOnline() && boss.isValid()) {
+            flankBehind(attacker);
+        }
         if (hp <= 0) {
             defeated = true;
             boss.remove();
@@ -221,6 +227,46 @@ public final class BossController {
             Bukkit.removeBossBar(barKey);
             onDefeated.run();
         }
+    }
+
+    /** Dash the boss behind the target player — a fast movement (not teleport) that places
+     *  the boss 2 blocks behind the player, facing them. Uses a short multi-step teleport
+     *  sequence to simulate a fast dash without the boss getting stuck on geometry. */
+    private void flankBehind(Player target) {
+        Location tLoc = target.getLocation();
+        // Direction from boss to player
+        Location bLoc = boss.getLocation();
+        double dx = tLoc.getX() - bLoc.getX();
+        double dz = tLoc.getZ() - bLoc.getZ();
+        double dist = Math.hypot(dx, dz);
+        if (dist < 0.001) return;
+        // Normalize and go past the player by 2 blocks behind them
+        double nx = dx / dist, nz = dz / dist;
+        double behindX = tLoc.getX() - nx * 2.0;
+        double behindZ = tLoc.getZ() - nz * 2.0;
+        // Check if the landing spot is walkable (not inside a wall)
+        Location behind = new Location(world, behindX, tLoc.getY(), behindZ, tLoc.getYaw() + 180, 0);
+        if (isWalkable(behind)) {
+            // Multi-step dash: move in 4 steps for a smooth visual
+            for (int step = 1; step <= 4; step++) {
+                double t = step / 4.0;
+                double sx = bLoc.getX() + (behindX - bLoc.getX()) * t;
+                double sz = bLoc.getZ() + (behindZ - bLoc.getZ()) * t;
+                Location stepLoc = new Location(world, sx, behind.getY(), sz, behind.getYaw(), 0);
+                boss.teleport(stepLoc);
+            }
+            // Spawn dash trail particles
+            world.spawnParticle(org.bukkit.Particle.SWEEP_ATTACK, behind.clone().add(0, 1, 0), 8, 0.5, 0.5, 0.5, 0.05);
+            world.playSound(behind, org.bukkit.Sound.ENTITY_ENDERMAN_TELEPORT, 0.6f, 1.5f);
+        }
+    }
+
+    private boolean isWalkable(Location l) {
+        org.bukkit.Material m = l.getWorld().getBlockAt(l).getType();
+        org.bukkit.Material up = l.getWorld().getBlockAt(l.clone().add(0, 1, 0)).getType();
+        return m != org.bukkit.Material.STONE_BRICKS && up != org.bukkit.Material.STONE_BRICKS
+                && m != org.bukkit.Material.DEEPSLATE_BRICKS && up != org.bukkit.Material.DEEPSLATE_BRICKS
+                && m != org.bukkit.Material.BEDROCK;
     }
 
     public void despawn() {

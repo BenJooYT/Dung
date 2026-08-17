@@ -34,7 +34,9 @@ public final class TabUI {
         // fill player list rows with detailed info via teams
         int i = 0;
         if (st != null) {
-            team(o, i++, "§cDMG §f" + TextUtil.fmt(st.damage) + "   §aDEF §f" + (int) st.defense
+            team(o, i++, "§cDMG §f" + TextUtil.fmt(st.damage)
+                    + (st.magicDamage > 0 ? "§7/§b" + TextUtil.fmt(st.magicDamage) : "")
+                    + "   §aDEF §f" + (int) st.defense
                     + "   §fCRIT §f" + (int) (st.critChance * 100) + "%§fx" + TextUtil.fmt(st.critMult));
             team(o, i++, "§bMana §f" + TextUtil.fmt(st.mana) + "/" + (int) st.maxMana
                     + "   §6Speed §f" + TextUtil.fmt(st.speedMult) + "   §7FireRate §f" + st.fireRateTicks + "t");

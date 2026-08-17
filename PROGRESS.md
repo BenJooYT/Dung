@@ -18,7 +18,8 @@ tab = detailed build/run/progression).
 - [x] MMORPG stats: DMG/DEF/CRIT/fire-rate recomputed from gear SkyBlock-style.
 - [x] Rarity (COMMON→MYTHIC) with stat multipliers + colored lore; gear via ItemPool.
 - [x] Weapons + armor in 4 slots; abilities gated by mana + cooldown.
-- [x] Enemies (Gaper/Fly/Spider/Mulliboom/Charger/Maw + elite variants) with distinct AI.
+- [x] Enemies (Gaper/Fly/Spider/Mulliboom/Charger/Maw + elite variants) with distinct AI: Gaper spits,
+      Fly swarms+ flees, Spider leaps, Mulliboom explodes on death, Charger dashes, Maw shoots.
 - [x] Boss: Warden with HP bar, dash + AoE patterns, arena lock, descend on defeat.
 - [x] Semi-roguelike: death loses run, persistent coins/deaths/clears/class in `saves.yml`.
 - [x] UI: sidebar (HP/mana/coins/keys/bombs/room), boss bar, tab menu (build+dungeon), clickable chat.
@@ -278,11 +279,100 @@ tab = detailed build/run/progression).
       them — a fast fix for a boss bar stuck on screen after a leaked/aborted boss fight, without a
       server restart.
 
+### Iteration 20 — template rotation + height-aligned corridors
+- [x] **Template rooms rotated to match door directions:** `resolveTemplates` now determines the
+      required rotation (0&deg;/90&deg;/180&deg;/270&deg; CW) to align a template's connectors with
+      the room's open door directions, then stores a rotated copy on the room node. Previously,
+      templates were used as-authored — if their connector directions didn't match the room's doors,
+      the room fell back to procedural generation. Now a template with NORTH+EAST connectors can be
+      rotated 90&deg; to serve a room needing EAST+SOUTH doors.
+- [x] **Height-aligned corridor carving:** `carveMixedCorridors` now spans the full vertical range
+      between template and procedural rooms — from the lower of the two floors to the higher of the
+      two ceilings — so a multi-level template (e.g., `combatfloored1` with connectors at floorY=0
+      and floorY=3) connects correctly to a standard procedural room (floor at BASE_Y, ceiling at
+      BASE_Y+ROOM_HEIGHT). The wall punching on the procedural side also spans the full corridor
+      height.
+- [x] **`RoomTemplateRotator` utility:** New class that creates a rotated copy of a template,
+      transforming blocks, connectors, bounds, markers, and spawn floors around the template's
+      vertical center axis using double-precision arithmetic for symmetric results on odd-dimensioned
+      templates.
+
+### Iteration 22 — undo unified corridor carving + custom rooms toggle
+- [x] **Unified corridor carving reverted:** `RoomGen.build` once again carves corridors for
+      procedural rooms (as it did before Iteration 21). The `carveAllCorridors` method in
+      `DungeonInstance` has been replaced with the original `carveMixedCorridors` that only handles
+      template↔template and template↔procedural pairs. Procedural↔procedural corridors are carved
+      by each room's own `RoomGen.build` call, so overlapping corridors merge naturally.
+- [x] **Custom rooms config toggle:** Added `custom-rooms: true` to `config.yml`. When set to
+      `false`, `resolveTemplates` is skipped entirely and all rooms are built procedurally.
+- [x] **`/room toggle` command:** Toggles the `custom-rooms` config setting and saves it to
+      `config.yml`. Players are notified whether custom rooms are enabled or disabled for new
+      dungeon floors. Only affects new floor generation, not existing runs.
+
+### Iteration 23 — enemy redesign: matching entity types + distinct AI behaviors
+- [x] **Entity types now match mob names:** Gaper→Zombie, Fly→Bee, Spider→Spider, Mulliboom→Creeper,
+      Charger→Ravager, Maw→Warden. Each mob now uses a Minecraft entity that visually matches its name
+      and role, instead of the old mismatches (Spider was a Phantom, Fly was a Phantom, Maw was a Blaze,
+      Charger was a Pig).
+- [x] **Distinct AI behaviors per mob type:**
+  - **Gaper** (ai=1): Shambles slowly toward the player. Occasionally stops to spit a short-range
+        snowball projectile (every ~3s). Melee attack when close.
+  - **Fly** (ai=2): Swarms erratically around the player in an orbit pattern, changing direction
+        every 0.5-1.25s. Flees for 3 seconds when HP drops below 30%. Dive-bomb attacks when close.
+  - **Spider** (ai=3): Moves faster at range, slower in melee. Leaps at the player from 2-7 blocks
+        away (every ~2.5s), dealing damage on landing. Normal melee when close.
+  - **Mulliboom** (ai=4): Slow walk toward player. Explodes on death dealing 1.5x damage AoE to all
+        players within 3 blocks (visual explosion + flame particles, no block damage).
+  - **Charger** (ai=5): Telegraphed dash attack (0.75s windup) with fast lunge. Walks slowly toward
+        player while on cooldown. Melee when close.
+  - **Maw** (ai=6): Stationary ranged enemy — does not move. Fires sonic boom projectiles at the
+        player every ~1.75s with visual particle telegraph. Initial 1.5s delay before first volley.
+- [x] **Random room spawn placement:** `placeInFov` replaced with `placeRandomlyInRoom` — enemies now
+      spawn at random walkable positions throughout the room (up to 20 attempts to find a non-wall
+      spot), instead of all spawning in the player's field of view. Falls back to room center.
+- [x] **Updated mob composition:** `composeMobs` now includes Maw and Gaper more naturally in the
+      spawn pool, with a `RANGED` fallback array for better variety.
+
+### Iteration 24 — unified action bar (no conflicting status texts)
+- [x] **All status texts now go through the single action bar writer:** Previously, 5 different places
+      called `p.sendActionBar()` directly (room-locked, doors-opened, everyone-inside, warden-awaits,
+      key/bomb warning), each overwriting the HP/mana counter or the secret room hint. Now all status
+      texts are routed through `DungeonInstance.setStatus()` which stores a per-player transient message
+      with a 3-second expiry. The `refreshUI()` tick loop collects both the secret hint and any active
+      status message and passes them together as a suffix to `HUD.sendBar()` — the single owner of the
+      action bar. No more competing writers, no more flickering or overwritten messages.
+
+### Iteration 25 — 4 new weapons + Mana Shield
+- [x] **Chain Lightning (Storm Rod):** Single-enemy raycast selection, primary target takes 2x damage, chains to up to 3 nearest enemies with diminishing multipliers (1.6x, 1.2x, 0.9x). Curved lightning arc particles (CRIT) drawn along a sine-wave path between chained targets. Thunder sound on cast.
+- [x] **Fireball (Blaze Staff):** Launches a real `Fireball` projectile (no block damage, no fire). On impact, deals AoE 2x damage to all enemies and boss within 3 blocks. Flame/LAVA particle burst + explosion sound. Projectile tagged `dung.fireball` and handled in `GameListener.onProjectileHit`.
+- [x] **Mana Shield:** New held item (SHIELD material) with `dung.kind = "shield"` — does NOT count as a weapon for stat computation. Shield capacity scales with rarity (COMMON=30 to MYTHIC=130). When sneaking with the shield in main hand, spends ~15 mana/sec to charge the shield. When not sneaking, shield decays at ~30/sec. `PlayerState.hurt()` absorbs damage with shield first before applying to hearts. Available in both in-run shop and persistent shop at lower weight than weapons/armor.
+- [x] **Life Drain (Soul Siphon):** Melee attacks add 25% of damage dealt to the weapon's stored health (capped at 50). The Life Drain ability does the same as an AoE drain on all enemies in the room + boss. Right-click another player in the same run to transfer stored health as healing. Stored health shown in item lore.
+- [x] **Loot wiring:** Storm Rod, Blaze Staff, Soul Siphon added to `ItemPool.WEAPONS`. Shields added via `ItemPool.randomShield()` with 25% weight in `roomReward` gear rolls (40% weapon, 35% armor, 25% shield). Shields available in both in-run and persistent shops.
+- [x] **Persistent item star marker:** `GearFactory.markPersistent()` now prepends a ★ star emoji to the display name of persistent items, making them visually distinct in inventories.
+
+### Iteration 26 — Mulliboom explosion buff, magic damage separation, magic damage upgrade
+- [x] **Mulliboom explosion damage tripled:** `damage * 1.5` → `damage * 4.5` so the death explosion is a meaningful threat instead of a minor nuisance.
+- [x] **Magic weapons deal 1 melee damage:** Storm Rod, Blaze Staff, and Soul Siphon now have a separate `dung.magic_damage` PDC tag. Their melee damage is set to 1 (negligible basic attacks), while their ability damage uses the magic damage value. `dispatchAbility` and `dispatchClassAbility` (Mage's Arcane Nova) check for `st.magicDamage` and use it for magic-based abilities (Arcane Bolt, Chain Lightning, Fireball, Life Drain).
+- [x] **Separate magic damage upgrade:** Added `MAGIC_DAMAGE` track to `Upgrades.java` (base cost 8, +4/level, cap 15, delta +1/level). Wired into `PlayerState.applyUpgrades()` so permanent magic damage upgrades apply on top of gear.
+- [x] **New items verified in loot pools:** Storm Rod, Blaze Staff, and Soul Siphon are in `ItemPool.WEAPONS` so they drop from `randomWeapon()` which is used by `roomReward()` (treasure rooms, elite rooms, boss rooms, etc.) and both the in-run and persistent shops. Shields are in `randomShield()` which is wired into `roomReward()` at 25% weight and both shops.
+
+### Iteration 27 — "Try to Persist" upgrade rooms
+- [x] **UPGRADE room type:** new `RoomType.UPGRADE`, guaranteed on every 5th floor (5, 10, 15, …). It
+      replaces a deepest combat room (kept in the door graph so it stays reachable) and gets its own
+      amethyst/purpur visual theme.
+- [x] **Persist Master:** an UPGRADE room spawns a passive named Villager ("Persist Master", once per
+      room per floor) that opens a chest GUI on right-click. It lists every persistable run item the
+      player is carrying (weapon/armor/shield run gear, excluding persistent and starter-kit gear).
+- [x] **Try-to-persist cost & odds:** attempting to persist an item costs **50 run coins + 200 persistent
+      coins + 300 shards**. **40% success** → the item is queued and delivered after the run ends as
+      persistent gear at **half durability**. **60% fail** → the item is returned immediately, **one
+      rarity worse** (stats scaled down by the rarity multiplier, display recolored, lore rewritten).
+- [x] **Persistent delivery:** successfully-persisted items are held in a per-player queue and given to
+      the player's inventory when the run ends (or if they leave early), never lost to death.
+- [x] **`GearFactory` helpers:** `persistize` (mark persistent + init durability at half) and
+      `downgradeRarity` (scale stat tags + rewrite lore to the next-lowest rarity).
+
 ### Remaining candidate work
-- [ ] **More enemy variety** — Ranged enemies (archers, mages), shield enemies (block frontal damage),
-      healers (heal nearby mobs), exploders (rush + detonate), teleporters (blink behind player).
-      The `MobType`/`Enemy` framework already supports distinct AI behaviors — adding new types
-      would slot in cleanly and make combat more tactical.
 - [ ] **Status effects** — Poison (DoT), Slow, Weakness, Stun on both players and enemies. Weapons/
       abilities could apply them; enemies could apply them on hit. Adds strategic depth to combat.
 - [ ] **More room shapes** — Cross-shaped, ring/circular, bridged (gap to jump), multi-level platforms,

@@ -17,12 +17,14 @@ public final class FloorGenerator {
     private final int width;
     private final int height;
     private final int roomCount;
+    private final int floorIndex;
 
-    public FloorGenerator(Random rng, int width, int height, int roomCount) {
+    public FloorGenerator(Random rng, int width, int height, int roomCount, int floorIndex) {
         this.rng = rng;
         this.width = width;
         this.height = height;
         this.roomCount = roomCount;
+        this.floorIndex = floorIndex;
     }
 
     private static final int[] DX = {0, 1, 0, -1};
@@ -218,6 +220,15 @@ public final class FloorGenerator {
                     .orElse(combat.get(0));
             elite.type = RoomType.ELITE;
             combat.remove(elite);
+        }
+        // UPGRADE (Persist) room: guaranteed every 5 floors (floor 5, 10, 15, ...). It replaces
+        // one combat room (kept in the door graph so it stays reachable), placed as deep as possible.
+        if ((floorIndex + 1) % 5 == 0 && !combat.isEmpty()) {
+            Floor.RoomNode upgrade = combat.stream()
+                    .max(java.util.Comparator.comparingInt(n -> dist[n.x + n.z * width]))
+                    .orElse(combat.get(0));
+            upgrade.type = RoomType.UPGRADE;
+            combat.remove(upgrade);
         }
         // LOCKED: place 1-2 locked rooms on dead-end branches (rooms with only 1 door).
         // Pick from remaining combat rooms that are dead-ends and not the boss.

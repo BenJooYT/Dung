@@ -211,11 +211,16 @@ assertEquals("Move Speed", t.label());
         assertEquals(0, Upgrades.delta(Upgrades.CRIT));
     }
 
+    @Test
+    void deltaForMagicDamage() {
+        assertEquals(1, Upgrades.delta(Upgrades.MAGIC_DAMAGE));
+    }
+
     // ---- ALL list ----
 
     @Test
-    void allContainsSixTracks() {
-        assertEquals(6, Upgrades.ALL.size());
+    void allContainsSevenTracks() {
+        assertEquals(7, Upgrades.ALL.size());
     }
 
     @Test
@@ -226,6 +231,7 @@ assertEquals("Move Speed", t.label());
         assertTrue(Upgrades.ALL.contains(Upgrades.CRIT));
         assertTrue(Upgrades.ALL.contains(Upgrades.SPEED));
         assertTrue(Upgrades.ALL.contains(Upgrades.MANA));
+        assertTrue(Upgrades.ALL.contains(Upgrades.MAGIC_DAMAGE));
     }
 
     @Test

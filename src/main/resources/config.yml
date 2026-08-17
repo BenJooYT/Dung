@@ -2,6 +2,8 @@
 # Dungeon tuning
 floors: 8
 rooms-per-floor: 7
+# Custom room templates (created with /room editor)
+custom-rooms: true
 # Combat
 base-player-damage: 3
 base-fire-rate-ticks: 12

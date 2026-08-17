@@ -71,7 +71,7 @@ public class SimulatedPlayerFloorTest {
             int w = 12 + rng.nextInt(8);          // 12..19
             int h = 12 + rng.nextInt(8);
             int rooms = 18 + rng.nextInt(22);     // 18..39
-            Floor f = new FloorGenerator(rng, w, h, rooms).generate();
+            Floor f = new FloorGenerator(rng, w, h, rooms, 0).generate();
 
             int total = f.roomCount();
             // SECRET rooms are intentionally bomb-disconnected (no doors), so they are NOT
