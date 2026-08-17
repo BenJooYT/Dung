@@ -26,6 +26,8 @@ public final class ItemTags {
     public static final String SHIELD_MAX = "dung.shield_max";   // max shield capacity for mana shield
     public static final String STORED_HEALTH = "dung.storedhealth"; // stored health for Life Drain weapon
     public static final String MAGIC_DAMAGE = "dung.magic_damage"; // magic damage value (separate from melee)
+    public static final String AFFIXES = "dung.affixes";      // list of "affixId:value" applied to a gear item
+    public static final String UPGRADE_LEVEL = "dung.upgrade_level"; // int: how many times an item was upgraded
 
     private ItemTags() {}
 }

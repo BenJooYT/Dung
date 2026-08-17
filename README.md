@@ -378,9 +378,9 @@ typos into compile errors instead of silent save incompatibility. All tags live 
 - `markPersistent(s)` — stamps `dung.persistent` + a unique `dung.uuid` and prepends a ★ to the
   display name so persistent gear is visually distinct.
 - `persistize(s)` — converts a run item to a persistent copy delivered at **half durability**
-  (used by the Persist Master's successful attempts).
+  (used by the PRESERVE workstation).
 - `downgradeRarity(s)` — returns a copy one rarity tier lower with stats scaled by the rarity
-  multiplier and lore recolored (used by failed persist attempts; COMMON is unchanged).
+  multiplier and lore recolored (legacy helper; the deterministic PRESERVE workstation no longer uses it).
 - `setStoredHealth(s, n)` / `getStoredHealthMax(s)` — Life Drain stored-health pool, capped by
   rarity (COMMON=25 → MYTHIC=180).
 - Durability helpers: `initDurability`, `getDurability`/`setDurability`,
@@ -467,7 +467,7 @@ Lifecycle:
   rooms so multi-level templates connect correctly.
 - `enterRoom(n)` — marks visited, applies spawn-grace invuln, spawns enemies for un-cleared
   COMBAT/ELITE rooms (locks doors), spawns room pickups, opens the shop GUI on SHOP rooms,
-  spawns the Persist Master on UPGRADE rooms, and checks the boss on BOSS rooms.
+  places the five workstations on UPGRADE rooms, and checks the boss on BOSS rooms.
 - `onPlayerMoved(loc)` — room-crossing detection from movement.
 - `descend()` / `endRun()` / `onPlayerDeath(p)` / `resetPlayerToSpawn()` — see the
   [death model](#death--persistence-model).
@@ -494,10 +494,14 @@ Combat:
   invuln), **Mage — Arcane Nova** (25 mana, 6s cd: AoE 2x damage), **Ranger — Shadow Step**
   (15 mana, 5s cd: teleport behind nearest enemy + guaranteed crit). Triggered by sneak+drop (Q).
 - `openShop(p)` — opens the chest GUI shop for the player in a SHOP room.
-- `openPersist(p)` / `tryPersist(p, slot)` — opens the Persist Master GUI in an UPGRADE room;
-  spending 50 run coins + 200 persistent coins + 300 shards attempts to persist the gear in a
-  slot (40% success → queued for post-run delivery as persistent half-durability gear; 60% fail
-  → returned one rarity worse).
+- `openWorkstation(p, type)` — opens the unified workstation chest GUI for one of the five
+  workstations in an UPGRADE room (see [Workstations](#workstations)).
+- `tryUpgrade` / `previewReforge` / `tryReforge` / `tryPreserve` / `trySalvage` — server-side
+  operations applied after re-validating the item is still present, still eligible, and is the
+  exact item the player selected. UPGRADE raises the item's core stat by 10%/level (max 5) for
+  run coins + shards; REFORGE rerolls affixes for shards; PRESERVE deterministically queues the
+  item (40 run coins + 60 shards) for post-run delivery as persistent half-durability gear —
+  **persistent coins are never spent**; SALVAGE destroys the item for shards.
 - `tryUnlockRoom(p, loc)` — right-click an IRON_BLOCK barrier with a key item to unlock a
   LOCKED room (consumes 1 key, spawns pedestal loot).
 - `tryBombWall(p, loc)` — right-click a CRACKED_STONE_BRICKS wall with a bomb item to blast
@@ -553,7 +557,7 @@ sound + `CRIT` particles), and at 0, despawns + calls `GameManager.onBossDefeate
   [death model](#death--persistence-model)).
 - `onHeldItem` / `onArmor` / `onInteract` — recompute stats on gear change; block block-place;
   cast abilities on sneak+right-click; open the chest GUI shop on the emerald block / shopkeeper;
-  open the Persist GUI on the Persist Master villager; unlock locked doors with key item on
+  open a workstation GUI on the five workstation blocks; unlock locked doors with key item on
   IRON_BLOCK; bomb destructible walls with bomb item on CRACKED_STONE_BRICKS; claim pedestal
   loot on POLISHED_BLACKSTONE_SLAB (checked before armor-equip detection so holding an armor
   piece doesn't equip it when clicking a pedestal).
@@ -742,10 +746,13 @@ immediately and spent in `/upgrades`.
 - **Persistent gear durability** — on death each `dung.persistent` item loses 10% of max
   durability (min 1); a piece that breaks is removed from the inventory. Death now costs
   persistent gear, not just the run.
-- **Persist (UPGRADE) rooms** — every 5th floor has a Persist Master where you spend **50 run
-  coins + 200 persistent coins + 300 shards** to try persisting a run item past the run: **40%**
-  success queues it for post-run delivery as persistent half-durability gear; **60%** fail
-  downgrades the item one rarity and returns it. A successful persist is never lost to death.
+- **Workstation (UPGRADE) rooms** — every 5th floor has five physical workstations for
+  progression: **UPGRADE** raises an item's core stat by 10%/level (max 5) for run coins + shards;
+  **REFORGE** rerolls an item's procedural affixes for shards; **PRESERVE** deterministically
+  queues a run item for post-run delivery as persistent half-durability gear (40 run coins + 60
+  shards — persistent coins are never spent); **SALVAGE** destroys an item for shards (two-click
+  confirm); **STORAGE** is a read-only in-run view of your persistent items (withdraw impossible).
+  A successful preserve is never lost to death.
 - **Tab throttle** — `TabUI.refresh` runs every 10 ticks; only the HUD action bar keeps a
   per-tick cadence.
 - **Return to pre-run location** — `/dung leave` and mid-run death teleport you back to where

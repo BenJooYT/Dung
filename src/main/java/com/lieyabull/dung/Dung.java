@@ -12,7 +12,7 @@ import com.lieyabull.dung.room.RoomEditor;
 import com.lieyabull.dung.items.GearFactory;
 import com.lieyabull.dung.room.RoomTutorial;
 import com.lieyabull.dung.ui.ShopUI;
-import com.lieyabull.dung.ui.PersistUI;
+import com.lieyabull.dung.ui.WorkstationUI;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
@@ -26,7 +26,7 @@ public final class Dung extends JavaPlugin {
     private GameManager game;
     private MetaManager meta;
     private ShopUI shopUI;
-    private PersistUI persistUI;
+    private WorkstationUI workstationUI;
     private PlotManager plotManager;
     private RoomEditor roomEditor;
     private RoomTutorial roomTutorial;
@@ -44,7 +44,7 @@ public final class Dung extends JavaPlugin {
         meta.load();
         game = new GameManager(this);
         shopUI = new ShopUI(this);
-        persistUI = new PersistUI(this);
+        workstationUI = new WorkstationUI(this);
         plotManager = new PlotManager(this);
         roomEditor = new RoomEditor(this);
         roomTutorial = new RoomTutorial(this, roomEditor);
@@ -52,7 +52,7 @@ public final class Dung extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
         Bukkit.getPluginManager().registerEvents(new PlotListener(this), this);
         Bukkit.getPluginManager().registerEvents(shopUI, this);
-        Bukkit.getPluginManager().registerEvents(persistUI, this);
+        Bukkit.getPluginManager().registerEvents(workstationUI, this);
         getCommand("dung").setExecutor(new DungCommand(this));
         getCommand("dungeon").setExecutor(new DungCommand(this));
         getCommand("shop").setExecutor(new DungCommand(this));
@@ -107,8 +107,8 @@ public final class Dung extends JavaPlugin {
         return shopUI;
     }
 
-    public PersistUI persistUI() {
-        return persistUI;
+    public WorkstationUI workstationUI() {
+        return workstationUI;
     }
 
     public PlotManager plotManager() {

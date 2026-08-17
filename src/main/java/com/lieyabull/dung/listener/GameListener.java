@@ -5,6 +5,7 @@ import com.lieyabull.dung.game.DungeonInstance;
 import com.lieyabull.dung.game.GameManager;
 import com.lieyabull.dung.game.PlayerState;
 import com.lieyabull.dung.game.Run;
+import com.lieyabull.dung.game.WorkstationType;
 import com.lieyabull.dung.pickup.Pickup;
 import com.lieyabull.dung.items.GearFactory;
 import com.lieyabull.dung.items.ItemTags;
@@ -445,6 +446,15 @@ public final class GameListener implements Listener {
                 di.recomputeStats();
             }
         }
+        // workstation: right-click a registered workstation block in an UPGRADE room
+        if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getClickedBlock() != null) {
+            WorkstationType wt = di.workstationAt(e.getClickedBlock().getLocation());
+            if (wt != null) {
+                e.setCancelled(true);
+                di.openWorkstation(p, wt);
+                return;
+            }
+        }
         // locked room: right-click an IRON_BLOCK barrier with a key item
         if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getClickedBlock() != null
                 && e.getClickedBlock().getType() == Material.IRON_BLOCK) {
@@ -514,10 +524,6 @@ public final class GameListener implements Listener {
                 && v.getScoreboardTags().contains("dung.shopkeeper")) {
             e.setCancelled(true);
             di.openShop(p);
-        } else if (e.getRightClicked() instanceof org.bukkit.entity.Villager v2
-                && v2.getScoreboardTags().contains("dung.persistmaster")) {
-            e.setCancelled(true);
-            di.openPersist(p);
         }
     }
 

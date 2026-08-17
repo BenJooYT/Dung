@@ -19,9 +19,11 @@ import com.lieyabull.dung.room.RoomTemplateRotator;
 import com.lieyabull.dung.room.SpawnFloor;
 import com.lieyabull.dung.entity.Enemy;
 import com.lieyabull.dung.entity.MobType;
+import com.lieyabull.dung.items.Affix;
 import com.lieyabull.dung.items.GearFactory;
 import com.lieyabull.dung.items.ItemPool;
 import com.lieyabull.dung.items.ItemTags;
+import com.lieyabull.dung.items.Rarity;
 import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.party.Party;
 import com.lieyabull.dung.ui.HUD;
@@ -96,8 +98,11 @@ public final class DungeonInstance {
     // Shopkeepers (per SHOP room) + which shop rooms have been spawned this floor
     private final List<org.bukkit.entity.Villager> shopkeepers = new ArrayList<>();
     private final Set<Long> shopSpawned = new HashSet<>();
-    // Persist Masters (per UPGRADE room) + which upgrade rooms have been spawned this floor
-    private final List<org.bukkit.entity.Villager> persistMasters = new ArrayList<>();
+    // Workstations (per UPGRADE room) + which upgrade rooms have been spawned this floor
+    // A workstation is a physical block location -> its registered function type. Name-tag armor
+    // stands float above each so the function reads at a glance without knowing the block.
+    private final Map<Location, WorkstationType> workstations = new HashMap<>();
+    private final List<org.bukkit.entity.ArmorStand> workstationTags = new ArrayList<>();
     private final Set<Long> persistSpawned = new HashSet<>();
     // Items "tried to persist" successfully during the run — delivered as persistent gear after the run ends
     private final Map<UUID, List<ItemStack>> pendingPersists = new HashMap<>();
@@ -918,29 +923,59 @@ public final class DungeonInstance {
         shopSpawned.clear();
     }
 
-    /** Make an UPGRADE room read as a persist station: spawn a named, no-AI Villager "Persist
-     *  Master" (once per room per floor) that the player right-clicks to try persisting gear. */
+    /** Make an UPGRADE room read as the unified progression workstation room: place the five physical
+     *  workstation blocks around the room center, each with a floating name tag above it. The block
+     *  material is decorative only — right-clicking routes by the registered {@link WorkstationType}.
+     *  Spawned once per room per floor; cleaned up on floor change / teardown. */
     private void setupUpgradeRoom(Floor.RoomNode n) {
         long k = run.floor.key(n.x, n.z);
         if (!persistSpawned.add(k)) return;
         Location c = RoomGen.center(world, n, BASE_Y, spacing, offsetX, offsetZ);
-        Villager v = world.spawn(c.clone().add(0, 0, 2), Villager.class);
-        v.setCustomName("§dPersist Master");
-        v.setCustomNameVisible(true);
-        v.setAI(false);
-        v.setSilent(true);
-        v.setInvulnerable(true);
-        v.setCollidable(false);
-        v.addScoreboardTag("dung.persistmaster");
-        persistMasters.add(v);
+        WorkstationType[] types = WorkstationType.values();
+        // Spread the five workstations in a row across the room (negative Z to positive Z).
+        double spread = types.length - 1;
+        for (int i = 0; i < types.length; i++) {
+            WorkstationType wt = types[i];
+            double t = spread == 0 ? 0 : ((double) i - spread / 2.0);
+            // Place the workstation block on the floor (BASE_Y), offset toward the back wall so the
+            // row doesn't block the spawn point or the doorway lanes. center() returns feet level (BASE_Y+1).
+            Location blockLoc = new Location(world,
+                    c.getBlockX() + t, BASE_Y, c.getBlockZ() - 2);
+            placeWorkstation(blockLoc, wt);
+        }
     }
 
-    /** Despawn all persist masters and forget this floor's spawned upgrade rooms. */
-    private void clearPersistMasters() {
-        for (Villager v : persistMasters) {
-            if (v.isValid()) v.remove();
+    /** Place a single workstation block + its floating name tag, and register it for right-click. */
+    private void placeWorkstation(Location blockLoc, WorkstationType wt) {
+        world.getBlockAt(blockLoc).setType(wt.block);
+        workstations.put(blockLoc.getBlock().getLocation(), wt);
+        // Floating name tag: a small, invisible, non-interactive armor stand hovering above the block.
+        org.bukkit.entity.ArmorStand stand = world.spawn(
+                blockLoc.clone().add(0.5, 1.6, 0.5), org.bukkit.entity.ArmorStand.class);
+        stand.setCustomName(wt.color + wt.label);
+        stand.setCustomNameVisible(true);
+        stand.setVisible(false);
+        stand.setMarker(true);
+        stand.setInvulnerable(true);
+        stand.setGravity(false);
+        stand.setAI(false);
+        stand.setCollidable(false);
+        stand.addScoreboardTag(wt.marker);
+        workstationTags.add(stand);
+    }
+
+    /** The workstation registered at a block location, or null if none. */
+    public WorkstationType workstationAt(Location blockLoc) {
+        return workstations.get(blockLoc.getBlock().getLocation());
+    }
+
+    /** Despawn all workstation name tags and forget this floor's spawned upgrade rooms. */
+    private void clearWorkstations() {
+        for (org.bukkit.entity.ArmorStand s : workstationTags) {
+            if (s.isValid()) s.remove();
         }
-        persistMasters.clear();
+        workstationTags.clear();
+        workstations.clear();
         persistSpawned.clear();
     }
 
@@ -1757,49 +1792,45 @@ public final class DungeonInstance {
         plugin.shopUI().openRunShop(p, this);
     }
 
-    /** Open the Persist Master GUI (only valid inside an UPGRADE room). */
-    public void openPersist(Player p) {
+    /** Open a workstation GUI (only valid inside an UPGRADE room, in the same run). */
+    public void openWorkstation(Player p, WorkstationType type) {
         if (!running) return;
         Floor.RoomNode room = playerRoom.get(p.getUniqueId());
         if (room == null || room.type != RoomType.UPGRADE) return;
         if (run.playerStateOf(p.getUniqueId()) == null) return;
-        plugin.persistUI().openPersist(p, this);
+        plugin.workstationUI().openWorkstation(p, this, type);
     }
 
-    /** Inventory slots holding persistable run gear (weapon/armor/shield run items that are not
-     *  persistent and not starter-kit gear). */
-    public List<Integer> persistableSlots(Player p) {
+    /** Inventory slots holding workstation-eligible run gear (weapon/armor/shield run items that are
+     *  not persistent and not starter-kit gear). Used by UPGRADE / REFORGE / PRESERVE / SALVAGE. */
+    public List<Integer> workstationSlots(Player p) {
         List<Integer> out = new ArrayList<>();
         if (!running) return out;
         PlayerInventory inv = p.getInventory();
         for (int slot = 0; slot < inv.getSize(); slot++) {
-            if (isPersistable(inv.getItem(slot))) out.add(slot);
+            if (WorkstationRules.isWorkstationGear(inv.getItem(slot))) out.add(slot);
         }
         return out;
     }
 
-    private static boolean isPersistable(ItemStack s) {
-        if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return false;
-        var pdc = s.getItemMeta().getPersistentDataContainer();
-        boolean isGear = pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.GEAR),
-                org.bukkit.persistence.PersistentDataType.STRING);
-        if (!isGear) return false;
-        boolean persistent = pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.PERSISTENT),
-                org.bukkit.persistence.PersistentDataType.STRING);
-        if (persistent) return false;
-        boolean starter = pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.STARTER),
-                org.bukkit.persistence.PersistentDataType.STRING);
-        if (starter) return false;
-        String kind = pdc.get(org.bukkit.NamespacedKey.minecraft(ItemTags.KIND),
-                org.bukkit.persistence.PersistentDataType.STRING);
-        return "weapon".equals(kind) || "armor".equals(kind) || "shield".equals(kind);
+    /** Inventory slots (incl. armor) holding persistent items, for the read-only STORAGE view.
+     *  getSize() == 41 covers storage (0-35), armor (36-39) and offhand (40). */
+    public List<Integer> persistentSlots(Player p) {
+        List<Integer> out = new ArrayList<>();
+        if (!running) return out;
+        PlayerInventory inv = p.getInventory();
+        for (int slot = 0; slot < inv.getSize(); slot++) {
+            if (isPersistentGear(inv.getItem(slot))) out.add(slot);
+        }
+        return out;
     }
 
-    /** Attempt to persist the run gear in the given inventory slot via the Persist Master.
-     *  Costs 50 run coins + 200 persistent coins + 300 shards. 40% success → the item is queued
-     *  for delivery after the run as persistent half-durability gear. 60% fail → the item is
-     *  returned to the same slot, one rarity worse (stats scaled down). */
-    public boolean tryPersist(Player p, int slot) {
+    /**
+     * UPGRADE: raise a workstation-eligible item's upgrade level, boosting its core stat. Costs run
+     * coins + shards (scaled by current level). Atomic: validates the item is still in the slot,
+     * charges the currencies, then applies the upgrade in the same inventory write.
+     */
+    public boolean tryUpgrade(Player p, int slot) {
         if (!running) return false;
         PlayerState st = run.playerStateOf(p.getUniqueId());
         if (st == null) return false;
@@ -1807,44 +1838,141 @@ public final class DungeonInstance {
         MetaManager.MetaProfile prof = plugin.meta().profile(pid);
 
         ItemStack item = p.getInventory().getItem(slot);
-        if (item == null || !isPersistable(item)) {
-            p.sendMessage("§cThat item can't be persisted.");
+        if (item == null || !WorkstationRules.isWorkstationGear(item)) {
+            p.sendMessage("§cThat item can't be upgraded.");
             return false;
         }
-        final int COIN_COST = 50, PC_COST = 200, SHARD_COST = 300;
-        if (st.coins < COIN_COST) {
-            p.sendMessage("§cYou need §e" + COIN_COST + " run coins§c (have §e" + st.coins + "§c).");
+        int level = GearFactory.getUpgradeLevel(item);
+        if (!WorkstationRules.canUpgrade(level)) {
+            p.sendMessage("§5This item is already at max upgrade level.");
             return false;
         }
-        if (prof.persistentCoins < PC_COST) {
-            p.sendMessage("§6You need " + PC_COST + " persistent coins (have " + prof.persistentCoins + ").");
+        int coinCost = WorkstationRules.upgradeCoinCost(level);
+        int shardCost = WorkstationRules.upgradeShardCost(level);
+        if (st.coins < coinCost) {
+            p.sendMessage("§cYou need §e" + coinCost + " run coins§c (have §e" + st.coins + "§c).");
             return false;
         }
-        if (prof.shards < SHARD_COST) {
-            p.sendMessage("§3You need " + SHARD_COST + " shards (have " + prof.shards + ").");
+        if (prof.shards < shardCost) {
+            p.sendMessage("§3You need " + shardCost + " shards (have " + prof.shards + ").");
             return false;
         }
+        st.coins -= coinCost;
+        prof.shards -= shardCost;
+        plugin.meta().save();
+        GearFactory.setUpgradeLevel(item, level + 1);
+        recomputeStats(); // the equipped item's tags changed in place — refresh live combat stats
+        world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_SMITHING_TABLE_USE, 1.0f, 1.2f);
+        p.sendMessage("§aUpgraded to §5Lv " + (level + 1) + "§a! §7(-§e" + coinCost + " coins§7, §3-" + shardCost + " shards§7)");
+        return true;
+    }
 
-        st.coins -= COIN_COST;
-        prof.persistentCoins -= PC_COST;
-        prof.shards -= SHARD_COST;
+    /** REFORGE: reroll an item's affix set for shards. Keeps base stats, rarity, ability, and upgrade
+     *  level; only the affixes change. Returns a preview of the new affixes without applying them. */
+    public List<Affix.AffixRoll> previewReforge(ItemStack item) {
+        return Affix.roll(GearFactory.getRarity(item), kindOf(item), new java.util.Random());
+    }
+
+    public boolean tryReforge(Player p, int slot) {
+        if (!running) return false;
+        PlayerState st = run.playerStateOf(p.getUniqueId());
+        if (st == null) return false;
+        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+
+        ItemStack item = p.getInventory().getItem(slot);
+        if (item == null || !WorkstationRules.isWorkstationGear(item)) {
+            p.sendMessage("§cThat item can't be reforged.");
+            return false;
+        }
+        if (prof.shards < WorkstationRules.REFORGE_SHARD_COST) {
+            p.sendMessage("§3You need " + WorkstationRules.REFORGE_SHARD_COST + " shards (have " + prof.shards + ").");
+            return false;
+        }
+        prof.shards -= WorkstationRules.REFORGE_SHARD_COST;
+        plugin.meta().save();
+        List<Affix.AffixRoll> rolled = Affix.roll(GearFactory.getRarity(item), kindOf(item), new java.util.Random());
+        GearFactory.reforge(item, rolled, GearFactory.getUpgradeLevel(item));
+        recomputeStats(); // equipped item's affixes changed in place — refresh live combat stats
+        world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_GRINDSTONE_USE, 1.0f, 1.0f);
+        p.sendMessage("§bReforged! §7New affixes: " + affixSummary(rolled) + " §7(-§3"
+                + WorkstationRules.REFORGE_SHARD_COST + " shards§7)");
+        return true;
+    }
+
+    private static String kindOf(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return null;
+        return s.getItemMeta().getPersistentDataContainer().get(
+                org.bukkit.NamespacedKey.minecraft(ItemTags.KIND),
+                org.bukkit.persistence.PersistentDataType.STRING);
+    }
+
+    private static String affixSummary(List<Affix.AffixRoll> rolls) {
+        if (rolls.isEmpty()) return "§8(none)";
+        StringBuilder sb = new StringBuilder();
+        for (Affix.AffixRoll r : rolls) {
+            if (sb.length() > 0) sb.append("§7, ");
+            sb.append(r.affix().stat.color).append("+").append(r.value());
+        }
+        return sb.toString();
+    }
+
+    /** PRESERVE: make a run item persistent. Deterministic — pay run coins + shards and the item is
+     *  queued for delivery after the run as persistent half-durability gear (via the existing
+     *  pendingPersists delivery path). Persistent coins are NOT spent by this room. */
+    public boolean tryPreserve(Player p, int slot) {
+        if (!running) return false;
+        PlayerState st = run.playerStateOf(p.getUniqueId());
+        if (st == null) return false;
+        UUID pid = p.getUniqueId();
+        MetaManager.MetaProfile prof = plugin.meta().profile(pid);
+
+        ItemStack item = p.getInventory().getItem(slot);
+        if (item == null || !WorkstationRules.isWorkstationGear(item)) {
+            p.sendMessage("§cThat item can't be preserved.");
+            return false;
+        }
+        if (st.coins < WorkstationRules.PRESERVE_COIN_COST) {
+            p.sendMessage("§cYou need §e" + WorkstationRules.PRESERVE_COIN_COST + " run coins§c (have §e" + st.coins + "§c).");
+            return false;
+        }
+        if (prof.shards < WorkstationRules.PRESERVE_SHARD_COST) {
+            p.sendMessage("§3You need " + WorkstationRules.PRESERVE_SHARD_COST + " shards (have " + prof.shards + ").");
+            return false;
+        }
+        st.coins -= WorkstationRules.PRESERVE_COIN_COST;
+        prof.shards -= WorkstationRules.PRESERVE_SHARD_COST;
         plugin.meta().save();
 
-        Location loc = p.getLocation();
-        if (Math.random() < 0.4) {
-            // Success — queue persistent half-durability gear for delivery after the run
-            p.getInventory().setItem(slot, null);
-            pendingPersists.computeIfAbsent(pid, k -> new ArrayList<>()).add(GearFactory.persistize(item));
-            world.playSound(loc, org.bukkit.Sound.BLOCK_BEACON_ACTIVATE, 1.0f, 1.5f);
-            p.sendMessage("§d§l✦ SUCCESS! §dYour item will persist past this run (at half durability).");
-            p.sendMessage("§7  You'll receive it when the run ends.");
-        } else {
-            // Fail — downgrade one rarity and return it
-            p.getInventory().setItem(slot, GearFactory.downgradeRarity(item));
-            world.playSound(loc, org.bukkit.Sound.ENTITY_VILLAGER_NO, 1.0f, 1.0f);
-            p.sendMessage("§cPersist failed! §7Your item was returned, one rarity worse.");
-        }
+        p.getInventory().setItem(slot, null);
+        pendingPersists.computeIfAbsent(pid, k -> new ArrayList<>()).add(GearFactory.persistize(item));
+        recomputeStats(); // item removed from (possibly) equipped slot — refresh live combat stats
+        world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_BEACON_ACTIVATE, 1.0f, 1.5f);
+        p.sendMessage("§d§l✦ PRESERVED! §dYour item will persist past this run (at half durability).");
+        p.sendMessage("§7  You'll receive it when the run ends.");
         return true;
+    }
+
+    /** SALVAGE: destroy a workstation-eligible item for shards. Costs nothing. Caller is responsible
+     *  for a confirmation step. Returns the shards granted, or 0 if rejected. */
+    public int trySalvage(Player p, int slot) {
+        if (!running) return 0;
+        PlayerState st = run.playerStateOf(p.getUniqueId());
+        if (st == null) return 0;
+        ItemStack item = p.getInventory().getItem(slot);
+        if (item == null || !WorkstationRules.isWorkstationGear(item)) {
+            p.sendMessage("§cThat item can't be salvaged.");
+            return 0;
+        }
+        Rarity r = GearFactory.getRarity(item);
+        int value = WorkstationRules.salvageValue(r, WorkstationRules.primaryStat(item));
+        p.getInventory().setItem(slot, null);
+        recomputeStats(); // item removed from (possibly) equipped slot — refresh live combat stats
+        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+        prof.shards += value;
+        plugin.meta().save();
+        world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f);
+        p.sendMessage("§cSalvaged the item §b→ +" + value + " shards§7 (total §b" + prof.shards + "§7).");
+        return value;
     }
 
     private void onRoomClear(Floor.RoomNode n, long k) {
@@ -2883,7 +3011,7 @@ public final class DungeonInstance {
         spawnedRooms.clear();
         playerRoom.clear();
         clearShopkeepers();
-        clearPersistMasters();
+        clearWorkstations();
         if (boss != null) { boss.despawn(); boss = null; }
         bossRoom = null;
         clearPedestals();

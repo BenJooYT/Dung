@@ -372,6 +372,43 @@ tab = detailed build/run/progression).
 - [x] **`GearFactory` helpers:** `persistize` (mark persistent + init durability at half) and
       `downgradeRarity` (scale stat tags + rewrite lore to the next-lowest rarity).
 
+### Iteration 28 — Unified dungeon progression workstations
+- [x] **Five physical workstations replace the Persist Master NPC.** An UPGRADE room now spawns five
+      workstation blocks (Smithing Table = UPGRADE, Grindstone = REFORGE, Anvil = PRESERVE, Barrel =
+      SALVAGE, Ender Chest = STORAGE) on the floor with floating name tags, instead of a villager. The
+      registered function determines behavior, not the block. Room guaranteed every 5 floors, unchanged.
+- [x] **Affix (procedural stat modifier) system.** New `items/Affix` enum: VICIOUS (+damage), ARCANE
+      (+magic damage), STURDY (+defense), VITAL (+health), AEGIS (+shield capacity). Each applies to a
+      kind mask (weapon/armor/shield), rolls a value scaled by rarity (`countFor`: COMMON 0 → MYTHIC 3)
+      and is serialized as `"id:value"` into the `dung.affixes` item tag. Bonuses fold into
+      `PlayerState.recomputeStats` from the weapon + all armor slots.
+- [x] **Item upgrades.** UPGRADE raises an item's `dung.upgrade_level` (max 5), boosting its core stat
+      (weapon → damage/magic damage, armor → defense, shield → shield capacity) by 10% per level, folded
+      into the stored stat tag. Cost scales with current level (base 20 + 5/level run coins, base 10 +
+      5/level shards).
+- [x] **REFORGE** rerolls an item's affixes for 15 shards, keeping base stats, rarity, ability, and
+      upgrade level (with a preview before committing).
+- [x] **PRESERVE** is now **deterministic** (no 40/60 gamble, no rarity downgrade): pays 40 run coins +
+      60 shards and queues the item at half durability for post-run delivery via the existing
+      `pendingPersists` path. **Persistent coins are never spent by this room.**
+- [x] **SALVAGE** destroys the selected item for shards, `max(1, (rarityOrdinal+1)*2 + stat/10)`, gated
+      behind a two-click confirm.
+- [x] **PERSISTENT STORAGE** is a **read-only** in-run view of the player's persistent items (storage,
+      armor and offhand slots). Withdraw is impossible inside a run via any path.
+- [x] **Reliability:** all costs and validity checks live in pure, unit-tested `WorkstationRules`
+      (`isWorkstationGear`, `primaryStat`, `salvageValue`, upgrade costs); every operation is applied
+      server-side after re-validating the item is still present, still eligible, and the exact item the
+      player selected (identity fingerprint); operations are guarded against double-click re-apply;
+      `recomputeStats` runs after UPGRADE/REFORGE/SALVAGE/PRESERVE so equipped-item changes take effect
+      immediately; live combat stats refresh without waiting for a re-equip. Keys/bombs (run items)
+      are never workstation-eligible.
+- [x] **Tests:** `AffixTest` (kind masks, pools, countFor, value scaling, distinct rolls, serialization)
+      and `WorkstationRulesTest` (upgrade/reforge/preserve/salvage costs, salvage scaling, upgrade
+      bounds, affix-id parsing) — all pure JUnit, no Bukkit mocks.
+- [x] **UI:** single unified `WorkstationUI` chest GUI for all five stations — item list → detail panel
+      with exact costs and result preview → CONFIRM (two-click for destructive ops) → BACK. Removed the
+      old `PersistUI` and its villager wiring in `GameListener`/`Dung`.
+
 ### Remaining candidate work
 - [ ] **Status effects** — Poison (DoT), Slow, Weakness, Stun on both players and enemies. Weapons/
       abilities could apply them; enemies could apply them on hit. Adds strategic depth to combat.

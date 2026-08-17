@@ -21,6 +21,8 @@ import java.util.UUID;
  * Every crafted item is tagged so listeners can identify Dung gear vs normal loot.
  */
 public final class GearFactory {
+    private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.legacySection();
+
     private GearFactory() {}
 
     /** weapon: (id, name, material, rarity, minDmg, maxDmg, ability, abilityCost) */
@@ -482,6 +484,171 @@ public final class GearFactory {
         } catch (NumberFormatException e) {
             return 0;
         }
+    }
+
+    // ==================== Affix + Upgrade helpers ====================
+
+    /** Read the affix list from an item's PDC (stored as a {@code ;}-joined {@code "id:value"} string). */
+    public static List<Affix.AffixRoll> getAffixes(ItemStack s) {
+        List<Affix.AffixRoll> out = new ArrayList<>();
+        if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return out;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        String raw = pdc.get(org.bukkit.NamespacedKey.minecraft(ItemTags.AFFIXES),
+                org.bukkit.persistence.PersistentDataType.STRING);
+        if (raw == null || raw.isEmpty()) return out;
+        for (String entry : raw.split(";")) {
+            if (entry.isEmpty()) continue;
+            int i = entry.indexOf(':');
+            String id = i < 0 ? entry : entry.substring(0, i);
+            int value = 0;
+            try {
+                value = Integer.parseInt(i < 0 ? "" : entry.substring(i + 1));
+            } catch (NumberFormatException ignored) {
+            }
+            Affix affix = byId(id);
+            if (affix != null) out.add(new Affix.AffixRoll(affix, value));
+        }
+        return out;
+    }
+
+    private static String joinAffixes(List<Affix.AffixRoll> affixes) {
+        StringBuilder sb = new StringBuilder();
+        for (Affix.AffixRoll roll : affixes) {
+            if (sb.length() > 0) sb.append(';');
+            sb.append(Affix.serialize(roll));
+        }
+        return sb.toString();
+    }
+
+    /** Write a fresh affix set onto the item and update its lore. */
+    public static void applyAffixes(ItemStack s, List<Affix.AffixRoll> affixes) {
+        reforge(s, affixes, getUpgradeLevel(s));
+    }
+
+    /** Current upgrade level of an item (0 if none). */
+    public static int getUpgradeLevel(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return 0;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        Integer v = pdc.get(org.bukkit.NamespacedKey.minecraft(ItemTags.UPGRADE_LEVEL),
+                org.bukkit.persistence.PersistentDataType.INTEGER);
+        return v == null ? 0 : v;
+    }
+
+    /** The item's core stat tag (the one UPGRADE boosts): MAGIC_DAMAGE/DAMAGE for weapons, DEFENSE for
+     *  armor, SHIELD_MAX for shields. Returns the tag name, or null if the item has no core stat. */
+    public static String coreStatTag(ItemStack s) {
+        String kind = kindOf(s);
+        if ("armor".equals(kind)) return ItemTags.DEFENSE;
+        if ("shield".equals(kind)) return ItemTags.SHIELD_MAX;
+        if ("weapon".equals(kind)) {
+            return intTagOf(s, ItemTags.MAGIC_DAMAGE) > 0 ? ItemTags.MAGIC_DAMAGE : ItemTags.DAMAGE;
+        }
+        return null;
+    }
+
+    /**
+     * Raise an item to the given upgrade level, boosting its core stat by the workstation rule's
+     * per-level multiplier and rewriting lore. The stat boost is folded into the stored stat tag so
+     * recomputeStats and the lore always agree (no separate multiplier to keep in sync).
+     */
+    public static void setUpgradeLevel(ItemStack s, int newLevel) {
+        int oldLevel = getUpgradeLevel(s);
+        String core = coreStatTag(s);
+        if (core != null && newLevel > oldLevel) {
+            double ratio = com.lieyabull.dung.game.WorkstationRules.upgradeStatMult(newLevel)
+                    / com.lieyabull.dung.game.WorkstationRules.upgradeStatMult(oldLevel);
+            int current = intTagOf(s, core);
+            int boosted = (int) Math.round(current * ratio);
+            s.editMeta(meta -> meta.getPersistentDataContainer().set(
+                    org.bukkit.NamespacedKey.minecraft(core),
+                    org.bukkit.persistence.PersistentDataType.INTEGER, Math.max(1, boosted)));
+        }
+        s.editMeta(meta -> meta.getPersistentDataContainer().set(
+                org.bukkit.NamespacedKey.minecraft(ItemTags.UPGRADE_LEVEL),
+                org.bukkit.persistence.PersistentDataType.INTEGER, newLevel));
+        rebuildLoreWithAffixesAndUpgrade(s);
+    }
+
+    /** Rewrite an item's lore to reflect its current affixes and upgrade level. Re-derives stat lines
+     *  from PDC so the shown numbers stay in sync with what recomputeStats actually applies. */
+    private static void rebuildLoreWithAffixesAndUpgrade(ItemStack s) {
+        if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return;
+        String kind = kindOf(s);
+        int dmg = intTagOf(s, ItemTags.DAMAGE);
+        int magic = intTagOf(s, ItemTags.MAGIC_DAMAGE);
+        int def = intTagOf(s, ItemTags.DEFENSE);
+        int health = intTagOf(s, ItemTags.HEALTH);
+        int shieldMax = intTagOf(s, ItemTags.SHIELD_MAX);
+        int upLevel = getUpgradeLevel(s);
+        boolean magicWeapon = magic > 0 && "weapon".equals(kind);
+        List<Affix.AffixRoll> affixes = getAffixes(s);
+
+        List<Component> lore = new ArrayList<>();
+        if (magicWeapon) {
+            lore.add(LEGACY.deserialize("§7Magic Damage: §d" + magic));
+        } else if (dmg > 0) {
+            lore.add(LEGACY.deserialize("§7Damage: §c" + dmg));
+        }
+        if (def > 0) lore.add(LEGACY.deserialize("§7Defense: §a" + def));
+        if (health > 0) lore.add(LEGACY.deserialize("§7Health: §a+" + health));
+        if (shieldMax > 0) lore.add(LEGACY.deserialize("§7Shield Capacity: §b" + shieldMax));
+        if (magic > 0 && !magicWeapon) lore.add(LEGACY.deserialize("§7Magic Damage: §d" + magic));
+        for (Affix.AffixRoll roll : affixes) {
+            lore.add(LEGACY.deserialize("§8" + roll.affix().label + " " + roll.affix().stat.color + "+" + roll.value()));
+        }
+        if (upLevel > 0) lore.add(LEGACY.deserialize("§5✦ §5Upgrade §d" + upLevel));
+        // ability line + rarity line if the original had them
+        String ability = strTagOf(s, ItemTags.ABILITY);
+        if (ability != null && !ability.isEmpty()) {
+            Integer cost = intTagOf(s, ItemTags.COST);
+            lore.add(LEGACY.deserialize("§7Ability: §6" + ability + " §8(§b" + (cost == null ? 0 : cost) + " mana§8)"));
+            lore.add(LEGACY.deserialize("§8How: §7Sneak + Right-Click"));
+            String how = usage(ability);
+            if (how != null) lore.add(LEGACY.deserialize("§8     " + how));
+        }
+        Rarity r = getRarity(s);
+        if (r != null) {
+            lore.add(LEGACY.deserialize(""));
+            lore.add(LEGACY.deserialize(r.legacy + r.name()));
+        }
+        s.editMeta(meta -> meta.lore(lore));
+    }
+
+    /** Apply the given affix set and current upgrade level to an item, rewriting lore. */
+    public static void reforge(ItemStack s, java.util.List<Affix.AffixRoll> newAffixes, int newUpgradeLevel) {
+        String joined = joinAffixes(newAffixes);
+        s.editMeta(meta -> {
+            var pdc = meta.getPersistentDataContainer();
+            pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.AFFIXES),
+                    org.bukkit.persistence.PersistentDataType.STRING, joined);
+            pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.UPGRADE_LEVEL),
+                    org.bukkit.persistence.PersistentDataType.INTEGER, newUpgradeLevel);
+        });
+        rebuildLoreWithAffixesAndUpgrade(s);
+    }
+
+    private static Affix byId(String id) {
+        for (Affix a : Affix.values()) if (a.id.equals(id)) return a;
+        return null;
+    }
+
+    private static String kindOf(ItemStack s) {
+        return strTagOf(s, ItemTags.KIND);
+    }
+
+    private static int intTagOf(ItemStack s, String tag) {
+        if (s == null || s.getItemMeta() == null) return 0;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        Integer v = pdc.get(org.bukkit.NamespacedKey.minecraft(tag),
+                org.bukkit.persistence.PersistentDataType.INTEGER);
+        return v == null ? 0 : v;
+    }
+
+    private static String strTagOf(ItemStack s, String tag) {
+        if (s == null || s.getItemMeta() == null) return null;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        return pdc.get(org.bukkit.NamespacedKey.minecraft(tag),
+                org.bukkit.persistence.PersistentDataType.STRING);
     }
 
     /** First-run kit: a Frayed Blade + a full Cloth set, so a new player can fight immediately.

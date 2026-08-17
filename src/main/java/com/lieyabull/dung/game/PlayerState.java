@@ -1,5 +1,7 @@
 package com.lieyabull.dung.game;
 
+import com.lieyabull.dung.items.Affix;
+import com.lieyabull.dung.items.GearFactory;
 import com.lieyabull.dung.items.ItemTags;
 import com.lieyabull.dung.items.Rarity;
 import org.bukkit.Material;
@@ -68,6 +70,8 @@ public final class PlayerState {
     public double shield = 0;        // current shield charge
     public double shieldMax = 0;     // max shield capacity (from held item)
     public boolean shieldActive = false; // true when sneaking with mana shield
+    /** Sum of health-affix bonuses pending from equipped gear; folded into maxHearts in recomputeStats. */
+    private int pendingHealthAffixes = 0;
 
     public PlayerState(Player p) {
         this.player = p;
@@ -107,6 +111,8 @@ public final class PlayerState {
         Integer wmagic = mainhandIsWeapon ? intTag(weapon, ItemTags.MAGIC_DAMAGE) : null;
         if (wmagic != null) magicDamage = wmagic;
         magicWeapon = mainhandIsWeapon && wmagic != null;
+        // Affix bonuses from the held weapon (procedural affixes boost stats on top of the base tags)
+        applyAffixBonuses(weapon, mainhandIsWeapon);
         // armor defense from 4 armor slots; rarity pushes crit
         for (ItemStack s : inv.getArmorContents()) {
             Integer def = intTag(s, ItemTags.DEFENSE);
@@ -115,7 +121,10 @@ public final class PlayerState {
             if (r != null) critChance += 0.01 * r.ordinal();
             Integer h = intTag(s, ItemTags.HEALTH);
             if (h != null) healthBonus += h;
+            applyAffixBonuses(s, true);
         }
+        healthBonus += pendingHealthAffixes;
+        pendingHealthAffixes = 0;
         applyClassPassives();
         applyUpgrades();
         // Clamp current mana to the final maxMana (after upgrades) so switching weapons
@@ -151,6 +160,22 @@ public final class PlayerState {
         if (spd > 0) speedMult += spd * 0.03;
         int manaUp = upgrades.getOrDefault("mana", 0);
         if (manaUp > 0) maxMana += manaUp * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.MANA);
+    }
+
+    /** Apply affix stat bonuses from an equipped item onto the live combat stats. Affixes add flat
+     *  values on top of the base stat tags. Only applied for equipped gear (weapon in hand or a worn
+     *  armor slot). Health affixes accumulate into {@link #pendingHealthAffixes}. */
+    private void applyAffixBonuses(ItemStack s, boolean equipped) {
+        if (!equipped || s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return;
+        for (Affix.AffixRoll roll : GearFactory.getAffixes(s)) {
+            switch (roll.affix().stat) {
+                case DAMAGE -> damage += roll.value();
+                case MAGIC_DAMAGE -> magicDamage += roll.value();
+                case DEFENSE -> defense += roll.value();
+                case HEALTH -> pendingHealthAffixes += roll.value();
+                case SHIELD_MAX -> shieldMax += roll.value();
+            }
+        }
     }
 
     public void applyClassPassives() {
