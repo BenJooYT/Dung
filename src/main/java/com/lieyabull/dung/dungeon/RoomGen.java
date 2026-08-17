@@ -192,7 +192,7 @@ public final class RoomGen {
                     int mid = innerWallT + corridorLen / 2;
                     int lx = horiz ? (axC + asg * mid) : (perpC);
                     int lz = horiz ? (perpC) : (axC + asg * mid);
-                    w.getBlockAt(lx, baseY + ROOM_HEIGHT + 1, lz).setType(Material.LANTERN);
+                    w.getBlockAt(lx, baseY + ROOM_HEIGHT, lz).setType(Material.LANTERN);
                 }
                 // Boss doorway warning: a red floor tile + red overhead glow sit right at the door
                 // opening so the danger reads from the corridor BEFORE the player steps inside.

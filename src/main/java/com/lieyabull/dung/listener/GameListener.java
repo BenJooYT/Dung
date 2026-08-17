@@ -222,21 +222,13 @@ public final class GameListener implements Listener {
         }
     }
 
-    /** Belt-and-suspenders: forbid breaking key/bomb-material blocks while in a run, so a copy that
-     *  somehow reached the world (e.g. placed before this guard) can't be re-collected into a stack. */
+    /** Forbid all block breaking while in a run — players shouldn't be modifying the dungeon world. */
     @EventHandler(priority = EventPriority.HIGH)
     public void onBlockBreak(org.bukkit.event.block.BlockBreakEvent e) {
         Player p = e.getPlayer();
         DungeonInstance di = instanceOf(p);
         if (di == null) return;
-        org.bukkit.Material t = e.getBlock().getType();
-        if (t == Material.TNT || t == Material.TRIPWIRE_HOOK) {
-            e.setCancelled(true);
-        }
-        // Workstation blocks must survive so their function isn't lost for the floor.
-        if (di.workstationAt(e.getBlock().getLocation()) != null) {
-            e.setCancelled(true);
-        }
+        e.setCancelled(true);
     }
 
     @EventHandler
