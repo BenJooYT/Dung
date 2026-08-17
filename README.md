@@ -130,6 +130,7 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/plot warp <name>` | all | Teleport to your named plot. |
 | `/plot unclaim` | all | Abandon your plot (frees it for re-claiming). |
 | `/dung bossbar` | `dung.admin` | Remove any stuck boss bars from the server. |
+| `/room toggle` | `dung.admin` | Toggle `custom-rooms` in `config.yml` (procedural-only vs. custom templates) for new floors. |
 | `/room tutorial [next|back|reset|skip <n>]` | all | Walk-through tutorial for the room editor (replayable). |
 | `/room open` | all | Teleport to the room editor world. |
 | `/room new <id> [types]` | all | Create a new room template. |
@@ -157,8 +158,12 @@ run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
   Favorited pieces (`/salvage favorite`) are always skipped by salvage. Spent in `/upgrades` on
   permanent stat upgrades: **Permanent Damage** (+1/lv),
   **Max Hearts** (+5/lv), **Defense** (+1/lv), **Crit Chance** (+0.5%/lv), **Move Speed**
-  (+3%/lv), **Max Mana** (+5/lv). Each has a rising cost and a level cap (see
-  [meta → Upgrades](#meta--persistent-progression) for exact curves).
+  (+3%/lv), **Max Mana** (+5/lv), **Magic Damage** (+1/lv). Each has a rising cost and a level cap
+  (see [meta → Upgrades](#meta--persistent-progression) for exact curves).
+- **Try to persist** — an `UPGRADE` room (every 5th floor) lets you spend **50 run coins + 200
+  persistent coins + 300 shards** to attempt persisting a run item past the current run: **40%**
+  success delivers it after the run as persistent gear at half durability; **60%** fails and
+  returns the item one rarity worse.
 
 ---
 
@@ -196,12 +201,14 @@ run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
   real tree, not a snake. Placement then guarantees exactly one `SHOP` (shallow), `TREASURE`,
   `SECRET` (a deep single-door dead-end, then **disconnected** from the door graph and wired to
   a `secretParent` combat room with a destructible wall), `ELITE` (deepest remaining combat
-  room), and 1–2 `LOCKED` (key-gated dead-ends), all distinct, non-boss rooms.
+  room), 1–2 `LOCKED` (key-gated dead-ends), and — every 5th floor — an `UPGRADE` (persist)
+  room, all distinct, non-boss rooms.
 
-**`RoomType`** — enum mapping each room to its `kind` (0–7) and label. The kind index drives
+**`RoomType`** — enum mapping each room to its `kind` (0–8) and label. The kind index drives
 loot-table odds and difficulty. Kinds: `START` (0), `COMBAT` (1), `TREASURE` (2), `SHOP` (3),
 `SECRET` (4, bomb-through-wall, detached from the door graph), `ELITE` (5), `BOSS` (6), and
-`LOCKED` (7, key-gated behind an iron-block barrier).
+`LOCKED` (7, key-gated behind an iron-block barrier), `UPGRADE` (8, persist-station, guaranteed
+every 5th floor).
 
 **`RoomGen`** — projects a `RoomNode` into the world at `BASE_Y`.
 
@@ -297,17 +304,19 @@ and an `id`. Elite variants use `id >= 100`.
 - `hpAt(floor)` — `baseHp * (1 + floor*0.5)`.
 - `damageAt(floor)` — `baseDamage * (1 + floor*0.15) * 5` (the ×5 matches the 100-HP pool; was ×10).
 
-| Mob | AI kind | Behavior |
-|---|---|---|
-| Gaper / Elite Gaper | 1 | contact: approaches and melees at <1.8 |
-| Fly | 2 | fast contact, faster movement |
-| Spider / Elite Charger | 3 / 5 | Spider = contact; Charger = telegraphed dash |
-| Mulliboom | 4 | burst-range, attacks at <2.2 |
-| Charger | 5 | charger dash (windup, lunge, cooldown) |
-| Maw | 6 | long-range, attacks at <3.2 |
+| Mob | Entity | AI kind | Behavior |
+|---|---|---|---|
+| Gaper / Elite Gaper | Zombie | 1 | shambles toward the player; occasionally stops to spit a short-range snowball; melees when close |
+| Fly | Bee | 2 | swarms erratically in an orbit, reversing direction every 0.5–1.25s; flees for 3s below 30% HP; dive-bombs when close |
+| Spider | Spider | 3 | faster at range, slower in melee; leaps at the player from 2–7 blocks away (every ~2.5s), damaging on landing |
+| Mulliboom | Creeper | 4 | slow walk; explodes on death for 4.5× damage AoE to all players within 3 blocks (visual only, no block damage) |
+| Charger / Elite Charger | Ravager | 5 | telegraphed dash (0.75s windup → fast lunge), walks slowly while on cooldown; melees when close |
+| Maw | Warden | 6 | stationary ranged; fires sonic-boom projectiles at the player every ~1.75s with a particle telegraph (1.5s first-volley delay) |
 
-**`Enemy`** — a runtime mob: a real vanilla `Zombie`/`Phantom`/`Pig`/`Blaze` spawned and tagged
-`dung.entity`, with its own HP tracked independently of the mob's native health.
+**`Enemy`** — a runtime mob: a real vanilla entity matching its mob type (Zombie/Bee/Spider/
+Creeper/Ravager/Warden) spawned and tagged `dung.entity`, with its own HP tracked independently
+of the mob's native health. Enemies spawn at random walkable positions throughout the room (up to
+20 placement attempts, falling back to room center).
 
 - `Enemy(...)` — spawns the mob, sets `maxHealth`, applies infinite slowness (mobs are steered
   by `tick`, not vanilla AI), sizes/skews the model, and shows a `Name hp/maxHp` bar.
@@ -333,16 +342,22 @@ typos into compile errors instead of silent save incompatibility. All tags live 
 | `dung.gear` | string | `"true"` — marks an item as Dung gear |
 | `dung.persistent` | string | `"true"` — bought with persistent currency; survives death |
 | `dung.favorite` | string | `"true"` — protected from salvage |
-| `dung.kind` | string | `"weapon"` or `"armor"` |
-| `dung.base` | string | base id (e.g. `longsword`, `iron_2`) |
+| `dung.kind` | string | `"weapon"`, `"armor"`, or `"shield"` |
+| `dung.base` | string | base id (e.g. `longsword`, `iron_2`, `mana_shield`) |
 | `dung.rarity` | string | `Rarity.name()` |
-| `dung.damage` | int | weapon damage |
+| `dung.damage` | int | weapon melee damage |
 | `dung.reach` | double | weapon melee reach override |
 | `dung.defense` | int | armor defense |
 | `dung.health` | int | health affix (adds max hearts) |
 | `dung.ability` | string | weapon ability id |
 | `dung.cost` | int | ability mana cost override |
 | `dung.runitem` | string | `"key"` or `"bomb"` — marks a hotbar run item |
+| `dung.magic_damage` | int | magic damage (magic weapons use this for abilities, melee is 1) |
+| `dung.mana_shield` | string | `"true"` — this item is a mana shield |
+| `dung.shield_max` | int | mana-shield capacity (COMMON=30 → MYTHIC=130) |
+| `dung.storedhealth` | int | Life Drain weapon's stored health (capped by rarity) |
+| `dung.starter` | string | `"true"` — free starter-kit gear, never salvageable |
+| `dung.uuid` | string | unique persistent-item identifier |
 
 **`Rarity`** — SkyBlock-style enum: `COMMON`, `UNCOMMON`, `RARE`, `EPIC`, `LEGENDARY`,
 `MYTHIC`. Each carries a text color, a `statMult` (damage/defense multiplier), a `floorUnlock`
@@ -354,22 +369,40 @@ typos into compile errors instead of silent save incompatibility. All tags live 
   (+HEALTH/ABILITY/COST), hides attributes/enchants, adds an enchant to rare+ items, and writes
   damage/health/ability lore.
 - `withReach(s, reach)` — attaches a `dung.reach` tag.
+- `withMagicDamage(s, magicDmg)` — tags `dung.magic_damage`, overrides melee damage to 1, and
+  rewrites the lore's "Damage" line to "Magic Damage".
 - `armor(id, name, mat, r, defense, health)` — tags defense/health, builds armor lore.
+- `shield(r)` — a mana shield: `dung.kind = "shield"` (never counts as a weapon for stats), with
+  `dung.shield_max` capacity and a native durability bar repurposed to show current charge
+  (empty to start).
+- `markPersistent(s)` — stamps `dung.persistent` + a unique `dung.uuid` and prepends a ★ to the
+  display name so persistent gear is visually distinct.
+- `persistize(s)` — converts a run item to a persistent copy delivered at **half durability**
+  (used by the Persist Master's successful attempts).
+- `downgradeRarity(s)` — returns a copy one rarity tier lower with stats scaled by the rarity
+  multiplier and lore recolored (used by failed persist attempts; COMMON is unchanged).
+- `setStoredHealth(s, n)` / `getStoredHealthMax(s)` — Life Drain stored-health pool, capped by
+  rarity (COMMON=25 → MYTHIC=180).
+- Durability helpers: `initDurability`, `getDurability`/`setDurability`,
+  `getMaxDurability`/`setMaxDurability`, `damageItem`, `repairItem`, `addDurabilityLore`.
 - `weaponLore`, `armorLore`, `usage(ability)` — lore/helper text.
 
 **`ItemPool`** — template + roll logic.
 
 - Weapon templates (Frayed Blade, Crude Axe, Longsword, War Hammer, Crystal Shard, Arcane
-  Staff, Doomblade) with base damage, ability, and mana cost.
+  Staff, Doomblade, Storm Rod, Blaze Staff, Soul Siphon) with base damage, ability, and mana
+  cost. Storm Rod (Chain Lightning), Blaze Staff (Fireball), and Soul Siphon (Life Drain) are
+  magic weapons — their ability damage scales with `dung.magic_damage`.
 - Armor base sets (Cloth → Netherite) with per-material defense.
 - `rollRarity(floor)` — rarity is eligible once `floor >= floorUnlock`; weights are
   `baseChance * (1 + floor*0.05 * ordinal * 0.5)` so deep floors push toward rarer tiers (uncapped)
   while low floors keep COMMON as the most common tier.
-- `randomWeapon(floor)` / `randomArmor(floor, slot)` — roll a template + rarity, scale damage/
-  defense by `statMult`, add reach (Longsword 3.8, Arcane Staff 4.5, Doomblade 4.0) and health
-  affixes.
+- `randomWeapon(floor)` / `randomArmor(floor, slot)` / `randomShield(floor)` — roll a template +
+  rarity, scale damage/defense by `statMult`, add reach (Longsword 3.8, Arcane Staff 4.5,
+  Doomblade 4.0) and health affixes; magic weapons scale their magic damage.
 - `roomReward(floor, roomKind)` — chance to drop gear per room kind (treasure/shop/elite/boss
-  always drop; combat 30%; secret 55%) plus coins.
+  always drop; combat 30%; secret 55%) plus coins. Gear rolls split 40% weapon / 35% armor /
+  25% shield.
 
 **Health affix roll** — `rollWeaponHealth` (bruiser melee weapons only: war hammer, doomblade,
 longsword, crude axe) and `rollArmorHealth` (per material-tier × slot weight {head .65, chest
@@ -383,6 +416,7 @@ Gear lives in the inventory, not here.
 
 **`PlayerState`** — the live MMORPG stats + resource bars (single source of truth). Fields:
 `maxHearts`/`hearts` (100 base), `mana`/`maxMana`, `manaRegen`, `coins`, `keys`, `bombs`,
+`shield`/`shieldMax` (mana-shield charge), `magicDamage`, `magicWeapon`,
 combat stats (`damage`, `defense`, `reach`, `critChance`, `critMult`, `speedMult`,
 `fireRateTicks` (default 3, reduced from 12)), `classId`, `cooldowns`, `invulnUntil`, `dead`.
 
@@ -433,7 +467,7 @@ Lifecycle:
   rooms so multi-level templates connect correctly.
 - `enterRoom(n)` — marks visited, applies spawn-grace invuln, spawns enemies for un-cleared
   COMBAT/ELITE rooms (locks doors), spawns room pickups, opens the shop GUI on SHOP rooms,
-  and checks the boss on BOSS rooms.
+  spawns the Persist Master on UPGRADE rooms, and checks the boss on BOSS rooms.
 - `onPlayerMoved(loc)` — room-crossing detection from movement.
 - `descend()` / `endRun()` / `onPlayerDeath(p)` / `resetPlayerToSpawn()` — see the
   [death model](#death--persistence-model).
@@ -449,13 +483,21 @@ Combat:
 - `tryCastAbility(p, item)` / `dispatchAbility(id, st)` — casts the held weapon's stored ability
   if mana + cooldown allow. Abilities: **Rush** `[5,1000]`, **Slash** `[12,2500]`, **Cleave**
   `[15,3000]`, **Smash** `[18,3500]`, **Blade Storm** `[25,4500]`, **Arcane Bolt** `[20,3500]`,
-  **Ravage** `[40,8000]`. All casts (weapon + class) respect a shared **400ms global cooldown**
-  keyed to the player, so swapping between different-ability weapons cannot stack casts.
+  **Ravage** `[40,8000]`, **Chain Lightning** (Storm Rod: chains to up to 3 enemies with
+  diminishing multipliers), **Fireball** (Blaze Staff: a real projectile that AoE-bursts 3
+  blocks), **Life Drain** (Soul Siphon: AoE drain). Magic abilities draw from the weapon's
+  `dung.magic_damage` instead of melee damage. All casts (weapon + class) respect a shared
+  **400ms global cooldown** keyed to the player, so swapping between different-ability weapons
+  cannot stack casts.
 - `tryCastClassAbility(p)` / `dispatchClassAbility(id, st, caster)` — casts the player's
   class-specific active ability: **Warrior — War Cry** (10 mana, 8s cd: party damage boost +
   invuln), **Mage — Arcane Nova** (25 mana, 6s cd: AoE 2x damage), **Ranger — Shadow Step**
   (15 mana, 5s cd: teleport behind nearest enemy + guaranteed crit). Triggered by sneak+drop (Q).
 - `openShop(p)` — opens the chest GUI shop for the player in a SHOP room.
+- `openPersist(p)` / `tryPersist(p, slot)` — opens the Persist Master GUI in an UPGRADE room;
+  spending 50 run coins + 200 persistent coins + 300 shards attempts to persist the gear in a
+  slot (40% success → queued for post-run delivery as persistent half-durability gear; 60% fail
+  → returned one rarity worse).
 - `tryUnlockRoom(p, loc)` — right-click an IRON_BLOCK barrier with a key item to unlock a
   LOCKED room (consumes 1 key, spawns pedestal loot).
 - `tryBombWall(p, loc)` — right-click a CRACKED_STONE_BRICKS wall with a bomb item to blast
@@ -510,10 +552,11 @@ sound + `CRIT` particles), and at 0, despawns + calls `GameManager.onBossDefeate
 - `onDeath` / `onRespawn` — clean death teardown; force respawn at world spawn (see
   [death model](#death--persistence-model)).
 - `onHeldItem` / `onArmor` / `onInteract` — recompute stats on gear change; block block-place;
-  cast abilities on sneak+right-click; open the chest GUI shop on the emerald block;
-  unlock locked doors with key item on IRON_BLOCK; bomb destructible walls with bomb item
-  on CRACKED_STONE_BRICKS; claim pedestal loot on POLISHED_BLACKSTONE_SLAB (checked before
-  armor-equip detection so holding an armor piece doesn't equip it when clicking a pedestal).
+  cast abilities on sneak+right-click; open the chest GUI shop on the emerald block / shopkeeper;
+  open the Persist GUI on the Persist Master villager; unlock locked doors with key item on
+  IRON_BLOCK; bomb destructible walls with bomb item on CRACKED_STONE_BRICKS; claim pedestal
+  loot on POLISHED_BLACKSTONE_SLAB (checked before armor-equip detection so holding an armor
+  piece doesn't equip it when clicking a pedestal).
 - `onAttack` — left-click triggers `registerAttack()` and cancels the vanilla hit.
 - `onEnemyDamage` — **cancels all vanilla damage from Dung entities** (mobs + their projectiles,
   via `isDungSource`) so only `PlayerState`-based damage applies.
@@ -538,9 +581,9 @@ backup**.
 - `addPersistentCoins(uuid, amount)` — permanent coins that survive death.
 - `MetaProfile` — per-player data; `upgrades` is a `track id -> level` map.
 
-**`Upgrades`** — the permanent stat-upgrade catalog: 6 tracks (`damage`, `hearts`, `defense`,
-`crit`, `speed`, `mana`), each with a label, `baseCost`/`costPerLevel` price curve, a `maxLevel`
-cap, and the per-level stat `delta`.
+**`Upgrades`** — the permanent stat-upgrade catalog: 7 tracks (`damage`, `hearts`, `defense`,
+`crit`, `speed`, `mana`, `magic_damage`), each with a label, `baseCost`/`costPerLevel` price
+curve, a `maxLevel` cap, and the per-level stat `delta`.
 
 - `byId(id)` — look up a track by id.
 - `cost(t, level)` — shard cost of the next level (`baseCost + costPerLevel * level`).
@@ -556,11 +599,13 @@ Current curves (rebalanced for the high per-floor income):
 | Crit | +0.5% | 8 / 4 | 15 | 540 | +7.5% |
 | Speed | +3% | 10 / 6 | 8 | 248 | +24% |
 | Mana | +5 | 6 / 3 | 15 | 405 | +75 mana |
+| Magic Damage | +1 | 8 / 4 | 15 | 540 | +15 magic dmg |
 
-Maxing all six tracks costs **2,783 shards** (~28–46 floors at typical income).
+Maxing all seven tracks costs **3,323 shards** (~33–55 floors at typical income).
 
 The upgrades are applied in `PlayerState.applyUpgrades()` (after class passives):
-damage +1/lv, max hearts +5/lv, defense +1/lv, crit +0.5%/lv, move speed +3%/lv, max mana +5/lv.
+damage +1/lv, max hearts +5/lv, defense +1/lv, crit +0.5%/lv, move speed +3%/lv, max mana +5/lv,
+magic damage +1/lv.
 
 ### `pickup` — floor pickups
 
@@ -577,10 +622,12 @@ damage +1/lv, max hearts +5/lv, defense +1/lv, crit +0.5%/lv, move speed +3%/lv,
 
 ### `ui` — HUD, tab menu & chat
 
-**`HUD`** — sidebar scoreboard with combat stats, run consumables (keys/bombs show hotbar slot
-hints `[slot 7]`/`[slot 8]`), current room, boss status, class, and the longest running ability
+**`HUD`** — sidebar scoreboard with combat stats (melee damage in red + magic damage in blue when
+the held weapon is magic, defense), run consumables (keys/bombs show hotbar slot hints
+`[slot 7]`/`[slot 8]`), current room, boss status, class, and the longest running ability
 cooldown. `sendBar` paints the action bar:
-`♥ <hearts>/<maxHearts> (<pct>)   ✦ <mana>/<maxMana>` (integer counts + percent).
+`♥ <hearts>/<maxHearts> (<pct>)   ✦ <mana>/<maxMana>` (integer counts + percent). A charged mana
+shield's charge is reflected on the shield's own durability bar in the player's hand.
 
 **`TabUI`** — tab menu (player-list slot) with layered detail: header (floor + class), combat
 stats, mana/speed/fire-rate, equipment (mainhand + 4 armor slots), and dungeon exploration
@@ -604,6 +651,13 @@ status (rooms explored/cleared, boss state).
 - **Speed** — `speedMult` scales walk speed (`min(0.3, 0.2*speedMult)`).
 - **Mana** — regenerates per second; spent on weapon abilities with per-ability cooldowns. A
   shared **400ms global cooldown** applies to all ability casts so weapon-swapping can't stack them.
+- **Magic damage** — magic weapons (Storm Rod, Blaze Staff, Soul Siphon) deal 1 melee damage and
+  use `dung.magic_damage` for their abilities; a **Magic Damage** permanent upgrade boosts it.
+- **Mana Shield** — a held shield with a rarity-scaled capacity. Sneaking with it in the main hand
+  spends ~15 mana/sec to charge it; when not sneaking it decays (~30/sec). `PlayerState.hurt()`
+  absorbs damage with the shield before applying to hearts. A deactivated shield keeps leftover
+  charge but bleeds it slowly; a full, active shield halts mana regen. Not counted as a weapon
+  for stat computation.
 - **Permanent upgrades** — shard-bought levels from `/upgrades` add damage, max hearts, defense,
   crit chance, move speed, and max mana on top of gear and class every run.
 - **Natural healing** — out-of-combat regen (`healPerSecond`, 5s after damage). Vanilla hunger
@@ -688,6 +742,10 @@ immediately and spent in `/upgrades`.
 - **Persistent gear durability** — on death each `dung.persistent` item loses 10% of max
   durability (min 1); a piece that breaks is removed from the inventory. Death now costs
   persistent gear, not just the run.
+- **Persist (UPGRADE) rooms** — every 5th floor has a Persist Master where you spend **50 run
+  coins + 200 persistent coins + 300 shards** to try persisting a run item past the run: **40%**
+  success queues it for post-run delivery as persistent half-durability gear; **60%** fail
+  downgrades the item one rarity and returns it. A successful persist is never lost to death.
 - **Tab throttle** — `TabUI.refresh` runs every 10 ticks; only the HUD action bar keeps a
   per-tick cadence.
 - **Return to pre-run location** — `/dung leave` and mid-run death teleport you back to where
