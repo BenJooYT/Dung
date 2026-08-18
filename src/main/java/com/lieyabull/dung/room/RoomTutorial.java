@@ -148,7 +148,7 @@ public final class RoomTutorial implements Listener {
     public void next(Player p) {
         int cur = playerSteps.getOrDefault(p.getUniqueId(), 0);
         if (cur >= STEPS.length - 1) {
-            p.sendMessage(PREFIX + "You've already completed the tutorial! Run §f/room tutorial§7 to see it again.");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(PREFIX + "You've already completed the tutorial! Run §f/room tutorial§7 to see it again."));
             return;
         }
         playerSteps.put(p.getUniqueId(), cur + 1);
@@ -287,11 +287,11 @@ public final class RoomTutorial implements Listener {
         p.sendMessage("");
         // Show navigation hints
         if (idx == 0) {
-            p.sendMessage("§7Type §f/room tutorial next§7 to begin.");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Type §f/room tutorial next§7 to begin."));
         } else if (idx < STEPS.length - 1) {
-            p.sendMessage("§7Type §f/room tutorial next§7 when done, §f/room tutorial back§7 to go back, or §f/room tutorial skip <n>§7 to jump to a step.");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Type §f/room tutorial next§7 when done, §f/room tutorial back§7 to go back, or §f/room tutorial skip <n>§7 to jump to a step."));
         } else {
-            p.sendMessage("§7Type §f/room tutorial§7 to replay the tutorial anytime.");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Type §f/room tutorial§7 to replay the tutorial anytime."));
         }
     }
 

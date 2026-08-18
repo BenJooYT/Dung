@@ -895,19 +895,20 @@ public final class GearFactory {
             if (r.ordinal() >= Rarity.RARE.ordinal()) {
                 meta.addEnchant(Enchantment.UNBREAKING, 1, true);
             }
-            // Apply banner pattern: base color brown, pattern color matches rarity (black for COMMON)
+            // Apply banner pattern: base color brown, gradient colors match rarity (grey for COMMON),
+            // while the Flow pattern is always white on every rarity.
             if (meta instanceof BlockStateMeta blockMeta) {
                 org.bukkit.block.Banner banner = (org.bukkit.block.Banner) blockMeta.getBlockState();
                 banner.setBaseColor(org.bukkit.DyeColor.BROWN);
                 org.bukkit.DyeColor patternColor = switch (r) {
-                    case COMMON -> org.bukkit.DyeColor.BLACK;
+                    case COMMON -> org.bukkit.DyeColor.GRAY;
                     case UNCOMMON -> org.bukkit.DyeColor.GREEN;
                     case RARE -> org.bukkit.DyeColor.LIGHT_BLUE;
                     case EPIC -> org.bukkit.DyeColor.PURPLE;
                     case LEGENDARY -> org.bukkit.DyeColor.ORANGE;
                     case MYTHIC -> org.bukkit.DyeColor.RED;
                 };
-                banner.addPattern(new Pattern(patternColor, PatternType.FLOW));
+                banner.addPattern(new Pattern(org.bukkit.DyeColor.WHITE, PatternType.FLOW));
                 banner.addPattern(new Pattern(patternColor, PatternType.GRADIENT_UP));
                 banner.addPattern(new Pattern(patternColor, PatternType.GRADIENT));
                 blockMeta.setBlockState(banner);

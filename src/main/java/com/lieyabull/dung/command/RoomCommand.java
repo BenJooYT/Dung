@@ -75,33 +75,33 @@ public final class RoomCommand implements CommandExecutor, TabCompleter {
             case "list": return list(p);
             case "tutorial": return tutorial(p, args);
             case "toggle": return toggle(p);
-            default: p.sendMessage("§cUnknown subcommand §f" + args[0] + "§c. Use §f/room help§c."); break;
+            default: p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUnknown subcommand §f" + args[0] + "§c. Use §f/room help§c.")); break;
         }
         return true;
     }
 
     private void help(Player p) {
         p.sendMessage("§9Room editor§7 (build a room, then capture + validate + export):");
-        p.sendMessage("§f/room open §7- teleport to the editor world");
-        p.sendMessage("§f/room new <id> [type...] §7- start a template (types: START/COMBAT/TREASURE/SHOP/SECRET/ELITE/BOSS/LOCKED)");
-        p.sendMessage("§f/room pos1 / pos2 §7- WorldEdit-like two-corner selection");
-        p.sendMessage("§f/room region §7- add selection as a room-bound cuboid (first one sets the origin)");
-        p.sendMessage("§f/room spawnfloor §7- add selection as an enemy spawn floor");
-        p.sendMessage("§f/room conn <n/e/s/w/u/d> [type] [width] [height] §7- add a connection at your position (type: DOOR/CORRIDOR/OPENING/LOCKED/SECRET/BOSS/STAIR/SHAFT)");
-        p.sendMessage("§f/room marker <type> [name] §7- add a metadata point (PLAYER_SPAWN/SHOPKEEPER/LOOT/HAZARD/MECHANIC/SPECIAL)");
-        p.sendMessage("§f/room playerspawn / shopkeeper §7- shortcuts to set those markers at your position");
-        p.sendMessage("§f/room capture §7- snapshot the blocks inside all bound regions");
-        p.sendMessage("§f/room info §7- show the in-progress template summary");
-        p.sendMessage("§f/room validate §7- validate; only a passing room may be exported/registered");
-        p.sendMessage("§f/room export <id> §7- write asset + manifest to plugins/Dung/rooms/");
-        p.sendMessage("§f/room test <id> §7- test a registered room; §f/room testlocal §7- test the in-progress one");
-        p.sendMessage("§f/room list §7- list registered production templates");
-        p.sendMessage("§f/room tutorial [next|back|reset|skip <n>] §7- walk-through tutorial (replayable)");
-        p.sendMessage("§f/room toggle §7- enable/disable custom room templates (saves to config)");
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room open §7- teleport to the editor world"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room new <id> [type...] §7- start a template (types: START/COMBAT/TREASURE/SHOP/SECRET/ELITE/BOSS/LOCKED)"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room pos1 / pos2 §7- WorldEdit-like two-corner selection"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room region §7- add selection as a room-bound cuboid (first one sets the origin)"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room spawnfloor §7- add selection as an enemy spawn floor"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room conn <n/e/s/w/u/d> [type] [width] [height] §7- add a connection at your position (type: DOOR/CORRIDOR/OPENING/LOCKED/SECRET/BOSS/STAIR/SHAFT)"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room marker <type> [name] §7- add a metadata point (PLAYER_SPAWN/SHOPKEEPER/LOOT/HAZARD/MECHANIC/SPECIAL)"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room playerspawn / shopkeeper §7- shortcuts to set those markers at your position"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room capture §7- snapshot the blocks inside all bound regions"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room info §7- show the in-progress template summary"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room validate §7- validate; only a passing room may be exported/registered"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room export <id> §7- write asset + manifest to plugins/Dung/rooms/"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room test <id> §7- test a registered room; §f/room testlocal §7- test the in-progress one"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room list §7- list registered production templates"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room tutorial [next|back|reset|skip <n>] §7- walk-through tutorial (replayable)"));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§f/room toggle §7- enable/disable custom room templates (saves to config)"));
     }
 
     private boolean newRoom(Player p, String[] args) {
-        if (args.length < 2) { p.sendMessage("§cUsage: /room new <id> [type...]"); return true; }
+        if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: /room new <id> [type...]")); return true; }
         String id = args[1].toLowerCase().replaceAll("[^a-z0-9_]", "");
         if (id.isEmpty()) { p.sendMessage("§cInvalid id (use a-z0-9_)."); return true; }
         List<String> types = new ArrayList<>();
@@ -121,7 +121,7 @@ public final class RoomCommand implements CommandExecutor, TabCompleter {
 
     private boolean setPos(Player p, String which) {
         RoomEditSession s = editor.session(p);
-        if (s.template() == null) { p.sendMessage("§cStart a room with /room new first."); return true; }
+        if (s.template() == null) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cStart a room with /room new first.")); return true; }
         int x = p.getLocation().getBlockX(), y = p.getLocation().getBlockY(), z = p.getLocation().getBlockZ();
         if (which.equals("pos1")) s.setPos1(x, y, z); else s.setPos2(x, y, z);
         p.sendMessage("§7" + which + " = §f" + x + "," + y + "," + z);
@@ -133,7 +133,7 @@ public final class RoomCommand implements CommandExecutor, TabCompleter {
         if (s.template() == null) { p.sendMessage("§cStart a room first."); return true; }
         if (!s.hasSelection()) { p.sendMessage("§cSet both pos1 and pos2 first."); return true; }
         s.addRegionFromSelection();
-        p.sendMessage("§aAdded bound region. Set a new selection for another cuboid, or /room capture.");
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§aAdded bound region. Set a new selection for another cuboid, or /room capture."));
         return true;
     }
 
@@ -150,7 +150,7 @@ public final class RoomCommand implements CommandExecutor, TabCompleter {
         RoomEditSession s = editor.session(p);
         if (s.template() == null) { p.sendMessage("§cStart a room first."); return true; }
         if (s.template().bounds.isEmpty()) { p.sendMessage("§cAdd a bound region first (origin)."); return true; }
-        if (args.length < 2) { p.sendMessage("§cUsage: /room conn <n/e/s/w/u/d> [type] [width] [height]"); return true; }
+        if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: /room conn <n/e/s/w/u/d> [type] [width] [height]")); return true; }
         Direction dir;
         switch (args[1].toLowerCase()) {
             case "n": dir = Direction.NORTH; break;
@@ -177,7 +177,7 @@ public final class RoomCommand implements CommandExecutor, TabCompleter {
     private boolean marker(Player p, String[] args) {
         RoomEditSession s = editor.session(p);
         if (s.template() == null) { p.sendMessage("§cStart a room first."); return true; }
-        if (args.length < 2) { p.sendMessage("§cUsage: /room marker <type> [name]"); return true; }
+        if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: /room marker <type> [name]")); return true; }
         RoomMarkerType type;
         try { type = RoomMarkerType.byName(args[1]); }
         catch (Exception e) { p.sendMessage("§cBad marker type " + args[1]); return true; }
@@ -211,7 +211,7 @@ public final class RoomCommand implements CommandExecutor, TabCompleter {
         if (s.template() == null) { p.sendMessage("§cStart a room first."); return true; }
         if (s.template().bounds.isEmpty()) { p.sendMessage("§cAdd at least one bound region first."); return true; }
         org.bukkit.World w = editor.editorWorld().getEditorWorld();
-        if (!editor.editorWorld().isEditorWorld(p.getWorld())) { p.sendMessage("§cCapture in the editor world (/room open) so no foreign terrain is included."); return true; }
+        if (!editor.editorWorld().isEditorWorld(p.getWorld())) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cCapture in the editor world (/room open) so no foreign terrain is included.")); return true; }
         s.captureBlocks(w);
         p.sendMessage("§aCaptured §f" + s.template().blocks.size() + "§a blocks from " + s.template().bounds.size() + " region(s).");
         return true;
@@ -220,7 +220,7 @@ public final class RoomCommand implements CommandExecutor, TabCompleter {
     private boolean info(Player p) {
         RoomEditSession s = editor.session(p);
         RoomTemplate t = s.template();
-        if (t == null) { p.sendMessage("§7No in-progress template. /room new <id> [type]"); return true; }
+        if (t == null) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7No in-progress template. /room new <id> [type]")); return true; }
         p.sendMessage("§9Template §f" + t.id + "§9 types=§f" + t.types);
         p.sendMessage("  regions=" + t.bounds.size() + " connectors=" + t.connectors.size()
                 + " spawnFloors=" + t.spawnFloors.size() + " markers=" + t.markers.size() + " blocks=" + t.blocks.size()
@@ -242,7 +242,7 @@ public final class RoomCommand implements CommandExecutor, TabCompleter {
         RoomEditSession s = editor.session(p);
         if (s.template() == null) { p.sendMessage("§cNo template in progress."); return true; }
         RoomTemplate t = s.template();
-        if (args.length < 2) { p.sendMessage("§cUsage: /room export <id>"); return true; }
+        if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: /room export <id>")); return true; }
         String id = args[1].toLowerCase().replaceAll("[^a-z0-9_]", "");
         if (t.id.isEmpty()) t.id = id;
         else if (!t.id.equals(id)) t.id = id;
@@ -266,9 +266,9 @@ public final class RoomCommand implements CommandExecutor, TabCompleter {
             tpl = s.template();
             if (tpl == null) { p.sendMessage("§cNo in-progress template to test."); return true; }
         } else {
-            if (args.length < 2) { p.sendMessage("§cUsage: /room test <id>"); return true; }
+            if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: /room test <id>")); return true; }
             tpl = editor.registry().byId(args[1]);
-            if (tpl == null) { p.sendMessage("§cNo registered template '" + args[1] + "'. Try /room testlocal for the in-progress room."); return true; }
+            if (tpl == null) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cNo registered template '" + args[1] + "'. Try /room testlocal for the in-progress room.")); return true; }
         }
         RoomTester.Result r = tester.test(tpl, p);
         for (String l : r.lines) p.sendMessage(l);
@@ -294,7 +294,7 @@ public final class RoomCommand implements CommandExecutor, TabCompleter {
                 break;
             case "skip":
                 if (args.length < 3) {
-                    p.sendMessage("§cUsage: /room tutorial skip <step>");
+                    p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: /room tutorial skip <step>"));
                     return true;
                 }
                 try {

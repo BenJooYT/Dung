@@ -27,6 +27,7 @@ clearing rooms banks persistent coins and kill/full-clear stats that survive dea
    - [`game` — run state, combat & lifecycle](#game--run-state-combat--lifecycle)
    - [`boss` — the Warden](#boss--the-warden)
    - [`listener` — Paper event wiring](#listener--paper-event-wiring)
+   - [`plot` — the Plots world & land claims](#plot--the-plots-world--land-claims)
    - [`meta` — persistent progression](#meta--persistent-progression)
    - [`pickup` — floor pickups](#pickup--floor-pickups)
    - [`ui` — HUD, tab menu & chat](#ui--hud-tab-menu--chat)
@@ -53,7 +54,8 @@ clearing rooms banks persistent coins and kill/full-clear stats that survive dea
 /salvage          # in a run: break held armor into permanent shards
 /party create     # create a party for multiplayer dungeons
 /plots            # teleport to the plots world
-/plot claim       # claim a plot (250 shards or 150 coins)
+/plot claim       # claim a plot (250 shards or 150 coins; ×1.25 per plot you own)
+/leaderboard      # top players by coins/shards/kills/clears/max floor (incl. offline)
 ```
 
 Requires permission `dung.admin` (default: OP) for the debug command `/dung give`; everything
@@ -91,6 +93,7 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
   ├─ Upgrades             permanent stat-upgrade tracks (shards)
   ├─ ItemPool / GearFactory / ItemTags / Rarity   loot system
   ├─ Pickup               floor pickup identity & effects
+  ├─ PlotManager / PlotListener / PlotCommand   plots world, land claims, plot settings
   └─ HUD / TabUI / ChatUI display
 ```
 
@@ -124,11 +127,18 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/party disband` | all | Disband the party entirely (leader only). |
 | `/plots` | all | Teleport to the plots world. |
 | `/plots warp <name>` | all | Teleport to a named plot. |
-| `/plot claim` | all | Claim the next available plot (costs 250 shards or 150 coins). |
-| `/plot home` | all | Teleport to your own plot. |
-| `/plot name <name>` | all | Name your plot (globally unique). |
+| `/plot claim` | all | Claim the plot you're standing on (or the next available). Costs 250 shards or 150 coins, **×1.25 per plot you already own**. |
+| `/plot home` | all | Teleport to your first plot. |
+| `/plot name <name>` | all | Name the plot you're standing on (globally unique). |
 | `/plot warp <name>` | all | Teleport to your named plot. |
-| `/plot unclaim` | all | Abandon your plot (frees it for re-claiming). |
+| `/plot settings` | all | Show the settings of the plot you're standing on. |
+| `/plot pvp on\|off` | all | Toggle PVP on the plot you're standing on (off by default). |
+| `/plot fire on\|off` | all | Toggle fire spread/burning on the plot you're standing on. |
+| `/plot public on\|off` | all | Toggle public access (anyone may build/open containers). |
+| `/plot trust <player>` / `/plot untrust <player>` | all | Grant/revoke build access on the plot you're standing on. |
+| `/plot container <player>` / `/plot uncontainer <player>` | all | Grant/revoke container access on the plot you're standing on. |
+| `/plot unclaim` | all | Unclaim the plot you're standing on (frees it for re-claiming). |
+| `/leaderboard [category] [page]` | all | Top players by `persistent_coins`/`shards`/`kills`/`clears`/`max_floor`, including offline players. |
 | `/dung bossbar` | `dung.admin` | Remove any stuck boss bars from the server. |
 | `/room toggle` | `dung.admin` | Toggle `custom-rooms` in `config.yml` (procedural-only vs. custom templates) for new floors. |
 | `/room tutorial [next|back|reset|skip <n>]` | all | Walk-through tutorial for the room editor (replayable). |
@@ -581,6 +591,34 @@ sound + `CRIT` particles), and at 0, despawns + calls `GameManager.onBossDefeate
 - `onQuit` — saves the player's current location to `MetaProfile` (for rejoin restoration),
   then ends the run (clears inventory) on logout.
 
+### `plot` — the Plots world & land claims
+
+**`PlotManager`** — manages a separate flat world (`dung_plots`) of 16×16 plots separated by oak
+slab borders and 2-wide stone-brick paths.
+
+- Grid math: `CELL_SIZE = 20`, buildable area `[0..17]` per plot, paths at `18..19`. `plotAt`/
+  `plotOrigin`/`isBuildableArea` convert world coords to plot coords.
+- **Claiming:** `claimPlot` charges 250 shards or 150 coins; `showClaimOptions` shows clickable,
+  affordability-gated buttons. Players may own **multiple plots** — each additional plot costs
+  base price **×1.25 per plot already owned** (`claimShardCost`/`claimCoinCost`).
+- **Settings:** per-plot `pvp`, `fireSpread`, `isPublic` flags and `buildTrust`/`containerTrust`
+  UUID sets, persisted in `plots.yml`. `setPlotToggle`, `setPlotTrust`, `showPlotSettings` back the
+  `/plot` settings commands.
+- **Neighbour paths:** `canUseSharedPath` grants build access to the path between two plots owned
+  by the same player; `buildPlotBordersAndPaths` skips re-clearing a same-owner shared path so it
+  survives reload/regen.
+- `getPlotsWorld` (lazy world + custom `PlotChunkGenerator`), `preGenerateGrid`, `buildPlot`
+  (starter chest), `clearAll` (admin reset via `/dung reset`), atomic `load()`/`save()`.
+
+**`PlotListener`** — enforces ownership and per-plot settings: build/break/bucket/ignite gated by
+`canModify` (owner, trusted builder, or public plot; shared-path owners may use the path); chests
+open for owner/public/container-trusted; PVP cancelled on plots with it disabled; fire burn/spread
+cancelled unless enabled. Explosions are always cancelled in the plots world; crop trampling and
+out-of-bounds tree/plant growth are pruned.
+
+**`PlotCommand`** — `/plots` (warp) and `/plot` (claim, home, name, warp, settings, pvp/fire/
+public, trust/untrust, container/uncontainer, unclaim) with tab completion.
+
 ### `meta` — persistent progression
 
 **`MetaManager`** — permanent progression in `saves.yml`, with **atomic writes** and **corrupt
@@ -590,9 +628,10 @@ backup**.
   instead of silently wiping it.
 - `save()` — writes to a temp file then atomically moves it over the target. Persists coins,
   shards, per-track upgrade levels, deaths, clears, class, kills, and best floor.
-- `profile(uuid)` — lazily creates/loads a `MetaProfile` (`persistentCoins`, `shards`,
+- `profile(uuid)` — lazily creates/loads a `MetaProfile` (`name`, `persistentCoins`, `shards`,
   `upgrades`, `deaths`, `clears`, `classId`, `kills`, `bestFloor`, `lastWorld`/`lastX`/`lastY`/
-  `lastZ`/`lastYaw`/`lastPitch` for rejoin location restoration).
+  `lastZ`/`lastYaw`/`lastPitch` for rejoin location restoration). The `name` is set on join so the
+  `/leaderboard` can show offline players.
 - `addPersistentCoins(uuid, amount)` — permanent coins that survive death.
 - `MetaProfile` — per-player data; `upgrades` is a `track id -> level` map.
 
@@ -788,6 +827,13 @@ immediately and spent in `/upgrades`.
   so the tick loop doesn't re-trigger `onPlayerDeath` on the next cycle.
 - **Plot crop trampling prevented** — `PlotListener` cancels `EntityChangeBlockEvent` when a
   player tramples farmland on a plot they don't own.
+- **Plot settings & multi-plot** — plots support per-plot toggles (PVP, fire spread, public) and
+  per-player build/container trust lists, all persisted in `plots.yml`. Players may own **multiple
+  plots**; each additional plot costs base price **×1.25 per plot already owned**. `unclaim`/`name`/
+  settings target the plot you're standing on.
+- **Neighbour-plot paths** — a player owning two adjacent plots gains build access to the 2-wide
+  path between them, and that shared path is exempt from the regen/reload path-clear so the owner's
+  work survives a reload.
 
 ### Tests
 

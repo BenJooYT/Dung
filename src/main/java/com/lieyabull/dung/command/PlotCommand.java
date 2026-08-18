@@ -64,20 +64,24 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
                 }
                 return true;
             }
-            p.sendMessage("§7Usage: §f/plots§7 or §f/plots warp <name>§7.");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Usage: §f/plots§7 or §f/plots warp <name>§7."));
             return true;
         }
 
         // /plot <subcommand>
         if (args.length == 0) {
             p.sendMessage("§7Plot commands:");
-            p.sendMessage("  §f/plots §7— Teleport to the plots world");
-            p.sendMessage("  §f/plots warp <name> §7— Warp to a named plot");
-            p.sendMessage("  §f/plot claim §7— Claim a plot (§e250 shards§7 or §6" + PlotManager.CLAIM_COIN_COST + " coins§7)");
-            p.sendMessage("  §f/plot home §7— Teleport to your claimed plot");
-            p.sendMessage("  §f/plot name <name> §7— Name your plot for warp access");
-            p.sendMessage("  §f/plot warp <name> §7— Warp to a named plot");
-            p.sendMessage("  §f/plot unclaim §7— Abandon your plot and free it up");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plots §7— Teleport to the plots world"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plots warp <name> §7— Warp to a named plot"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot claim §7— Claim the plot you're standing on (price §ex1.25§7 per plot you own)"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot home §7— Teleport to your claimed plot"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot name <name> §7— Name your plot for warp access"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot warp <name> §7— Warp to a named plot"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot settings §7— Show settings of the plot you're standing on"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot pvp|fire|public on|off §7— Toggle a plot setting"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot trust|untrust <name> §7— Grant/revoke build access"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot container|uncontainer <name> §7— Grant/revoke container access"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot unclaim §7— Unclaim the plot you're standing on"));
             return true;
         }
 
@@ -100,27 +104,27 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
                 if (pm.teleportToPlot(p)) {
                     p.sendMessage("§aTeleported to your plot.");
                 } else {
-                    p.sendMessage("§cYou don't have a plot yet. Use §f/plot claim§c to get one.");
+                    p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYou don't have a plot yet. Use §f/plot claim§c to get one."));
                 }
                 return true;
             }
             case "name": {
                 if (args.length < 2) {
-                    p.sendMessage("§cUsage: §f/plot name <name>§c — name your plot for warp access.");
+                    p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: §f/plot name <name>§c — name your plot for warp access."));
                     return true;
                 }
                 String err = pm.setNamePlot(p, args[1]);
                 if (err != null) {
                     p.sendMessage(err);
                 } else {
-                    p.sendMessage("§aPlot named §f" + args[1] + "§a! Use §f/plot warp " + args[1] + "§a to teleport here.");
+                    p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§aPlot named §f" + args[1] + "§a! Use §f/plot warp " + args[1] + "§a to teleport here."));
                 }
                 return true;
             }
             case "warp": {
                 if (blockIfInRun(p)) return true;
                 if (args.length < 2) {
-                    p.sendMessage("§cUsage: §f/plot warp <name>§c — warp to a named plot.");
+                    p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: §f/plot warp <name>§c — warp to a named plot."));
                     return true;
                 }
                 String err = pm.warpToNamedPlot(p, args[1]);
@@ -136,12 +140,46 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
                 if (err != null) {
                     p.sendMessage(err);
                 } else {
-                    p.sendMessage("§aPlot unclaimed. You can claim a new one with §f/plot claim§a.");
+                    p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§aPlot unclaimed. You can claim a new one with §f/plot claim§a."));
                 }
                 return true;
             }
+            case "settings": {
+                String err = pm.showPlotSettings(p);
+                if (err != null) p.sendMessage(err);
+                return true;
+            }
+            case "pvp":
+            case "fire":
+            case "public": {
+                if (args.length < 2) {
+                    p.sendMessage("§cUsage: §f/plot " + args[0].toLowerCase() + " on|off§c.");
+                    return true;
+                }
+                boolean on = args[1].equalsIgnoreCase("on");
+                if (!on && !args[1].equalsIgnoreCase("off")) {
+                    p.sendMessage("§cUsage: §f/plot " + args[0].toLowerCase() + " on|off§c.");
+                    return true;
+                }
+                String err = pm.setPlotToggle(p, args[0].toLowerCase(), on);
+                if (err != null) p.sendMessage(err);
+                return true;
+            }
+            case "trust":
+            case "untrust":
+            case "container":
+            case "uncontainer": {
+                if (args.length < 2) {
+                    p.sendMessage("§cUsage: §f/plot " + args[0].toLowerCase() + " <player>§c.");
+                    return true;
+                }
+                boolean add = args[0].equalsIgnoreCase("trust") || args[0].equalsIgnoreCase("container");
+                String err = pm.setPlotTrust(p, args[0].toLowerCase(), add, args[1]);
+                if (err != null) p.sendMessage(err);
+                return true;
+            }
             default:
-                p.sendMessage("§7Unknown subcommand. Use §f/plot claim§7, §f/plot home§7, §f/plot name§7, §f/plot warp§7, or §f/plot unclaim§7.");
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Unknown subcommand. Use §f/plot claim§7, §f/plot home§7, §f/plot name§7, §f/plot warp§7, §f/plot settings§7, or §f/plot unclaim§7."));
                 return true;
         }
     }
@@ -162,14 +200,32 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
         }
         // /plot tab completion
         if (args.length == 1) {
-            List<String> subs = new ArrayList<>(List.of("claim", "home", "name", "warp", "unclaim"));
+            List<String> subs = new ArrayList<>(List.of("claim", "home", "name", "warp", "unclaim",
+                    "settings", "pvp", "fire", "public", "trust", "untrust", "container", "uncontainer"));
             return subs.stream().filter(s -> s.startsWith(args[0].toLowerCase())).toList();
         }
         if (args.length == 2) {
             if (args[0].equalsIgnoreCase("warp") || args[0].equalsIgnoreCase("name")) {
                 return plugin.plotManager().getPlayerPlotNames(p);
             }
+            if (args[0].equalsIgnoreCase("pvp") || args[0].equalsIgnoreCase("fire")
+                    || args[0].equalsIgnoreCase("public")) {
+                return List.of("on", "off").stream().filter(s -> s.startsWith(args[1].toLowerCase())).toList();
+            }
+            if (args[0].equalsIgnoreCase("trust") || args[0].equalsIgnoreCase("untrust")
+                    || args[0].equalsIgnoreCase("container") || args[0].equalsIgnoreCase("uncontainer")) {
+                return playerNames(args[1]);
+            }
         }
         return List.of();
+    }
+
+    /** Online player names matching the prefix, for access-management tab completion. */
+    private static List<String> playerNames(String prefix) {
+        String q = prefix.toLowerCase();
+        return org.bukkit.Bukkit.getOnlinePlayers().stream()
+                .map(org.bukkit.entity.Player::getName)
+                .filter(n -> n.toLowerCase().startsWith(q))
+                .toList();
     }
 }

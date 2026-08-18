@@ -45,7 +45,7 @@ public final class RoomEditor {
         org.bukkit.World w = editorWorld.getEditorWorld();
         if (w == null) { p.sendMessage("§cCould not create editor world."); return; }
         p.teleport(new org.bukkit.Location(w, 0.5, RoomChunkGenerator.SURFACE_Y + 1, 0.5));
-        p.sendMessage("§7Welcome to the §9room editor§7. Type §f/room help§7.");
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Welcome to the §9room editor§7. Type §f/room help§7."));
     }
 
     /** Write the template JSON and an integration manifest to the export dir. Returns written files. */

@@ -20,12 +20,14 @@ import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
+import java.util.List;
 import java.util.UUID;
 
-public final class DungCommand implements CommandExecutor {
+public final class DungCommand implements CommandExecutor, TabCompleter {
     private final Dung plugin;
 
     public DungCommand(Dung plugin) {
@@ -103,7 +105,7 @@ public final class DungCommand implements CommandExecutor {
         switch (sub) {
             case "start":
                 if (gm.isInInstance(p)) {
-                    p.sendMessage("§cYou're already in a run. Use /dung leave first.");
+                    p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYou're already in a run. Use /dung leave first."));
                     return true;
                 }
                 // Check if player is in a party
@@ -180,7 +182,7 @@ public final class DungCommand implements CommandExecutor {
         if (args.length == 0) {
             Party party = pm.partyOf(p);
             if (party == null) {
-                p.sendMessage("§7You are not in a party. Use §f/party create§7 to start one.");
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7You are not in a party. Use §f/party create§7 to start one."));
                 p.sendMessage("§7Commands: §fcreate, invite <player>, accept, decline, leave, kick <player>, disband, info");
                 return true;
             }
@@ -201,11 +203,11 @@ public final class DungCommand implements CommandExecutor {
                     return true;
                 }
                 pm.createParty(p);
-                p.sendMessage("§aParty created! Invite players with §f/party invite <player>");
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§aParty created! Invite players with §f/party invite <player>"));
                 return true;
             }
             case "invite": {
-                if (args.length < 2) { p.sendMessage("§cUsage: /party invite <player>"); return true; }
+                if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: /party invite <player>")); return true; }
                 Player target = Bukkit.getPlayer(args[1]);
                 if (target == null) { p.sendMessage("§cPlayer not found."); return true; }
                 if (target.equals(p)) { p.sendMessage("§cYou can't invite yourself."); return true; }
@@ -258,7 +260,7 @@ public final class DungCommand implements CommandExecutor {
                 return true;
             }
             case "kick": {
-                if (args.length < 2) { p.sendMessage("§cUsage: /party kick <player>"); return true; }
+                if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: /party kick <player>")); return true; }
                 Player target = Bukkit.getPlayer(args[1]);
                 if (target == null) { p.sendMessage("§cPlayer not found."); return true; }
                 if (pm.kick(p, target)) {
@@ -290,7 +292,7 @@ public final class DungCommand implements CommandExecutor {
 
     private boolean shopCmd(Player p, String[] args) {
         if (plugin.game().isInInstance(p)) {
-            p.sendMessage("§cYou can't use /shop while inside a dungeon run. Leave with /dung leave first.");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYou can't use /shop while inside a dungeon run. Leave with /dung leave first."));
             return true;
         }
         plugin.shopUI().openPersistentShop(p);
@@ -301,7 +303,7 @@ public final class DungCommand implements CommandExecutor {
 
     private boolean upgradesCmd(Player p, String[] args) {
         if (plugin.game().isInInstance(p)) {
-            p.sendMessage("§cYou can't use /upgrades while inside a dungeon run. Leave with /dung leave first.");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYou can't use /upgrades while inside a dungeon run. Leave with /dung leave first."));
             return true;
         }
         plugin.shopUI().openUpgrades(p);
@@ -323,7 +325,7 @@ public final class DungCommand implements CommandExecutor {
     private boolean salvageHeld(Player p) {
         GameManager gm = plugin.game();
         if (!gm.isInInstance(p)) {
-            p.sendMessage("§cSalvage only works while inside a run. Start one with /dung start.");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cSalvage only works while inside a run. Start one with /dung start."));
             return true;
         }
         DungeonInstance di = gm.instanceOf(p);
@@ -335,7 +337,7 @@ public final class DungCommand implements CommandExecutor {
             return true;
         }
         if (com.lieyabull.dung.items.GearFactory.isFavorite(held)) {
-            p.sendMessage("§8That armor is §bfavorited§8. Run §f/salvage favorite§8 to un-favorite it first.");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§8That armor is §bfavorited§8. Run §f/salvage favorite§8 to un-favorite it first."));
             return true;
         }
         if (com.lieyabull.dung.items.GearFactory.isStarter(held)) {
@@ -373,7 +375,7 @@ public final class DungCommand implements CommandExecutor {
     private boolean salvageAll(Player p) {
         GameManager gm = plugin.game();
         if (!gm.isInInstance(p)) {
-            p.sendMessage("§cSalvage only works while inside a run. Start one with /dung start.");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cSalvage only works while inside a run. Start one with /dung start."));
             return true;
         }
         DungeonInstance di = gm.instanceOf(p);
@@ -479,6 +481,76 @@ public final class DungCommand implements CommandExecutor {
 
     // ---------- leaderboard ----------
 
+    private static final String[] DUNG_SUBS = {
+            "start", "leave", "descend", "stats", "class", "give", "shieldswitch",
+            "party", "shop", "upgrades", "salvage", "balance", "bossbar", "stop", "reset", "help"
+    };
+    private static final String[] PARTY_SUBS = {"create", "invite", "accept", "decline", "leave", "kick", "disband", "info"};
+    private static final String[] CLASSES = {"warrior", "mage", "ranger"};
+    private static final String[] GIVE_TYPES = {"rareweapon", "heal", "coins"};
+    private static final String[] SALVAGE_SUBS = {"all", "favorite", "fav"};
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
+        if (!(sender instanceof Player p)) return List.of();
+        String label = cmd.getName().toLowerCase();
+        if (label.equals("dung") || label.equals("dungeon")) {
+            if (args.length == 1) return filter(DUNG_SUBS, args[0]);
+            if (args.length == 2) {
+                return switch (args[0].toLowerCase()) {
+                    case "give" -> filter(GIVE_TYPES, args[1]);
+                    case "class" -> filter(CLASSES, args[1]);
+                    case "party" -> filter(PARTY_SUBS, args[1]);
+                    default -> List.of();
+                };
+            }
+            if (args.length >= 3 && args[0].equalsIgnoreCase("party")) {
+                String sub = args[1].toLowerCase();
+                if (sub.equals("invite") || sub.equals("kick")) return playerNames(args[2]);
+            }
+            return List.of();
+        }
+        if (label.equals("party")) {
+            if (args.length == 1) return filter(PARTY_SUBS, args[0]);
+            if (args.length == 2) {
+                String sub = args[0].toLowerCase();
+                if (sub.equals("invite") || sub.equals("kick")) return playerNames(args[1]);
+            }
+            return List.of();
+        }
+        if (label.equals("salvage")) {
+            if (args.length == 1) return filter(SALVAGE_SUBS, args[0]);
+            return List.of();
+        }
+        if (label.equals("leaderboard")) {
+            if (args.length == 1) return filter(LB_CATEGORIES, args[0]);
+            if (args.length == 2) return filter(new String[]{"1", "2", "3", "4", "5"}, args[1]);
+            return List.of();
+        }
+        // shop, upgrades, balance: no arguments
+        return List.of();
+    }
+
+    /** Return the options in {@code opts} that start with the given (case-insensitive) prefix. */
+    private static List<String> filter(String[] opts, String prefix) {
+        String q = prefix.toLowerCase();
+        java.util.ArrayList<String> out = new java.util.ArrayList<>();
+        for (String o : opts) {
+            if (o.toLowerCase().startsWith(q)) out.add(o);
+        }
+        return out;
+    }
+
+    /** Return the names of online players starting with the given prefix. */
+    private static List<String> playerNames(String prefix) {
+        String q = prefix.toLowerCase();
+        java.util.ArrayList<String> out = new java.util.ArrayList<>();
+        for (Player pl : Bukkit.getOnlinePlayers()) {
+            if (pl.getName().toLowerCase().startsWith(q)) out.add(pl.getName());
+        }
+        return out;
+    }
+
     private static final String[] LB_CATEGORIES = {
             "persistent_coins", "shards", "kills", "clears", "max_floor"
     };
@@ -491,34 +563,25 @@ public final class DungCommand implements CommandExecutor {
         int catIdx = 0; // default: persistent_coins
         int page = 1;
 
-        if (args.length > 1) {
+        // args layout: /leaderboard <category> <page> (args[0] = category, args[1] = page)
+        if (args.length > 0) {
             for (int i = 0; i < LB_CATEGORIES.length; i++) {
-                if (LB_CATEGORIES[i].equalsIgnoreCase(args[1])) {
+                if (LB_CATEGORIES[i].equalsIgnoreCase(args[0])) {
                     catIdx = i;
                     break;
                 }
             }
         }
-        if (args.length > 2) {
+        if (args.length > 1) {
             try {
-                page = Math.max(1, Integer.parseInt(args[2]));
+                page = Math.max(1, Integer.parseInt(args[1]));
             } catch (NumberFormatException ignored) {}
         }
 
-        // Collect all profiles
+        // Collect all saved profiles (including offline players) from the save file.
         var meta = plugin.meta();
-        java.util.List<java.util.Map.Entry<java.util.UUID, MetaManager.MetaProfile>> sorted = new java.util.ArrayList<>();
-        try {
-            var field = MetaManager.class.getDeclaredField("profiles");
-            field.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            java.util.Map<java.util.UUID, MetaManager.MetaProfile> map =
-                    (java.util.Map<java.util.UUID, MetaManager.MetaProfile>) field.get(meta);
-            sorted.addAll(map.entrySet());
-        } catch (Exception e) {
-            p.sendMessage("§cError reading profiles.");
-            return;
-        }
+        java.util.List<java.util.Map.Entry<java.util.UUID, MetaManager.MetaProfile>> sorted =
+                new java.util.ArrayList<>(meta.allProfiles().entrySet());
 
         // Sort by the selected category descending
         java.util.Comparator<java.util.Map.Entry<java.util.UUID, MetaManager.MetaProfile>> comp;
@@ -553,8 +616,13 @@ public final class DungCommand implements CommandExecutor {
         } else {
             for (int i = start; i < end; i++) {
                 var entry = sorted.get(i);
-                String name = org.bukkit.Bukkit.getOfflinePlayer(entry.getKey()).getName();
+                // Prefer the persisted profile name (so offline players are shown too); fall back to
+                // Bukkit's offline lookup, then a placeholder.
+                String name = entry.getValue().name;
+                if (name == null) name = org.bukkit.Bukkit.getOfflinePlayer(entry.getKey()).getName();
                 if (name == null) name = "§7Unknown";
+                boolean online = org.bukkit.Bukkit.getPlayer(entry.getKey()) != null;
+                String suffix = online ? "" : " §8(offline)";
                 int rank = i + 1;
                 String rankStr = rank <= 3 ? getRankColor(rank) + "#" + rank : "§7#" + rank;
                 int value = switch (catIdx) {
@@ -565,7 +633,7 @@ public final class DungCommand implements CommandExecutor {
                     case 4 -> entry.getValue().bestFloor;
                     default -> 0;
                 };
-                p.sendMessage(rankStr + " §f" + name + " §7- §e" + value);
+                p.sendMessage(rankStr + " §f" + name + suffix + " §7- §e" + value);
             }
         }
 
@@ -603,9 +671,9 @@ public final class DungCommand implements CommandExecutor {
 
     private static String getRankColor(int rank) {
         return switch (rank) {
-            case 1 -> "§6"; // gold
-            case 2 -> "§7"; // silver
-            case 3 -> "§6"; // bronze-ish (gold on dark bg)
+            case 1 -> "§b"; // aqua
+            case 2 -> "§9"; // blue
+            case 3 -> "§1"; // dark blue
             default -> "§7";
         };
     }
@@ -648,7 +716,7 @@ public final class DungCommand implements CommandExecutor {
     }
 
     private void give(Player p, String[] args) {
-        if (args.length < 2) { p.sendMessage("§7Usage: /dung give <rareweapon|heal|coins>"); return; }
+        if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Usage: /dung give <rareweapon|heal|coins>")); return; }
         switch (args[1].toLowerCase()) {
             case "rareweapon":
                 // free debug spawn (no coin cost): real purchases go through /shop

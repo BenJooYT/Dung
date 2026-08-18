@@ -19,9 +19,12 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -50,13 +53,15 @@ public final class PlotManager {
 
     public static final int CLAIM_SHARD_COST = 250;
     public static final int CLAIM_COIN_COST = 150;
+    /** Each plot a player already owns multiplies the price of their next plot by this factor. */
+    public static final double PRICE_MULTIPLIER = 1.25;
 
     private final Dung plugin;
     private final File plotsFile;
     private final YamlConfiguration plotsData = new YamlConfiguration();
     private final Map<PlotCoord, PlotInfo> plots = new LinkedHashMap<>();
-    private final Map<UUID, PlotCoord> playerPlots = new LinkedHashMap<>();
     private final Map<String, PlotCoord> nameToPlot = new LinkedHashMap<>();
+    private long nextPlotId = 1;
     private World plotsWorld;
 
     public PlotManager(Dung plugin) {
@@ -94,8 +99,8 @@ public final class PlotManager {
     /** Wipe all plot data from memory and disk. */
     public void clearAll() {
         plots.clear();
-        playerPlots.clear();
         nameToPlot.clear();
+        nextPlotId = 1;
         for (String key : plotsData.getKeys(false)) {
             plotsData.set(key, null);
         }
@@ -117,7 +122,7 @@ public final class PlotManager {
         // The cross-section center is at x=-1.5, z=-1.5
         Location spawn = new Location(w, -1.5, SURFACE_Y + 1, -1.5);
         p.teleport(spawn);
-        p.sendMessage("§aWelcome to the Plots! Use §f/plot claim§a to claim a plot.");
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§aWelcome to the Plots! Use §f/plot claim§a to claim a plot."));
     }
 
     // ==================== PLOT COORDINATES ====================
@@ -129,7 +134,13 @@ public final class PlotManager {
     public static final class PlotInfo {
         public UUID owner;
         public long claimedAt;
+        public long id; // globally unique, monotonically increasing plot id (never reused)
         public String name; // nullable — set when player names their plot
+        public boolean pvp;         // PVP allowed on this plot (default off)
+        public boolean fireSpread;  // fire may spread/burn on this plot (default off)
+        public boolean isPublic;    // anyone may build & open containers (default off)
+        public final Set<UUID> buildTrust = new LinkedHashSet<>();      // may build
+        public final Set<UUID> containerTrust = new LinkedHashSet<>();  // may open containers
 
         public PlotInfo(UUID owner, long claimedAt) {
             this.owner = owner;
@@ -138,8 +149,7 @@ public final class PlotManager {
         }
 
         public PlotInfo(UUID owner, long claimedAt, String name) {
-            this.owner = owner;
-            this.claimedAt = claimedAt;
+            this(owner, claimedAt);
             this.name = name;
         }
     }
@@ -178,6 +188,64 @@ public final class PlotManager {
         return dx >= 0 && dx <= PLOT_SIZE + 1 && dz >= 0 && dz <= PLOT_SIZE + 1;
     }
 
+    /** True if the location lies in a 2-wide path band between plots (i.e. NOT buildable area). */
+    public boolean isPathLocation(Location loc) {
+        PlotCoord coord = plotAt(loc);
+        if (coord == null) return false;
+        Location origin = plotOrigin(coord);
+        if (origin == null) return false;
+        int dx = loc.getBlockX() - origin.getBlockX();
+        int dz = loc.getBlockZ() - origin.getBlockZ();
+        return (dx >= PLOT_SIZE + 2 && dx <= PLOT_SIZE + 3) || (dx >= -2 && dx <= -1)
+                || (dz >= PLOT_SIZE + 2 && dz <= PLOT_SIZE + 3) || (dz >= -2 && dz <= -1);
+    }
+
+    /** The two plots on either side of a path location, IF both are owned by the given player
+     *  (i.e. it's their shared path). Empty list otherwise. */
+    public List<PlotCoord> sharedPathPlots(Player p, Location loc) {
+        List<PlotCoord> out = new ArrayList<>();
+        if (!isPathLocation(loc)) return out;
+        PlotCoord coord = plotAt(loc);
+        if (coord == null) return out;
+        Location origin = plotOrigin(coord);
+        if (origin == null) return out;
+        int dx = loc.getBlockX() - origin.getBlockX();
+        int dz = loc.getBlockZ() - origin.getBlockZ();
+        PlotCoord neighbor;
+        if (dx >= PLOT_SIZE + 2 && dx <= PLOT_SIZE + 3) {
+            neighbor = new PlotCoord(coord.x() + 1, coord.z());
+        } else if (dx >= -2 && dx <= -1) {
+            neighbor = new PlotCoord(coord.x() - 1, coord.z());
+        } else if (dz >= PLOT_SIZE + 2 && dz <= PLOT_SIZE + 3) {
+            neighbor = new PlotCoord(coord.x(), coord.z() + 1);
+        } else if (dz >= -2 && dz <= -1) {
+            neighbor = new PlotCoord(coord.x(), coord.z() - 1);
+        } else {
+            return out;
+        }
+        PlotInfo a = plots.get(coord);
+        PlotInfo b = plots.get(neighbor);
+        UUID uid = p.getUniqueId();
+        if (a != null && b != null && uid.equals(a.owner) && uid.equals(b.owner)) {
+            out.add(coord);
+            out.add(neighbor);
+        }
+        return out;
+    }
+
+    /** True if the location is on the path between two plots BOTH owned by the given player.
+     *  Owning two neighbouring plots grants the owner build/access rights to the path between them. */
+    public boolean canUseSharedPath(Player p, Location loc) {
+        return !sharedPathPlots(p, loc).isEmpty();
+    }
+
+    /** True if both plots are claimed and share the same owner. */
+    private boolean sharedPathBetween(PlotCoord a, PlotCoord b) {
+        PlotInfo ai = plots.get(a);
+        PlotInfo bi = plots.get(b);
+        return ai != null && bi != null && ai.owner.equals(bi.owner);
+    }
+
     /**
      * If the player is standing on an unclaimed plot in the plots world, return that plot's
      * coordinate. Otherwise return null.
@@ -198,55 +266,57 @@ public final class PlotManager {
      *  If the player is standing on an unclaimed plot in the plots world, that plot will be
      *  claimed. Otherwise falls back to the spiral-assignment logic. */
     public void showClaimOptions(Player p) {
-        if (playerPlots.containsKey(p.getUniqueId())) {
-            p.sendMessage("§cYou already own a plot! Use §f/plot home§c to teleport to it.");
+        // Require the player to be standing on an unclaimed plot in the plots world.
+        PlotCoord standingOn = standingOnUnclaimedPlot(p);
+        if (standingOn == null) {
+            p.sendMessage("§cStand on an unclaimed plot in the plots world to claim it.");
             return;
         }
+        p.sendMessage("");
+        p.sendMessage("§6§lClaim Plot at §f(" + standingOn.x() + ", " + standingOn.z() + ")");
 
-        // Check if the player is standing on an unclaimed plot in the plots world
-        PlotCoord standingOn = standingOnUnclaimedPlot(p);
-        if (standingOn != null) {
-            p.sendMessage("");
-            p.sendMessage("§6§lClaim Plot at §f(" + standingOn.x() + ", " + standingOn.z() + ")");
-        } else {
-            p.sendMessage("");
-            p.sendMessage("§6§lClaim a Plot");
-        }
-
+        int owned = ownedPlotCount(p.getUniqueId());
+        int shardCost = claimShardCost(p.getUniqueId());
+        int coinCost = claimCoinCost(p.getUniqueId());
         MetaManager.MetaProfile profile = plugin.meta().profile(p.getUniqueId());
         p.sendMessage("§7  Your balance: §e" + profile.shards + " shards§7, §6" + profile.persistentCoins + " coins");
         p.sendMessage("");
+        if (owned == 0) {
+            p.sendMessage("§7  Price: §e" + CLAIM_SHARD_COST + " shards§7 / §6" + CLAIM_COIN_COST + " coins§7 (×" + PRICE_MULTIPLIER + " per plot you own).");
+        } else {
+            p.sendMessage("§7  You own §e" + owned + " plot(s)§7. This plot costs §e" + shardCost + " shards§7 / §6" + coinCost + " coins§7.");
+        }
 
-        boolean canShards = profile.shards >= CLAIM_SHARD_COST;
-        boolean canCoins = profile.persistentCoins >= CLAIM_COIN_COST;
+        boolean canShards = profile.shards >= shardCost;
+        boolean canCoins = profile.persistentCoins >= coinCost;
 
         if (!canShards && !canCoins) {
-            p.sendMessage("§cYou need §e" + CLAIM_SHARD_COST + " shards§c or §6" + CLAIM_COIN_COST + " coins§c to claim a plot.");
+            p.sendMessage("§cYou need §e" + shardCost + " shards§c or §6" + coinCost + " coins§c to claim a plot.");
             return;
         }
 
         // Clickable shard option
         net.kyori.adventure.text.Component shardOpt = net.kyori.adventure.text.Component.text("[ ", net.kyori.adventure.text.format.NamedTextColor.GRAY)
-                .append(net.kyori.adventure.text.Component.text("Buy with " + CLAIM_SHARD_COST + " Shards",
+                .append(net.kyori.adventure.text.Component.text("Buy with " + shardCost + " Shards",
                         canShards ? net.kyori.adventure.text.format.NamedTextColor.YELLOW : net.kyori.adventure.text.format.NamedTextColor.DARK_GRAY,
                         net.kyori.adventure.text.format.TextDecoration.BOLD))
                 .append(net.kyori.adventure.text.Component.text(" ]", net.kyori.adventure.text.format.NamedTextColor.GRAY));
         if (canShards) {
             shardOpt = shardOpt.hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(
-                    net.kyori.adventure.text.Component.text("Click to claim with " + CLAIM_SHARD_COST + " shards", net.kyori.adventure.text.format.NamedTextColor.GRAY)))
+                    net.kyori.adventure.text.Component.text("Click to claim with " + shardCost + " shards", net.kyori.adventure.text.format.NamedTextColor.GRAY)))
                     .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/plot claim shards"));
         }
         p.sendMessage(shardOpt);
 
         // Clickable coin option
         net.kyori.adventure.text.Component coinOpt = net.kyori.adventure.text.Component.text("[ ", net.kyori.adventure.text.format.NamedTextColor.GRAY)
-                .append(net.kyori.adventure.text.Component.text("Buy with " + CLAIM_COIN_COST + " Coins",
+                .append(net.kyori.adventure.text.Component.text("Buy with " + coinCost + " Coins",
                         canCoins ? net.kyori.adventure.text.format.NamedTextColor.GOLD : net.kyori.adventure.text.format.NamedTextColor.DARK_GRAY,
                         net.kyori.adventure.text.format.TextDecoration.BOLD))
                 .append(net.kyori.adventure.text.Component.text(" ]", net.kyori.adventure.text.format.NamedTextColor.GRAY));
         if (canCoins) {
             coinOpt = coinOpt.hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(
-                    net.kyori.adventure.text.Component.text("Click to claim with " + CLAIM_COIN_COST + " coins", net.kyori.adventure.text.format.NamedTextColor.GRAY)))
+                    net.kyori.adventure.text.Component.text("Click to claim with " + coinCost + " coins", net.kyori.adventure.text.format.NamedTextColor.GRAY)))
                     .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/plot claim coins"));
         }
         p.sendMessage(coinOpt);
@@ -257,48 +327,42 @@ public final class PlotManager {
      *  If the player is standing on an unclaimed plot in the plots world, that plot is claimed.
      *  Otherwise falls back to the spiral-assignment logic. */
     public String claimPlot(Player p, String paymentMethod) {
-        // Check if player already owns a plot
-        if (playerPlots.containsKey(p.getUniqueId())) {
-            return "§cYou already own a plot! Use §f/plot home§c to teleport to it.";
-        }
-
         MetaManager.MetaProfile profile = plugin.meta().profile(p.getUniqueId());
+        int shardCost = claimShardCost(p.getUniqueId());
+        int coinCost = claimCoinCost(p.getUniqueId());
 
         boolean useShards;
         if (paymentMethod.equalsIgnoreCase("shards")) {
-            if (profile.shards < CLAIM_SHARD_COST) {
-                return "§cYou need §e" + CLAIM_SHARD_COST + " shards§c, but you only have §e" + profile.shards + "§c.";
+            if (profile.shards < shardCost) {
+                return "§cYou need §e" + shardCost + " shards§c, but you only have §e" + profile.shards + "§c.";
             }
             useShards = true;
         } else if (paymentMethod.equalsIgnoreCase("coins")) {
-            if (profile.persistentCoins < CLAIM_COIN_COST) {
-                return "§cYou need §6" + CLAIM_COIN_COST + " coins§c, but you only have §6" + profile.persistentCoins + "§c.";
+            if (profile.persistentCoins < coinCost) {
+                return "§cYou need §6" + coinCost + " coins§c, but you only have §6" + profile.persistentCoins + "§c.";
             }
             useShards = false;
         } else {
             return "§cInvalid payment method. Use §f/plot claim shards§c or §f/plot claim coins§c.";
         }
 
-        // First check if the player is standing on an unclaimed plot in the plots world
+        // Require the player to be standing on an unclaimed plot in the plots world.
         PlotCoord coord = standingOnUnclaimedPlot(p);
         if (coord == null) {
-            // Fallback: find the next available plot via spiral search
-            coord = findAvailablePlot();
-            if (coord == null) {
-                return "§cNo available plots! This shouldn't happen.";
-            }
+            return "§cStand on an unclaimed plot in the plots world to claim it.";
         }
 
         // Charge the player
         if (useShards) {
-            profile.shards -= CLAIM_SHARD_COST;
+            profile.shards -= shardCost;
         } else {
-            profile.persistentCoins -= CLAIM_COIN_COST;
+            profile.persistentCoins -= coinCost;
         }
 
         // Claim the plot
-        plots.put(coord, new PlotInfo(p.getUniqueId(), System.currentTimeMillis()));
-        playerPlots.put(p.getUniqueId(), coord);
+        PlotInfo info = new PlotInfo(p.getUniqueId(), System.currentTimeMillis());
+        info.id = nextPlotId++;
+        plots.put(coord, info);
 
         // Build the plot (border, path, starter chest) BEFORE persisting so a crash
         // mid-claim can't leave a plot owned but never built.
@@ -312,20 +376,29 @@ public final class PlotManager {
         Location home = new Location(origin.getWorld(), origin.getBlockX() + 8.5, SURFACE_Y + 1, origin.getBlockZ() + 8.5);
         p.teleport(home);
 
-        String costStr = useShards ? "§e" + CLAIM_SHARD_COST + " shards" : "§6" + CLAIM_COIN_COST + " coins";
+        String costStr = useShards ? "§e" + shardCost + " shards" : "§6" + coinCost + " coins";
         p.sendMessage("§aPlot claimed for " + costStr + "!");
-        p.sendMessage("§aName your plot with §f/plot name <name>§a, or use §f/plot home§a to return later.");
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§aName your plot with §f/plot name <name>§a, or use §f/plot home§a to return later."));
         return null; // success
     }
 
-    /** Remove a player's plot claim and free it for re-claiming. Returns a message (null = success). */
+    /** Remove the player's claim on the plot they are currently standing on and free it for
+     *  re-claiming. Returns a message (null = success). */
     public String unclaimPlot(Player p) {
-        PlotCoord coord = playerPlots.remove(p.getUniqueId());
-        if (coord == null) {
-            return "§cYou don't have a plot to unclaim.";
+        Location loc = p.getLocation();
+        if (loc.getWorld() == null || !loc.getWorld().equals(plotsWorld)) {
+            return "§cStand on the plot you want to unclaim.";
         }
-        PlotInfo info = plots.remove(coord);
-        if (info != null && info.name != null) {
+        PlotCoord coord = plotAt(loc);
+        if (coord == null) {
+            return "§cStand on the plot you want to unclaim.";
+        }
+        PlotInfo info = plots.get(coord);
+        if (info == null || !info.owner.equals(p.getUniqueId())) {
+            return "§cYou don't own this plot.";
+        }
+        plots.remove(coord);
+        if (info.name != null) {
             nameToPlot.remove(info.name.toLowerCase());
         }
         // Remove the starter chest so the plot is clean for the next owner
@@ -345,11 +418,11 @@ public final class PlotManager {
         return null; // success
     }
 
-    /** Teleport a player to their claimed plot. */
+    /** Teleport a player to one of their claimed plots (the first one they own). */
     public boolean teleportToPlot(Player p) {
-        PlotCoord coord = playerPlots.get(p.getUniqueId());
-        if (coord == null) return false;
-        return teleportToCoord(p, coord);
+        List<PlotCoord> owned = ownedPlots(p.getUniqueId());
+        if (owned.isEmpty()) return false;
+        return teleportToCoord(p, owned.get(0));
     }
 
     /** Teleport a player to a specific plot coordinate. */
@@ -386,9 +459,9 @@ public final class PlotManager {
         if (name.isEmpty()) {
             return "§cPlot name cannot be empty.";
         }
-        PlotCoord coord = playerPlots.get(p.getUniqueId());
+        PlotCoord coord = standingOwnedPlot(p);
         if (coord == null) {
-            return "§cYou don't have a plot yet. Use §f/plot claim§c first.";
+            return "§cStand on a plot you own to name it.";
         }
         PlotInfo info = plots.get(coord);
         if (info == null) {
@@ -426,40 +499,160 @@ public final class PlotManager {
 
     /** Check if a player owns any plot. */
     public boolean hasPlot(Player p) {
-        return playerPlots.containsKey(p.getUniqueId());
+        return !ownedPlots(p.getUniqueId()).isEmpty();
+    }
+
+    /** All plot coordinates owned by a player (in claim order). */
+    public List<PlotCoord> ownedPlots(UUID owner) {
+        List<PlotCoord> out = new ArrayList<>();
+        for (Map.Entry<PlotCoord, PlotInfo> e : plots.entrySet()) {
+            if (owner.equals(e.getValue().owner)) out.add(e.getKey());
+        }
+        return out;
+    }
+
+    /** Number of plots a player currently owns. */
+    public int ownedPlotCount(UUID owner) {
+        return ownedPlots(owner).size();
+    }
+
+    /** Shard cost to claim a plot for the given owner (rises 1.25x per plot they already own). */
+    public int claimShardCost(UUID owner) {
+        return (int) Math.ceil(CLAIM_SHARD_COST * Math.pow(PRICE_MULTIPLIER, ownedPlotCount(owner)));
+    }
+
+    /** Coin cost to claim a plot for the given owner (rises 1.25x per plot they already own). */
+    public int claimCoinCost(UUID owner) {
+        return (int) Math.ceil(CLAIM_COIN_COST * Math.pow(PRICE_MULTIPLIER, ownedPlotCount(owner)));
+    }
+
+    /** The plot the player is standing on if they own it, else null. */
+    private PlotCoord standingOwnedPlot(Player p) {
+        if (p.getLocation().getWorld() == null || !p.getLocation().getWorld().equals(plotsWorld)) return null;
+        PlotCoord coord = plotAt(p.getLocation());
+        if (coord == null) return null;
+        PlotInfo info = plots.get(coord);
+        if (info == null || !info.owner.equals(p.getUniqueId())) return null;
+        return coord;
+    }
+
+    /** Get the PlotInfo for a coordinate, or null if unclaimed. */
+    public PlotInfo getInfo(PlotCoord coord) {
+        return plots.get(coord);
+    }
+
+    // ==================== PLOT SETTINGS ====================
+
+    private static final String ON = "§aON";
+    private static final String OFF = "§cOFF";
+
+    /** Resolve a player name to their UUID (offline-safe). */
+    private static UUID resolveUUID(String name) {
+        return Bukkit.getOfflinePlayer(name).getUniqueId();
+    }
+
+    /** Format a set of UUIDs as a comma-separated name list, falling back to a short UUID. */
+    private static String namesOf(Set<UUID> uuids) {
+        if (uuids.isEmpty()) return "§7none";
+        return uuids.stream()
+                .map(u -> {
+                    String n = Bukkit.getOfflinePlayer(u).getName();
+                    return n != null ? n : u.toString().substring(0, 8);
+                })
+                .collect(Collectors.joining(", "));
+    }
+
+    /** Show the settings for the plot(s) the player is standing on. When on a shared path between
+     *  two own plots, both are shown. Returns error msg or null. */
+    public String showPlotSettings(Player p) {
+        List<PlotCoord> coords = ownedPlotsForConfig(p);
+        if (coords.isEmpty()) return "§cStand on a plot you own to view its settings.";
+        for (PlotCoord c : coords) {
+            PlotInfo info = plots.get(c);
+            p.sendMessage("§6§lPlot " + plotLabel(c) + " settings");
+            p.sendMessage("  §7PVP: " + (info.pvp ? ON : OFF));
+            p.sendMessage("  §7Fire spread: " + (info.fireSpread ? ON : OFF));
+            p.sendMessage("  §7Public: " + (info.isPublic ? ON : OFF));
+            p.sendMessage("  §7Build access: " + namesOf(info.buildTrust));
+            p.sendMessage("  §7Container access: " + namesOf(info.containerTrust));
+        }
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Set these with §f/plot pvp|fire|public on|off§7, §f/plot trust|untrust <name>§7, §f/plot container|uncontainer <name>§7."));
+        return null;
+    }
+
+    /** Toggle a boolean setting on the plot(s) the player is standing on. If standing on a shared
+     *  path between two own plots, the change applies to BOTH and the player is told so. */
+    public String setPlotToggle(Player p, String setting, boolean value) {
+        List<PlotCoord> coords = ownedPlotsForConfig(p);
+        if (coords.isEmpty()) return "§cStand on a plot you own to change its settings.";
+        String label;
+        switch (setting) {
+            case "pvp" -> label = "PVP";
+            case "fire" -> label = "Fire spread";
+            case "public" -> label = "Public";
+            default -> { return "§cUnknown setting §f" + setting; }
+        }
+        for (PlotCoord c : coords) {
+            PlotInfo info = plots.get(c);
+            if (setting.equals("pvp")) info.pvp = value;
+            else if (setting.equals("fire")) info.fireSpread = value;
+            else info.isPublic = value;
+        }
+        save();
+        p.sendMessage("§a" + label + " set to " + (value ? "ON" : "OFF") + " on "
+                + affectedMessage(coords) + ".");
+        return null;
+    }
+
+    /** Add or remove a player to/from build or container trust on the plot(s) the player is
+     *  standing on. On a shared path this applies to both own plots. */
+    public String setPlotTrust(Player p, String kind, boolean add, String targetName) {
+        List<PlotCoord> coords = ownedPlotsForConfig(p);
+        if (coords.isEmpty()) return "§cStand on a plot you own to manage access.";
+        UUID id = resolveUUID(targetName);
+        boolean container = kind.toLowerCase().contains("container");
+        for (PlotCoord c : coords) {
+            PlotInfo info = plots.get(c);
+            Set<UUID> set = container ? info.containerTrust : info.buildTrust;
+            if (add) set.add(id); else set.remove(id);
+        }
+        save();
+        String access = (container ? "container" : "build") + " access";
+        String verb = add ? "granted §f" + targetName + "§a " + access : "revoked §f" + targetName + "§a from " + access;
+        p.sendMessage("§a" + verb + " on " + affectedMessage(coords) + ".");
+        return null;
+    }
+
+    /** "plot §fName§a" (one) or "2 plots: §fA§7, §fB§a" (multiple). */
+    private String affectedMessage(List<PlotCoord> coords) {
+        String names = coords.stream().map(this::plotLabel).collect(Collectors.joining("§7, §f"));
+        return coords.size() == 1
+                ? "plot §f" + names + "§a"
+                : coords.size() + " plots: §f" + names + "§a";
+    }
+
+    /** The owned plot(s) a config command should affect for this player: their standing plot, or
+     *  both plots when standing on a shared path between two of their own. Empty if none. */
+    private List<PlotCoord> ownedPlotsForConfig(Player p) {
+        List<PlotCoord> shared = sharedPathPlots(p, p.getLocation());
+        if (!shared.isEmpty()) return shared;
+        if (p.getLocation().getWorld() == null || !p.getLocation().getWorld().equals(plotsWorld)) return List.of();
+        PlotCoord coord = plotAt(p.getLocation());
+        if (coord == null) return List.of();
+        PlotInfo info = plots.get(coord);
+        if (info == null || !info.owner.equals(p.getUniqueId())) return List.of();
+        return List.of(coord);
+    }
+
+    /** Display label for a plot: its name if set, else its plot id. */
+    private String plotLabel(PlotCoord coord) {
+        PlotInfo info = plots.get(coord);
+        if (info != null && info.name != null) return info.name;
+        if (info != null) return "#" + info.id;
+        return "(" + coord.x() + ", " + coord.z() + ")";
     }
 
     // ==================== PLOT GENERATION ====================
-
-    /** Find the next available plot coordinate using a spiral search from (0,0). */
-    private PlotCoord findAvailablePlot() {
-        // Search in an expanding spiral
-        int radius = 0;
-        while (radius < 50) { // limit search radius
-            // Top row (z = -radius), left to right
-            for (int x = -radius; x <= radius; x++) {
-                PlotCoord c = new PlotCoord(x, -radius);
-                if (!plots.containsKey(c)) return c;
-            }
-            // Right column (x = radius), top to bottom
-            for (int z = -radius + 1; z <= radius; z++) {
-                PlotCoord c = new PlotCoord(radius, z);
-                if (!plots.containsKey(c)) return c;
-            }
-            // Bottom row (z = radius), right to left
-            for (int x = radius - 1; x >= -radius; x--) {
-                PlotCoord c = new PlotCoord(x, radius);
-                if (!plots.containsKey(c)) return c;
-            }
-            // Left column (x = -radius), bottom to top
-            for (int z = radius - 1; z > -radius; z--) {
-                PlotCoord c = new PlotCoord(-radius, z);
-                if (!plots.containsKey(c)) return c;
-            }
-            radius++;
-        }
-        return null; // shouldn't happen with a 50-radius spiral
-    }
 
     /** Pre-generate borders and paths for a small initial grid of plots around (0,0).
      *  Only generates a small area to avoid timeout. Plots outside this area get
@@ -505,7 +698,11 @@ public final class PlotManager {
         // --- Path: 2-block-wide stone brick paths (lowered by 1 block to sit at grass level) ---
         // Paths are cleared 2 blocks above (baseY+1..baseY+2) on every regen so leftover
         // blocks from previous generations don't linger above the walkway.
+        // A path side between two plots owned by the SAME player is exempt from this clear, so the
+        // owner's shared path between their neighbouring plots is preserved across a reload/regen.
+        PlotCoord self = new PlotCoord(px, pz);
         // Top path (z = -2 to -1)
+        if (!sharedPathBetween(self, new PlotCoord(px, pz - 1))) {
         for (int x = 0; x <= PLOT_SIZE + 1 + PATH_WIDTH; x++) {
             for (int pzOff = 1; pzOff <= PATH_WIDTH; pzOff++) {
                 setBlock(w, ox + x, baseY, oz - pzOff, Material.STONE_BRICKS);
@@ -513,7 +710,9 @@ public final class PlotManager {
                 setBlock(w, ox + x, baseY + 2, oz - pzOff, Material.AIR);
             }
         }
+        }
         // Bottom path (z = 18 to 19)
+        if (!sharedPathBetween(self, new PlotCoord(px, pz + 1))) {
         for (int x = 0; x <= PLOT_SIZE + 1 + PATH_WIDTH; x++) {
             for (int pzOff = 1; pzOff <= PATH_WIDTH; pzOff++) {
                 setBlock(w, ox + x, baseY, oz + PLOT_SIZE + 1 + pzOff, Material.STONE_BRICKS);
@@ -521,7 +720,9 @@ public final class PlotManager {
                 setBlock(w, ox + x, baseY + 2, oz + PLOT_SIZE + 1 + pzOff, Material.AIR);
             }
         }
+        }
         // Left path (x = -2 to -1)
+        if (!sharedPathBetween(self, new PlotCoord(px - 1, pz))) {
         for (int z = 0; z <= PLOT_SIZE + 1 + PATH_WIDTH; z++) {
             for (int px2 = 1; px2 <= PATH_WIDTH; px2++) {
                 setBlock(w, ox - px2, baseY, oz + z, Material.STONE_BRICKS);
@@ -529,13 +730,16 @@ public final class PlotManager {
                 setBlock(w, ox - px2, baseY + 2, oz + z, Material.AIR);
             }
         }
+        }
         // Right path (x = 18 to 19)
+        if (!sharedPathBetween(self, new PlotCoord(px + 1, pz))) {
         for (int z = 0; z <= PLOT_SIZE + 1 + PATH_WIDTH; z++) {
             for (int px2 = 1; px2 <= PATH_WIDTH; px2++) {
                 setBlock(w, ox + PLOT_SIZE + 1 + px2, baseY, oz + z, Material.STONE_BRICKS);
                 setBlock(w, ox + PLOT_SIZE + 1 + px2, baseY + 1, oz + z, Material.AIR);
                 setBlock(w, ox + PLOT_SIZE + 1 + px2, baseY + 2, oz + z, Material.AIR);
             }
+        }
         }
     }
 
@@ -590,13 +794,30 @@ public final class PlotManager {
                 PlotInfo info = name != null && !name.isEmpty()
                         ? new PlotInfo(owner, claimedAt, name)
                         : new PlotInfo(owner, claimedAt);
+                info.pvp = plotsData.getBoolean(key + ".pvp", false);
+                info.fireSpread = plotsData.getBoolean(key + ".fireSpread", false);
+                info.isPublic = plotsData.getBoolean(key + ".public", false);
+                info.id = plotsData.getLong(key + ".id", 0);
+                for (String u : plotsData.getStringList(key + ".buildTrust")) {
+                    try { info.buildTrust.add(UUID.fromString(u)); } catch (IllegalArgumentException ignored) {}
+                }
+                for (String u : plotsData.getStringList(key + ".containerTrust")) {
+                    try { info.containerTrust.add(UUID.fromString(u)); } catch (IllegalArgumentException ignored) {}
+                }
                 plots.put(coord, info);
-                playerPlots.put(owner, coord);
                 if (info.name != null) {
                     String nk = info.name.toLowerCase();
                     if (!nameToPlot.containsKey(nk)) {
                         nameToPlot.put(nk, coord);
                     }
+                }
+            }
+            // Compute the next id and backfill any legacy plots saved without an id.
+            long maxId = plots.values().stream().mapToLong(i -> i.id).max().orElse(0);
+            nextPlotId = maxId + 1;
+            for (PlotInfo i : plots.values()) {
+                if (i.id == 0) {
+                    i.id = nextPlotId++;
                 }
             }
         } catch (Exception e) {
@@ -622,9 +843,15 @@ public final class PlotManager {
                 String key = e.getKey().x() + "," + e.getKey().z();
                 plotsData.set(key + ".owner", e.getValue().owner.toString());
                 plotsData.set(key + ".claimedAt", e.getValue().claimedAt);
+                plotsData.set(key + ".id", e.getValue().id);
                 if (e.getValue().name != null) {
                     plotsData.set(key + ".name", e.getValue().name);
                 }
+                plotsData.set(key + ".pvp", e.getValue().pvp);
+                plotsData.set(key + ".fireSpread", e.getValue().fireSpread);
+                plotsData.set(key + ".public", e.getValue().isPublic);
+                plotsData.set(key + ".buildTrust", e.getValue().buildTrust.stream().map(UUID::toString).collect(Collectors.toList()));
+                plotsData.set(key + ".containerTrust", e.getValue().containerTrust.stream().map(UUID::toString).collect(Collectors.toList()));
             }
             plotsFile.getParentFile().mkdirs();
             File tmp = new File(plotsFile.getParentFile(), plotsFile.getName() + ".tmp");
@@ -640,15 +867,16 @@ public final class PlotManager {
         }
     }
 
-    /** Get the plot info for a player's plot, or null. */
+    /** Get the plot info for a player's first plot, or null. */
     public PlotInfo getPlayerPlot(Player p) {
-        PlotCoord coord = playerPlots.get(p.getUniqueId());
-        if (coord == null) return null;
-        return plots.get(coord);
+        List<PlotCoord> owned = ownedPlots(p.getUniqueId());
+        if (owned.isEmpty()) return null;
+        return plots.get(owned.get(0));
     }
 
-    /** Get the plot coordinate for a player's plot, or null. */
+    /** Get the coordinate of a player's first plot, or null. */
     public PlotCoord getPlayerPlotCoord(Player p) {
-        return playerPlots.get(p.getUniqueId());
+        List<PlotCoord> owned = ownedPlots(p.getUniqueId());
+        return owned.isEmpty() ? null : owned.get(0);
     }
 }

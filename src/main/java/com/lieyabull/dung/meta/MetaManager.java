@@ -49,6 +49,7 @@ public final class MetaManager {
             for (Map.Entry<UUID, MetaProfile> e : profiles.entrySet()) {
                 String key = e.getKey().toString();
                 MetaProfile prof = e.getValue();
+                data.set(key + ".name", prof.name);
                 data.set(key + ".coins", prof.persistentCoins);
                 data.set(key + ".deaths", prof.deaths);
                 data.set(key + ".clears", prof.clears);
@@ -89,6 +90,7 @@ public final class MetaManager {
         return profiles.computeIfAbsent(id, k -> {
             String key = id.toString();
             MetaProfile p = new MetaProfile();
+            p.name = data.getString(key + ".name");
             p.persistentCoins = data.getInt(key + ".coins", 0);
             p.deaths = data.getInt(key + ".deaths", 0);
             p.clears = data.getInt(key + ".clears", 0);
@@ -128,7 +130,26 @@ public final class MetaManager {
         profile(id).persistentCoins += amount;
     }
 
+    /** Record a player's current name on their profile (so offline players show names on the
+     *  leaderboard even though Bukkit can't resolve an offline player's name). */
+    public void setName(UUID id, String name) {
+        if (name != null) profile(id).name = name;
+    }
+
+    /** All saved profiles (including offline players), loaded from the save file. Players who have
+     *  never had a profile created in-memory this session are still included here. */
+    public Map<UUID, MetaProfile> allProfiles() {
+        Map<UUID, MetaProfile> all = new LinkedHashMap<>();
+        for (String key : data.getKeys(false)) {
+            try {
+                all.put(UUID.fromString(key), profile(UUID.fromString(key)));
+            } catch (IllegalArgumentException ignored) {}
+        }
+        return all;
+    }
+
     public static final class MetaProfile {
+        public String name;
         public int persistentCoins;
         public int shards;
         public final Map<String, Integer> upgrades = new LinkedHashMap<>();

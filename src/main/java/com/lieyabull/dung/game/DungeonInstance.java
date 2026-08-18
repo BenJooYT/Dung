@@ -286,7 +286,7 @@ public final class DungeonInstance {
                 p.sendMessage("§7Class Ability: §fSneak + Drop (Q)    §7Heal: pick up §c♥§7 hearts");
                 p.sendMessage("§7Keys & Bombs appear in hotbar slots 7-8. Right-click locked doors with a key, cracked walls with a bomb.");
                 p.sendMessage("§7Equip a Mana Shield in slot 9 — hold it and sneak to charge it with mana.");
-                p.sendMessage("§7Salvage spare armor: §f/salvage§7. Exit: §f/dung leave");
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Salvage spare armor: §f/salvage§7. Exit: §f/dung leave"));
             }
         }
         plugin.meta().save();
@@ -540,7 +540,7 @@ public final class DungeonInstance {
                 boolean broken = GearFactory.damageItem(s, dmg);
                 if (broken) {
                     inv.setItem(slot, null);
-                    p.sendMessage("§cYour " + (s.getItemMeta() != null ? s.getItemMeta().getDisplayName() : s.getType().name()) + " §c broke from the descent! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability).");
+                    p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour " + (s.getItemMeta() != null ? s.getItemMeta().getDisplayName() : s.getType().name()) + " §c broke from the descent! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));
                 }
             }
         }
@@ -1450,6 +1450,11 @@ public final class DungeonInstance {
 
         // Check if the held weapon is Life Drain (Soul Siphon) for stored health tracking
         ItemStack held = p.getInventory().getItemInMainHand();
+        // A broken weapon can't be used to attack until it is repaired (but it stays in the inventory).
+        if (GearFactory.isPersistent(held) && GearFactory.isBroken(held)) {
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour weapon is broken — repair it at §6/shop§7 before attacking."));
+            return;
+        }
         boolean isLifeDrain = held != null && !held.getType().isAir()
                 && held.getItemMeta() != null
                 && held.getItemMeta().getPersistentDataContainer()
@@ -1589,6 +1594,11 @@ public final class DungeonInstance {
             p.sendMessage("§cToo fast!");
             return;
         }
+        // A broken weapon cannot be used (its ability is unusable) until it is repaired.
+        if (GearFactory.isPersistent(item) && GearFactory.isBroken(item)) {
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cThis item is broken — repair it at §6/shop§7 before using its ability."));
+            return;
+        }
         st.spendMana(cost);
         st.startCooldown(PlayerState.GCD_KEY, PlayerState.GCD_MS);
         st.startCooldown(id, cd);
@@ -1598,8 +1608,9 @@ public final class DungeonInstance {
             int dmg = ThreadLocalRandom.current().nextInt(1, 3); // 1 or 2
             boolean broken = GearFactory.damageItem(item, dmg);
             if (broken) {
-                p.getInventory().setItemInMainHand(null);
-                p.sendMessage("§cYour " + item.getItemMeta().getDisplayName() + " §c broke! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability).");
+                // Keep the broken item in the inventory (it can be repaired at the shop); it is no
+                // longer usable until repaired.
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour " + item.getItemMeta().getDisplayName() + " §c broke and can no longer be used! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));
             }
         }
     }
@@ -1822,6 +1833,9 @@ public final class DungeonInstance {
                     if (toBoss.length() < 12.0 && toBoss.clone().normalize().dot(dir) > 0.7) {
                         // Treat boss as primary — damage it directly
                         boss.damage(dmg * 2.0, caster);
+                        // Draw the bolt from the caster's position to the boss
+                        drawLightningArcLinger(world, caster.getLocation().clone().add(0, 1, 0),
+                                boss.location().clone().add(0, 1, 0));
                         primary = null; // skip chain from boss
                     }
                 }
@@ -1829,6 +1843,11 @@ public final class DungeonInstance {
                     // Primary target takes dmg * 2.0
                     final Enemy primaryTarget = primary; // effectively final for lambda
                     primary.damage(dmg * 2.0, caster, 0, 0);
+                    // Draw the first bolt from the caster's position to the primary target, so the
+                    // chain lightning visually originates from the player rather than appearing as a
+                    // slash at the target cluster.
+                    drawLightningArcLinger(world, caster.getLocation().clone().add(0, 1, 0),
+                            primary.entity.getLocation().clone().add(0, 1, 0));
                     // Chain to up to 3 other nearest enemies (excluding primary)
                     double[] chainMults = {1.6, 1.2, 0.9};
                     List<Enemy> others = new java.util.ArrayList<>();
@@ -2349,7 +2368,10 @@ public final class DungeonInstance {
             net.kyori.adventure.text.Component btn = net.kyori.adventure.text.Component.text("[Descend]", net.kyori.adventure.text.format.NamedTextColor.GREEN, net.kyori.adventure.text.format.TextDecoration.BOLD)
                     .hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(net.kyori.adventure.text.Component.text("Click to descend to the next floor", net.kyori.adventure.text.format.NamedTextColor.GRAY)))
                     .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/dung descend"));
-            p.sendMessage(msg.append(btn));
+            net.kyori.adventure.text.Component endBtn = net.kyori.adventure.text.Component.text(" [End Run]", net.kyori.adventure.text.format.NamedTextColor.RED, net.kyori.adventure.text.format.TextDecoration.BOLD)
+                    .hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(net.kyori.adventure.text.Component.text("Leave the run and return to the hub", net.kyori.adventure.text.format.NamedTextColor.GRAY)))
+                    .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/dung leave"));
+            p.sendMessage(msg.append(btn).append(endBtn));
         }
     }
 
@@ -2548,6 +2570,33 @@ public final class DungeonInstance {
         world.playSound(key, org.bukkit.Sound.ENTITY_ITEM_PICKUP, 1.0f, 1.0f);
         world.spawnParticle(org.bukkit.Particle.ENCHANTED_HIT, key.clone().add(0.5, 1.2, 0.5), 15, 0.3, 0.3, 0.3, 0.1);
         return true;
+    }
+
+    /** True if the given block location is a tracked pedestal (slab + item frame). */
+    public boolean isPedestal(Location blockLoc) {
+        return pedestals.contains(new Location(world, blockLoc.getBlockX(), blockLoc.getBlockY(), blockLoc.getBlockZ()));
+    }
+
+    /** True if the item is an armor piece (helmet, chestplate, leggings, boots). */
+    private static boolean isArmorPiece(ItemStack s) {
+        if (s == null || s.getType() == Material.AIR) return false;
+        String n = s.getType().name();
+        return n.endsWith("_HELMET") || n.endsWith("_CHESTPLATE")
+                || n.endsWith("_LEGGINGS") || n.endsWith("_BOOTS");
+    }
+
+    /** Remove any free starter-kit armor piece that has been displaced out of its armor slot (i.e. the
+     *  player swapped in different armor). Starter armor is disposable: once replaced it is deleted
+     *  rather than left to clutter the inventory. Only main-storage/hotbar slots are scanned (armor
+     *  occupies slots 36-39), so equipped starter armor is untouched. */
+    public void removeDisplacedStarterArmor(Player p) {
+        PlayerInventory inv = p.getInventory();
+        for (int i = 0; i < 36; i++) {
+            ItemStack s = inv.getItem(i);
+            if (s != null && GearFactory.isStarter(s) && isArmorPiece(s)) {
+                inv.setItem(i, null);
+            }
+        }
     }
 
     /** Remove all pedestal item frames, armor stands, and blocks. */
@@ -2899,46 +2948,45 @@ public final class DungeonInstance {
         if (st == null) return;
         PlayerInventory inv = p.getInventory();
 
-        // Slot 7 (index 6): Key item
-        ItemStack keyItem = inv.getItem(KEY_SLOT);
-        if (st.keys > 0) {
-            ItemStack expected = makeKeyItem();
-            expected.setAmount(Math.min(st.keys, 64));
-            if (!itemsMatch(keyItem, expected)) {
-                inv.setItem(KEY_SLOT, expected);
-            }
-        } else {
-            if (keyItem != null && isRunItem(keyItem)) {
-                inv.setItem(KEY_SLOT, null);
-            }
-            // Show empty placeholder if the slot is empty or has a non-run item
-            ItemStack cur = inv.getItem(KEY_SLOT);
-            if (cur == null || cur.getType() == Material.AIR || !isRunItem(cur)) {
-                inv.setItem(KEY_SLOT, makeEmptySlotItem());
-            }
-        }
-
-        // Slot 8 (index 7): Bomb item
-        ItemStack bombItem = inv.getItem(BOMB_SLOT);
-        if (st.bombs > 0) {
-            ItemStack expected = makeBombItem();
-            expected.setAmount(Math.min(st.bombs, 64));
-            if (!itemsMatch(bombItem, expected)) {
-                inv.setItem(BOMB_SLOT, expected);
-            }
-        } else {
-            if (bombItem != null && isRunItem(bombItem)) {
-                inv.setItem(BOMB_SLOT, null);
-            }
-            // Show empty placeholder if the slot is empty or has a non-run item
-            ItemStack cur = inv.getItem(BOMB_SLOT);
-            if (cur == null || cur.getType() == Material.AIR || !isRunItem(cur)) {
-                inv.setItem(BOMB_SLOT, makeEmptySlotItem());
-            }
-        }
+        syncCountedSlot(inv, KEY_SLOT, st.keys, makeKeyItem());
+        syncCountedSlot(inv, BOMB_SLOT, st.bombs, makeBombItem());
 
         // Slot 9 (index 8): Mana Shield item. A shield here is the active mana shield.
         syncShieldSlot(p);
+    }
+
+    /** Keep a counted run-item slot (key/bomb) in sync with its PlayerState count without re-sending
+     *  the slot every tick. When the count is 0 a leftover real key/bomb is cleared so the empty
+     *  placeholder can show, but the placeholder itself is never touched once it is in place — so it
+     *  does not flicker or get duplicated tick to tick. */
+    private void syncCountedSlot(PlayerInventory inv, int slot, int count, ItemStack item) {
+        ItemStack cur = inv.getItem(slot);
+        String kind = runItemKind(cur);
+        if (count > 0) {
+            ItemStack expected = item.clone();
+            expected.setAmount(Math.min(count, 64));
+            if (!itemsMatch(cur, expected)) inv.setItem(slot, expected);
+            return;
+        }
+        // count == 0: a leftover real key/bomb with nothing remaining is cleared so the placeholder
+        // can show. This only fires once (the placeholder itself is tagged "empty", not "key"/"bomb"),
+        // so it does not re-send the slot every tick.
+        if ("key".equals(kind) || "bomb".equals(kind)) {
+            inv.setItem(slot, null);
+            cur = inv.getItem(slot);
+        }
+        // Show the empty placeholder only if the slot isn't already holding one (no per-tick re-send).
+        if (cur == null || cur.getType() == Material.AIR || !isRunItem(cur)) {
+            inv.setItem(slot, makeEmptySlotItem());
+        }
+    }
+
+    /** The RUN_ITEM tag value for an item ("key", "bomb" or "empty"), or null if it isn't a run item. */
+    private static String runItemKind(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return null;
+        return s.getItemMeta().getPersistentDataContainer().get(
+                org.bukkit.NamespacedKey.minecraft(ItemTags.RUN_ITEM),
+                org.bukkit.persistence.PersistentDataType.STRING);
     }
 
     /** Keep the Mana Shield equip slot (slot 9, index 8) in sync. Slot 9 is a pure equip slot: a
@@ -2968,14 +3016,23 @@ public final class DungeonInstance {
         // The slot is empty of a shield. It is a manual equip slot, so we never pull a shield in
         // automatically — we only show an indicator: green when a shield is available to equip, the
         // standard empty placeholder when none is owned. First sweep away any stray panes so exactly
-        // one indicator exists, then refresh the slot with the correct one.
+        // one indicator exists, then refresh the slot with the correct one. A shield being dragged on
+        // the cursor (picked up from the inventory but not yet placed) still counts as "owned", so the
+        // green swappable pane stays up while the player moves a shield toward this slot.
         clearEquipIndicators(inv);
-        ItemStack indicator = (GearFactory.findShieldItem(inv) != null)
-                ? makeEquipSlotItem() : makeEmptySlotItem();
+        boolean hasShield = GearFactory.findShieldItem(inv) != null || shieldOnCursor(p);
+        ItemStack indicator = hasShield ? makeEquipSlotItem() : makeEmptySlotItem();
         ItemStack cur = inv.getItem(SHIELD_SLOT);
         if (cur == null || cur.getType() != indicator.getType()) {
             inv.setItem(SHIELD_SLOT, indicator);
         }
+    }
+
+    /** True if the player currently holds a mana shield on their inventory cursor (mid-drag from a
+     *  pickup). This is part of "owns a shield" so the slot-9 indicator stays a swappable green pane
+     *  while the player is moving a shield from their inventory into the equip slot. */
+    private static boolean shieldOnCursor(Player p) {
+        return GearFactory.isShield(p.getItemOnCursor());
     }
 
     /** Find the shield with the highest capacity in the inventory (main hand, offhand, then storage),
@@ -3214,11 +3271,11 @@ public final class DungeonInstance {
         p.sendMessage("§7  Persistent coins: §6" + prof.persistentCoins);
         p.sendMessage("§7  Progress: §f" + prof.clears + "§7 floors cleared, best §f" + prof.bestFloor + "§7, §f" + prof.kills + "§7 kills");
         if (prof.persistentCoins >= 20) {
-            p.sendMessage("§a  You have enough for: §f/shop weapon");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§a  You have enough for: §f/shop weapon"));
         } else {
-            p.sendMessage("§8  Need §6" + (20 - prof.persistentCoins) + "§8 more coins for a weapon (/shop weapon)");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§8  Need §6" + (20 - prof.persistentCoins) + "§8 more coins for a weapon (/shop weapon)"));
         }
-        p.sendMessage("§7  Try /shop, /upgrades, or /dung start to go again.");
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7  Try /shop, /upgrades, or /dung start to go again."));
 
         // Set player to spectator mode — they stay in the instance and can be revived
         // if the boss is defeated. They remain at their death location as a spectator.
@@ -3437,7 +3494,7 @@ public final class DungeonInstance {
                     break;
                 }
             }
-            p.sendMessage("§cYour " + s.getItemMeta().getDisplayName() + " §c broke! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability).");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour " + s.getItemMeta().getDisplayName() + " §c broke! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));
         }
     }
 
@@ -3471,8 +3528,12 @@ public final class DungeonInstance {
             deliverPendingPersists(p);
             // Damage persistent gear after restoring the snapshot so the damage is applied
             // to the final inventory state — otherwise restoreSavedInventory would restore
-            // the undamaged pre-run snapshot and negate the durability loss.
-            damagePersistentGear(p);
+            // the undamaged pre-run snapshot and negate the durability loss. Dead players have
+            // already been charged this durability penalty in onPlayerDeath, so skip them here
+            // to avoid a double loss when the whole party falls.
+            if (!deadPlayers.contains(p.getUniqueId())) {
+                damagePersistentGear(p);
+            }
             // Restore game mode, health, and hunger — players may be in SPECTATOR mode if they died
             p.setGameMode(org.bukkit.GameMode.SURVIVAL);
             p.setHealth(p.getMaxHealth());

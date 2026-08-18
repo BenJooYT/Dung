@@ -449,6 +449,40 @@ tab = detailed build/run/progression).
 - [x] **Related fixes shipped in 1.0.1:** plot border/path height fix, party-leader transfer bugfix, and
       ShopUI updates.
 
+### Iteration 31 — offline leaderboard, plot settings, multiple plots & neighbour paths
+- [x] **Offline players on the leaderboard:** `/leaderboard` previously read only the in-memory profiles
+      map, so offline players never appeared and their names could be null on Paper. `MetaManager` now
+      persists a player `name` on each profile (set on join via `setName`) and exposes `allProfiles()`,
+      which reads every saved profile from `saves.yml`. The command iterates `allProfiles()` (so offline
+      players show), prefers the stored name (falling back to `Bukkit.getOfflinePlayer`, then "Unknown"),
+      and appends a gray `(offline)` tag to offline entries.
+- [x] **Leaderboard rank colors:** 1st = aqua `§b`, 2nd = blue `§9`, 3rd = dark blue `§1`, the rest stay
+      gray `§7`.
+- [x] **Leaderboard category-button fix:** the category switcher hover text was passing legacy `§`-coded
+      strings into `Component.text()`, which throws `LegacyFormattingDetected` and rendered the codes as
+      literal gray text (a warning every time `/leaderboard` ran). `ChatUI.command` now deserializes the
+      hover text with the legacy serializer like it already did the label.
+- [x] **Per-plot settings:** `PlotInfo` gains `pvp`, `fireSpread`, `isPublic` flags plus `buildTrust` and
+      `containerTrust` UUID sets, all persisted in `plots.yml`. New commands let the owner (standing on
+      their plot) configure it: `/plot pvp|fire|public on|off`, `/plot trust|untrust <name>` (build
+      access), `/plot container|uncontainer <name>` (container access), `/plot settings` (summary).
+- [x] **Settings enforced in `PlotListener`:** build access now allows the owner, trusted builders, or
+      anyone on a public plot; chests open for the owner, public plots, or container-trusted players;
+      PVP is cancelled on plots with `pvp` off (victim standing on the plot); fire may only burn/spread
+      on plots with `fireSpread` on (`BlockBurn`/`BlockSpread`).
+- [x] **Multiple plots per player:** ownership is derived from the `plots` map (no more single
+      `playerPlots` reverse-map). A player may claim as many plots as they can afford. `unclaim`/`name`
+      target the plot you're standing on; `/plot home` returns to your first plot.
+- [x] **Rising claim price:** the price of each additional plot rises **×1.25 per plot already owned**
+      (`claimShardCost`/`claimCoinCost` = base × 1.25^owned), applied to both `showClaimOptions` and the
+      charge in `claimPlot`.
+- [x] **Neighbour-plot path access:** a player owning two adjacent plots may build on the 2-wide path
+      between them (`canUseSharedPath` in `PlotManager` + `canModify` in `PlotListener`). When one of the
+      pair is unclaimed/owned by someone else the path reverts to protected automatically.
+- [x] **Shared path survives reload/regen:** `buildPlotBordersAndPaths` skips re-laying/clearing any path
+      side whose two bounding plots are owned by the same player, so the owner's shared path is exempt
+      from the regen "clear" (the 2-block AIR clear above paths).
+
 ### Remaining candidate work
 - [ ] **Status effects** — Poison (DoT), Slow, Weakness, Stun on both players and enemies. Weapons/
       abilities could apply them; enemies could apply them on hit. Adds strategic depth to combat.
@@ -460,8 +494,11 @@ tab = detailed build/run/progression).
       Gives players something to grind toward with their persistent currency.
 - [ ] **Floor-specific biomes/themes** — Nether brick (floors 3-4), End stone (5-6), deepslate (7+).
       Each with different enemy distributions and visual identity.
-- [ ] **Leaderboards / statistics** — `/dung leaderboard` for best floor, clears, kills. Personal
-      stats page with more detail. Mostly UI work on existing `MetaManager` data.
+- [x] **Leaderboards / statistics** — `/leaderboard` shows top players by persistent coins, shards, kills,
+      clears, or max floor, including **offline players** (name persisted in `MetaProfile`), with
+      clickable category switchers and 3-color top-3 rank styling.
+- [ ] **Leaderboard page/personal stats** — a `/dung stats`-style personal page with more detail (history,
+      per-category rank, class breakdown) and richer leaderboard pagination/visuals.
 - [ ] **Class-specific passives/active balance** beyond the three defaults.
 - [x] **Room editor tutorial** — `/room tutorial` walks through building, capturing, validating,
       exporting, and testing a room template step by step. Auto-advances when the player runs the
@@ -474,4 +511,4 @@ tab = detailed build/run/progression).
 gradlew build            # compiles + jars
 gradlew runServer        # boots a Paper 1.21.11 server with the plugin
 ```
-Commands: `/dung start|descend|leave|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop` (opens GUI) `/upgrades` (opens GUI) `/salvage [all|favorite]` `/plots [warp <name>]` `/plot claim|home|name|warp|unclaim`
+Commands: `/dung start|descend|leave|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop` (opens GUI) `/upgrades` (opens GUI) `/salvage [all|favorite]` `/leaderboard [category] [page]` `/plots [warp <name>]` `/plot claim|home|name|warp|settings|pvp|fire|public|trust|untrust|container|uncontainer|unclaim`

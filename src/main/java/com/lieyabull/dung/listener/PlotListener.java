@@ -10,16 +10,21 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockBurnEvent;
 import org.bukkit.event.block.BlockFertilizeEvent;
 import org.bukkit.event.block.BlockGrowEvent;
 import org.bukkit.event.block.BlockIgniteEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.block.BlockSpreadEvent;
 import org.bukkit.event.entity.EntityChangeBlockEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.event.player.PlayerBucketFillEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.world.StructureGrowEvent;
+
+import java.util.UUID;
 
 /** Enforces plot ownership: players may only modify the buildable area of their own plot. */
 public final class PlotListener implements Listener {
@@ -29,12 +34,20 @@ public final class PlotListener implements Listener {
         this.plugin = plugin;
     }
 
-    /** True if the player may modify blocks at this location. Non-plot locations are always allowed. */
+    /** True if the player may modify blocks at this location. Non-plot locations are always allowed.
+     *  On a plot: the owner, a trusted builder, or anyone if the plot is public may modify the
+     *  buildable area. A player owning two neighbouring plots may also modify the path between them. */
     private boolean canModify(Player p, Location loc) {
         PlotManager pm = plugin.plotManager();
         PlotManager.PlotCoord coord = pm.plotAt(loc);
         if (coord == null) return true; // not in the plots world
-        return pm.ownsPlot(p, coord) && pm.isBuildableArea(loc);
+        // Owning two neighbouring plots opens up the path between them.
+        if (pm.canUseSharedPath(p, loc)) return true;
+        if (!pm.isBuildableArea(loc)) return false;
+        PlotManager.PlotInfo info = pm.getInfo(coord);
+        if (info == null) return false;
+        UUID uid = p.getUniqueId();
+        return info.owner.equals(uid) || info.isPublic || info.buildTrust.contains(uid);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -91,10 +104,50 @@ public final class PlotListener implements Listener {
         Location loc = clicked.getLocation();
         PlotManager.PlotCoord coord = pm.plotAt(loc);
         if (coord == null) return;
-        if (!pm.ownsPlot(e.getPlayer(), coord)) {
+        PlotManager.PlotInfo info = pm.getInfo(coord);
+        if (info == null) return;
+        UUID uid = e.getPlayer().getUniqueId();
+        // Owner, public plot, or someone granted container access may open containers.
+        if (info.owner.equals(uid) || info.isPublic || info.containerTrust.contains(uid)) return;
+        e.setCancelled(true);
+        e.getPlayer().sendMessage("§cThat chest belongs to someone else!");
+    }
+
+    /** PVP is off by default on plots. A plot with PVP disabled protects anyone standing on it
+     *  from player-vs-player damage. */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onPlayerDamage(EntityDamageByEntityEvent e) {
+        if (!(e.getEntity() instanceof Player victim)) return;
+        if (!(e.getDamager() instanceof Player)) return;
+        PlotManager pm = plugin.plotManager();
+        PlotManager.PlotCoord coord = pm.plotAt(victim.getLocation());
+        if (coord == null) return;
+        PlotManager.PlotInfo info = pm.getInfo(coord);
+        if (info != null && !info.pvp) {
             e.setCancelled(true);
-            e.getPlayer().sendMessage("§cThat chest belongs to someone else!");
+            ((Player) e.getDamager()).sendMessage("§cPVP is disabled on this plot.");
         }
+    }
+
+    /** Fire may only burn blocks / spread on plots where fire spread is enabled. */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onBlockBurn(BlockBurnEvent e) {
+        PlotManager pm = plugin.plotManager();
+        PlotManager.PlotCoord coord = pm.plotAt(e.getBlock().getLocation());
+        if (coord == null) return;
+        PlotManager.PlotInfo info = pm.getInfo(coord);
+        if (info != null && !info.fireSpread) e.setCancelled(true);
+    }
+
+    /** Fire spreading into a plot with fire spread disabled is cancelled. */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onBlockSpread(BlockSpreadEvent e) {
+        if (e.getNewState().getType() != org.bukkit.Material.FIRE) return;
+        PlotManager pm = plugin.plotManager();
+        PlotManager.PlotCoord coord = pm.plotAt(e.getBlock().getLocation());
+        if (coord == null) return;
+        PlotManager.PlotInfo info = pm.getInfo(coord);
+        if (info != null && !info.fireSpread) e.setCancelled(true);
     }
 
     /** Prevent players from trampling crops on plots they don't own.

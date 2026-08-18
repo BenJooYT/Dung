@@ -39,6 +39,7 @@ import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
 
 /** Wires Paper events to the game. Routes events to the correct dungeon instance per player. */
 public final class GameListener implements Listener {
@@ -59,6 +60,7 @@ public final class GameListener implements Listener {
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
+        plugin.meta().setName(p.getUniqueId(), p.getName());
         if (!p.hasPlayedBefore()) {
             p.teleport(p.getWorld().getSpawnLocation());
             ChatUI.startPrompt(p);
@@ -182,9 +184,64 @@ public final class GameListener implements Listener {
         if (!(e.getWhoClicked() instanceof Player p)) return;
         DungeonInstance di = instanceOf(p);
         if (di == null) return;
+        PlayerInventory inv = p.getInventory();
         if (DungeonInstance.isRunItem(e.getCurrentItem()) || DungeonInstance.isRunItem(e.getCursor())) {
             e.setCancelled(true);
+            return;
         }
+        // Shift-clicking a mana shield equips it into the slot-9 equip slot (only when no shield is
+        // currently equipped there).
+        if (e.isShiftClick() && e.getClickedInventory() instanceof PlayerInventory
+                && GearFactory.isShield(e.getCurrentItem())
+                && !GearFactory.isShield(inv.getItem(DungeonInstance.SHIELD_SLOT))) {
+            e.setCancelled(true);
+            ItemStack shield = e.getCurrentItem().clone();
+            inv.setItem(e.getSlot(), null);
+            inv.setItem(DungeonInstance.SHIELD_SLOT, shield);
+            return;
+        }
+        // The offhand slot is disabled. Any attempt to place an item there (or retrieve one from it)
+        // is routed to the first available inventory slot instead.
+        if (e.getClickedInventory() instanceof PlayerInventory && e.getSlot() == 40) {
+            e.setCancelled(true);
+            ItemStack cursor = e.getCursor();
+            ItemStack off = e.getCurrentItem();
+            if (cursor != null && !cursor.getType().isAir()) {
+                e.setCursor(null);
+                placeInFirstAvailableSlot(p, cursor);
+            } else if (off != null && !off.getType().isAir()) {
+                inv.setItem(40, null);
+                placeInFirstAvailableSlot(p, off);
+            }
+            return;
+        }
+        // When an armor piece is moved (equipped), a starter armor piece swapped out of its armor
+        // slot should be deleted instead of piling up in storage. Deferred to the next tick so the
+        // move has taken effect before we scan for displaced starter armor.
+        if (!e.isCancelled() && (isArmorItem(e.getCurrentItem()) || isArmorItem(e.getCursor()))) {
+            org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> di.removeDisplacedStarterArmor(p));
+        }
+    }
+
+    /** Place an item into the first free main-inventory slot (0-35). Drops it if the inventory is full. */
+    private static void placeInFirstAvailableSlot(Player p, ItemStack item) {
+        PlayerInventory inv = p.getInventory();
+        for (int i = 0; i < 36; i++) {
+            ItemStack s = inv.getItem(i);
+            if (s == null || s.getType().isAir()) {
+                inv.setItem(i, item);
+                return;
+            }
+        }
+        p.getWorld().dropItemNaturally(p.getLocation(), item);
+    }
+
+    /** True if the item is an armor piece (helmet, chestplate, leggings, boots). */
+    private static boolean isArmorItem(ItemStack s) {
+        if (s == null || s.getType() == Material.AIR) return false;
+        String n = s.getType().name();
+        return n.endsWith("_HELMET") || n.endsWith("_CHESTPLATE")
+                || n.endsWith("_LEGGINGS") || n.endsWith("_BOOTS");
     }
 
     @EventHandler(priority = EventPriority.HIGH)
@@ -195,6 +252,17 @@ public final class GameListener implements Listener {
         if (DungeonInstance.isRunItem(e.getOldCursor()) || DungeonInstance.isRunItem(e.getCursor())
                 || e.getNewItems().values().stream().anyMatch(DungeonInstance::isRunItem)) {
             e.setCancelled(true);
+            return;
+        }
+        // The offhand slot is disabled. If a drag targets it (raw slot 45), cancel the drag and route
+        // the whole dragged stack to the first available inventory slot instead.
+        if (e.getRawSlots().contains(45)) {
+            e.setCancelled(true);
+            ItemStack old = e.getOldCursor();
+            if (old != null && !old.getType().isAir()) {
+                placeInFirstAvailableSlot(p, old);
+            }
+            e.setCursor(null);
         }
     }
 
@@ -441,15 +509,14 @@ public final class GameListener implements Listener {
                 return;
             }
         }
-        // pedestal: right-click a pedestal slab to claim the item
-        // Check this BEFORE the armor-equip check so that holding an armor piece while
-        // right-clicking a pedestal doesn't equip the armor — we cancel the event early.
+        // pedestal: right-click a pedestal slab to claim the item. Cancel the event for ANY click on a
+        // tracked pedestal (not just a successful claim) so that holding an armor piece in the hand
+        // never accidentally equips it while claiming the pedestal item.
         if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getClickedBlock() != null
-                && e.getClickedBlock().getType() == Material.POLISHED_BLACKSTONE_SLAB) {
-            if (di.claimPedestal(p, e.getClickedBlock().getLocation())) {
-                e.setCancelled(true);
-                return;
-            }
+                && di.isPedestal(e.getClickedBlock().getLocation())) {
+            e.setCancelled(true);
+            di.claimPedestal(p, e.getClickedBlock().getLocation());
+            return;
         }
         if (e.getItem() != null) {
             String en = e.getItem().getType().name();

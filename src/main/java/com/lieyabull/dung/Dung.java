@@ -61,6 +61,13 @@ public final class Dung extends JavaPlugin {
         getCommand("party").setExecutor(new DungCommand(this));
         getCommand("balance").setExecutor(new DungCommand(this));
         getCommand("leaderboard").setExecutor(new DungCommand(this));
+        // Autofill for all DungCommand-backed commands (dung, dungeon, shop, upgrades, salvage,
+        // party, balance, leaderboard) so players can see the available arguments.
+        DungCommand dungCmd = new DungCommand(this);
+        for (String name : new String[]{"dung", "dungeon", "shop", "upgrades", "salvage", "party", "balance", "leaderboard"}) {
+            getCommand(name).setExecutor(dungCmd);
+            getCommand(name).setTabCompleter(dungCmd);
+        }
         RoomCommand roomCmd = new RoomCommand(this, roomEditor);
         getCommand("room").setExecutor(roomCmd);
         getCommand("room").setTabCompleter(roomCmd);
