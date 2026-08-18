@@ -129,6 +129,12 @@ public final class DungCommand implements CommandExecutor {
                 di.descend(p);
                 return true;
             }
+            case "shieldswitch": {
+                DungeonInstance di = gm.instanceOf(p);
+                if (di == null) { p.sendMessage("§cStart a run first."); return true; }
+                di.doShieldSwitch(p);
+                return true;
+            }
             case "leave": {
                 DungeonInstance di = gm.instanceOf(p);
                 if (di != null) {

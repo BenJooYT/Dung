@@ -71,13 +71,14 @@ public final class PartyManager {
     public void leaveParty(Player p) {
         Party party = partyOf(p);
         if (party == null) return;
+        boolean wasLeader = party.leader().equals(p.getUniqueId());
         party.removeMember(p.getUniqueId());
         playerParties.remove(p.getUniqueId());
         if (party.isEmpty()) {
             partyById.remove(party.id());
         } else {
             party.broadcast("§e" + p.getName() + " left the party.");
-            if (party.leader().equals(p.getUniqueId())) {
+            if (wasLeader) {
                 try {
                     Player newLeader = org.bukkit.Bukkit.getPlayer(party.leader());
                     if (newLeader != null) {

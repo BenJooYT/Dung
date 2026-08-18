@@ -252,21 +252,22 @@ public final class PlayerState {
                 mitigated -= shield;
                 shield = 0;
             }
-            // Track shield uses — every 5 uses damages the shield item
+            // Track shield uses — every 5 uses damages the shield item. The shield takes durability
+            // damage whether it is held or stored anywhere in the inventory (it is the active source
+            // of the shieldMax the damage is being absorbed against).
             shieldUseCount++;
             if (shieldUseCount >= 5) {
                 shieldUseCount = 0;
-                // Find the shield item in the player's inventory and damage it
+                // Damage the active shield in slot 9 (DungeonInstance.SHIELD_SLOT) — the only shield
+                // that provides capacity and thus the one absorbing the damage.
                 org.bukkit.inventory.PlayerInventory inv = player.getInventory();
-                for (int slot = 0; slot < inv.getSize(); slot++) {
-                    ItemStack s = inv.getItem(slot);
-                    if (s != null && !s.getType().isAir() && com.lieyabull.dung.items.GearFactory.isShield(s)) {
-                        boolean broken = com.lieyabull.dung.items.GearFactory.damageItem(s, 1);
-                        if (broken) {
-                            inv.setItem(slot, null);
-                            player.sendMessage("§cYour mana shield broke! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability).");
-                        }
-                        break;
+                ItemStack active = inv.getItem(com.lieyabull.dung.game.DungeonInstance.SHIELD_SLOT);
+                if (active != null && !active.getType().isAir()
+                        && com.lieyabull.dung.items.GearFactory.isShield(active)) {
+                    boolean broken = com.lieyabull.dung.items.GearFactory.damageItem(active, 1);
+                    if (broken) {
+                        inv.setItem(com.lieyabull.dung.game.DungeonInstance.SHIELD_SLOT, null);
+                        player.sendMessage("§cYour mana shield broke! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability).");
                     }
                 }
             }

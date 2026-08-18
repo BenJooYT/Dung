@@ -152,6 +152,20 @@ public final class GearFactory {
         return pdc.get(key, org.bukkit.persistence.PersistentDataType.INTEGER);
     }
 
+    /** Find a mana shield in a player's inventory (main hand, offhand, then any storage/armor
+     *  slot). Returns the first shield found, or null if none. */
+    public static ItemStack findShieldItem(org.bukkit.inventory.PlayerInventory inv) {
+        ItemStack held = inv.getItemInMainHand();
+        if (isShield(held)) return held;
+        ItemStack off = inv.getItemInOffHand();
+        if (isShield(off)) return off;
+        for (int slot = 0; slot < inv.getSize(); slot++) {
+            ItemStack s = inv.getItem(slot);
+            if (isShield(s)) return s;
+        }
+        return null;
+    }
+
     /** Get the stored health from a Life Drain weapon. Returns 0 if not set. */
     public static int getStoredHealth(ItemStack s) {
         if (s == null || s.getItemMeta() == null) return 0;
@@ -274,12 +288,26 @@ public final class GearFactory {
         return pdc.get(key, org.bukkit.persistence.PersistentDataType.INTEGER);
     }
 
-    /** Set the current durability on an item's PDC. */
+    /** Set the current durability on an item's PDC and reflect it on the vanilla durability bar.
+     *  Skips the vanilla bar for shields (their bar is repurposed for shield charge display). */
     public static void setDurability(ItemStack s, int durability) {
         s.editMeta(meta -> {
             meta.getPersistentDataContainer().set(
                     org.bukkit.NamespacedKey.minecraft(ItemTags.DURABILITY),
                     org.bukkit.persistence.PersistentDataType.INTEGER, durability);
+            // Reflect custom durability on the vanilla damage bar (except shields — their bar
+            // is used for shield charge instead).
+            if (!"shield".equals(kindOf(s)) && meta instanceof org.bukkit.inventory.meta.Damageable dmg) {
+                int max = getMaxDurability(s);
+                if (max > 0) {
+                    int nativeMax = s.getType().getMaxDurability();
+                    if (nativeMax > 0) {
+                        double pct = (double) durability / max;
+                        int damage = (int) Math.round(nativeMax * (1.0 - pct));
+                        dmg.setDamage(damage);
+                    }
+                }
+            }
         });
     }
 
@@ -389,7 +417,9 @@ public final class GearFactory {
         });
     }
 
-    /** Initialise durability on a persistent item (weapon=100, armor=30, shield=50). */
+    /** Initialise durability on a persistent item (weapon=100, armor=85, shield=50).
+     *  Also sets the vanilla durability bar to full (except shields — their bar is used for
+     *  shield charge display instead). */
     public static void initDurability(ItemStack s) {
         if (s == null || s.getItemMeta() == null) return;
         var pdc = s.getItemMeta().getPersistentDataContainer();
@@ -398,10 +428,19 @@ public final class GearFactory {
         if (!isPersistent) return;
         String kind = pdc.get(org.bukkit.NamespacedKey.minecraft(ItemTags.KIND),
                 org.bukkit.persistence.PersistentDataType.STRING);
-        int maxDur = "weapon".equals(kind) ? 100 : "shield".equals(kind) ? 50 : 30;
+        int maxDur = "weapon".equals(kind) ? 100 : "shield".equals(kind) ? 50 : 85;
         setMaxDurability(s, maxDur);
         setDurability(s, maxDur);
         addDurabilityLore(s);
+        // Set the vanilla durability bar to full (full bar = 0 damage).
+        // Shields are skipped — their bar is repurposed for shield charge display.
+        if (!"shield".equals(kind)) {
+            s.editMeta(meta -> {
+                if (meta instanceof org.bukkit.inventory.meta.Damageable dmg) {
+                    dmg.setDamage(0);
+                }
+            });
+        }
     }
 
     /** Turn a run item into a persistent copy, delivered at half durability. Used by the
@@ -842,6 +881,7 @@ public final class GearFactory {
             meta.setDisplayName(r.legacy + "Mana Shield");
             List<String> lore = new ArrayList<>();
             lore.add("§7Shield Capacity: §b" + shieldMax);
+            lore.add("§7Hotbar slot 9 to activate");
             lore.add("§7Sneak to charge shield with mana");
             lore.add("§7Absorbs damage while active");
             lore.add("");
@@ -886,6 +926,12 @@ public final class GearFactory {
             pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.SHIELD_MAX),
                     org.bukkit.persistence.PersistentDataType.INTEGER, shieldMax);
         });
+        // Give the shield a real durability pool so absorbing damage wears it down, whether it is a
+        // run shield or later marked persistent (initDurability will reset to full on persistent).
+        int maxDur = 50;
+        setMaxDurability(s, maxDur);
+        setDurability(s, maxDur);
+        addDurabilityLore(s);
         return s;
     }
 

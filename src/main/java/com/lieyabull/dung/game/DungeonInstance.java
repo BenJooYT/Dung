@@ -285,6 +285,7 @@ public final class DungeonInstance {
                 p.sendMessage("§7Attack: §fLeft-Click    §7Weapon Ability: §fSneak + Right-Click");
                 p.sendMessage("§7Class Ability: §fSneak + Drop (Q)    §7Heal: pick up §c♥§7 hearts");
                 p.sendMessage("§7Keys & Bombs appear in hotbar slots 7-8. Right-click locked doors with a key, cracked walls with a bomb.");
+                p.sendMessage("§7Equip a Mana Shield in slot 9 — hold it and sneak to charge it with mana.");
                 p.sendMessage("§7Salvage spare armor: §f/salvage§7. Exit: §f/dung leave");
             }
         }
@@ -873,13 +874,14 @@ public final class DungeonInstance {
         return ox >= 0 && ox < rn.sizeW && oz >= 0 && oz < rn.sizeH;
     }
 
-    /** Check whether every online party member is physically inside the given room (using their
-     *  actual location, not the stale playerRoom map). This prevents a player standing in the corridor
-     *  from being counted as inside the room, which would seal the door and lock them out. */
+    /** Check whether every online, alive party member is physically inside the given room (using their
+     *  actual location, not the stale playerRoom map). Dead (spectator) players are skipped so they
+     *  don't block combat start or room locking for the rest of the party. */
     private boolean allMembersInRoom(Floor.RoomNode n) {
         List<Player> members = party.onlineMembers();
         if (members.isEmpty()) return false;
         for (Player m : members) {
+            if (deadPlayers.contains(m.getUniqueId())) continue;
             if (!insideRoom(m.getLocation(), n)) return false;
         }
         return true;
@@ -1323,22 +1325,25 @@ public final class DungeonInstance {
             PlayerState st = run.playerStateOf(p.getUniqueId());
             if (st == null || st.dead) continue;
             st.regenHearts();
-            // Mana Shield: the charged shield is always active (absorbs damage even when not held).
-            // Find any shield item in the player's inventory to determine shieldMax.
-            ItemStack held = p.getInventory().getItemInMainHand();
-            boolean hasShieldInHand = held != null && !held.getType().isAir() && GearFactory.isShield(held);
-            // Find the shield item anywhere in inventory for shieldMax
-            ItemStack shieldItem = findShieldItem(p);
-            if (shieldItem != null) {
+            // Mana Shield: the active shield is the one placed in hotbar slot 9 (SHIELD_SLOT). Everything
+            // shield-related (capacity, charging, absorption, durability) watches that slot only —
+            // the shield no longer activates from the main hand or anywhere else in the inventory.
+            PlayerInventory inv = p.getInventory();
+            ItemStack shieldItem = inv.getItem(SHIELD_SLOT);
+            boolean hasActiveShield = shieldItem != null && !shieldItem.getType().isAir()
+                    && GearFactory.isShield(shieldItem);
+            if (hasActiveShield) {
                 st.shieldMax = GearFactory.getShieldMax(shieldItem);
-                st.shieldActive = true; // always active when player has a shield
+                st.shieldActive = true;
             } else {
                 st.shieldMax = 0;
                 st.shieldActive = false;
             }
-            if (hasShieldInHand && p.isSneaking()) {
+            if (hasActiveShield && inv.getHeldItemSlot() == SHIELD_SLOT && p.isSneaking()) {
                 // Spend ~15 mana per second (0.75 per tick) to charge the shield. Once fully
                 // charged, stop consuming mana (the shield sits at max instead of bleeding mana).
+                // Charging only works while the shield is actively held (slot 9 selected); the
+                // equipped shield still absorbs damage regardless of what's in the main hand.
                 if (st.shield < st.shieldMax && st.mana >= 0.75) {
                     st.mana -= 0.75;
                     st.shield = Math.min(st.shieldMax, st.shield + 0.75);
@@ -1349,9 +1354,9 @@ public final class DungeonInstance {
                     st.shield = Math.max(0, st.shield - 1.0);
                 }
             }
-            // Always sync shield durability on the held item if it's a shield, so the charge
-            // bar updates even when the player switches back to the shield after it decayed.
-            syncShieldDurability(p, held, st);
+            // Always sync shield durability on the slot-9 shield so the charge bar updates even
+            // when it changed without the slot being re-synced.
+            syncShieldDurability(p, shieldItem, st);
             // A fully charged active shield halts mana regeneration (the shield is the active drain)
             if (!(st.shieldActive && st.shield >= st.shieldMax)) {
                 st.regenMana();
@@ -1370,38 +1375,20 @@ public final class DungeonInstance {
         refreshUI();
     }
 
-    /** Find a mana shield item in the player's inventory (main hand, offhand, or any slot).
-     *  Returns the first shield found, or null if none. */
-    private ItemStack findShieldItem(Player p) {
-        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
-        // Check main hand first
-        ItemStack held = inv.getItemInMainHand();
-        if (held != null && !held.getType().isAir() && GearFactory.isShield(held)) return held;
-        // Check offhand
-        ItemStack off = inv.getItemInOffHand();
-        if (off != null && !off.getType().isAir() && GearFactory.isShield(off)) return off;
-        // Check armor slots (36-39) and storage (9-35) and hotbar (0-8)
-        for (int slot = 0; slot < inv.getSize(); slot++) {
-            ItemStack s = inv.getItem(slot);
-            if (s != null && !s.getType().isAir() && GearFactory.isShield(s)) return s;
-        }
-        return null;
-    }
-
-    /** Reflect the current shield charge on the held mana-shield's durability bar. The charge is a
+    /** Reflect the current shield charge on the active slot-9 shield's durability bar. The charge is a
      *  per-run transient value in PlayerState; the item's native durability is repurposed to display
      *  it (full charge = full bar, empty = empty). Only writes to the inventory when the displayed
-     *  value actually changes, so idle ticks don't resync the held item. */
-    private void syncShieldDurability(Player p, ItemStack held, PlayerState st) {
-        if (held == null || held.getType().isAir() || !GearFactory.isShield(held)) return;
-        if (!(held.getItemMeta() instanceof Damageable dmg)) return;
-        int nativeMax = held.getType().getMaxDurability();
+     *  value actually changes, so idle ticks don't resync the slot. */
+    private void syncShieldDurability(Player p, ItemStack shield, PlayerState st) {
+        if (shield == null || shield.getType().isAir() || !GearFactory.isShield(shield)) return;
+        if (!(shield.getItemMeta() instanceof Damageable dmg)) return;
+        int nativeMax = shield.getType().getMaxDurability();
         double pct = st.shieldMax <= 0 ? 0 : Math.min(1.0, st.shield / st.shieldMax);
         int damage = (int) Math.round(nativeMax * (1.0 - pct));
         if (dmg.getDamage() != damage) {
             dmg.setDamage(damage);
-            held.setItemMeta((org.bukkit.inventory.meta.ItemMeta) dmg);
-            p.getInventory().setItemInMainHand(held);
+            shield.setItemMeta((org.bukkit.inventory.meta.ItemMeta) dmg);
+            p.getInventory().setItem(SHIELD_SLOT, shield);
         }
     }
 
@@ -1518,14 +1505,14 @@ public final class DungeonInstance {
                 bossDmg = dmg;
             }
         }
-        // Life Drain: add 12.5% of actual damage dealt per enemy to the weapon's stored health.
+        // Life Drain: add 50% of actual damage dealt per enemy to the weapon's stored health.
         // Each enemy contributes independently (not summed), so hitting 3 enemies stores 3x.
         if (isLifeDrain) {
             Location pLoc = p.getLocation().add(0, 1, 0);
             for (int i = 0; i < hitN; i++) {
                 Enemy e = meleeCand.get(i);
                 if (e.dead) continue;
-                int stored = (int) Math.round(enemyDmg[i] * 0.125);
+                int stored = (int) Math.round(enemyDmg[i] * 0.5);
                 if (stored > 0) {
                     int current = GearFactory.getStoredHealth(held);
                     GearFactory.setStoredHealth(held, current + stored);
@@ -1541,7 +1528,7 @@ public final class DungeonInstance {
             // Also from boss if hit
             if (bossDmg > 0) {
                 Location bl = boss.location().add(0, 1, 0);
-                int stored = (int) Math.round(bossDmg * 0.125);
+                int stored = (int) Math.round(bossDmg * 0.5);
                 if (stored > 0) {
                     int current = GearFactory.getStoredHealth(held);
                     GearFactory.setStoredHealth(held, current + stored);
@@ -1880,19 +1867,26 @@ public final class DungeonInstance {
                 break;
             }
             case "Life Drain": {
-                // AoE drain on all valid targets in the room — each enemy contributes 12.5% of its
-                // drain damage to stored health independently (not summed).
+                // Drain enemies within 5 blocks AND in line of sight (no more zero-aim full-room
+                // nuke). Each enemy contributes 50% of its drain damage to stored health
+                // independently (not summed).
                 Location casterLoc = caster.getLocation().add(0, 1, 0);
+                // Total health actually siphoned this cast (post-cap, so it never overstates).
+                int totalSiphoned = 0;
                 for (Enemy e : roomList) {
                     if (e.dead) continue;
+                    // Range cap + line-of-sight gate: drain only what you can see and reach.
+                    if (e.entity.getLocation().distance(caster.getLocation()) > 5.0) continue;
+                    if (!caster.hasLineOfSight(e.entity)) continue;
                     double drainDmg = dmg * 0.5;
                     e.damage(drainDmg, caster, 0, 0);
-                    int stored = (int) Math.round(drainDmg * 0.125);
+                    int stored = (int) Math.round(drainDmg * 0.5);
                     if (stored > 0) {
                         ItemStack held = caster.getInventory().getItemInMainHand();
                         if (held != null && !held.getType().isAir()) {
-                            int current = GearFactory.getStoredHealth(held);
-                            GearFactory.setStoredHealth(held, current + stored);
+                            int before = GearFactory.getStoredHealth(held);
+                            GearFactory.setStoredHealth(held, before + stored);
+                            totalSiphoned += GearFactory.getStoredHealth(held) - before;
                         }
                     }
                     // Spawn damage_indicator particles from each enemy to the caster
@@ -1903,16 +1897,19 @@ public final class DungeonInstance {
                         world.spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
                     }
                 }
-                // Also drain the boss
-                if (boss != null && boss.isActive()) {
+                // Also drain the boss (same 5-block range + line-of-sight rules)
+                if (boss != null && boss.isActive()
+                        && boss.location().distance(caster.getLocation()) <= 5.0
+                        && caster.hasLineOfSight(boss.entity())) {
                     double bossDrain = dmg * 0.5;
                     boss.damage(bossDrain, caster);
-                    int stored = (int) Math.round(bossDrain * 0.125);
+                    int stored = (int) Math.round(bossDrain * 0.5);
                     if (stored > 0) {
                         ItemStack held = caster.getInventory().getItemInMainHand();
                         if (held != null && !held.getType().isAir()) {
-                            int current = GearFactory.getStoredHealth(held);
-                            GearFactory.setStoredHealth(held, current + stored);
+                            int before = GearFactory.getStoredHealth(held);
+                            GearFactory.setStoredHealth(held, before + stored);
+                            totalSiphoned += GearFactory.getStoredHealth(held) - before;
                         }
                     }
                     Location bLoc = boss.location().add(0, 1, 0);
@@ -1924,7 +1921,13 @@ public final class DungeonInstance {
                 }
                 world.spawnParticle(org.bukkit.Particle.WITCH, caster.getLocation().add(0, 1, 0), 20, 2, 1, 2, 0);
                 world.playSound(caster.getLocation(), org.bukkit.Sound.ENTITY_WITCH_DRINK, 0.8f, 0.8f);
-                caster.sendMessage("§6Life Drain!");
+                ItemStack siphonHeld = caster.getInventory().getItemInMainHand();
+                int newStored = siphonHeld != null && !siphonHeld.getType().isAir()
+                        ? GearFactory.getStoredHealth(siphonHeld) : 0;
+                int maxStored = siphonHeld != null && !siphonHeld.getType().isAir()
+                        ? GearFactory.getStoredHealthMax(siphonHeld) : 0;
+                caster.sendMessage("§6Life Drain! §7Siphoned §c" + totalSiphoned + "❤ §7→ Stored §c"
+                        + newStored + "§7/§f" + maxStored + "§7❤");
                 break;
             }
             default:
@@ -2501,7 +2504,12 @@ public final class DungeonInstance {
         // Spawn item frame on top of the slab
         Location frameLoc = blockLoc.clone().add(0.5, 1, 0.5);
         ItemFrame frame = world.spawn(frameLoc, ItemFrame.class);
-        frame.setItem(item);
+        // The floating armor-stand name tag already shows the item's name, so blank the
+        // frame's display name (on a clone) to suppress the vanilla "looking at item
+        // frame" tooltip that would otherwise duplicate it. The real item keeps its name.
+        ItemStack display = item.clone();
+        display.editMeta(meta -> meta.setDisplayName(" "));
+        frame.setItem(display);
         frame.setInvulnerable(true);
         frame.setVisible(false);
         // Floating name tag: a small, invisible, non-interactive armor stand hovering above the item
@@ -2824,6 +2832,10 @@ public final class DungeonInstance {
     private static final int KEY_SLOT = 6;
     /** Slot index for the bomb item (8th hotbar slot, 0-indexed). */
     private static final int BOMB_SLOT = 7;
+    /** Slot index for the active Mana Shield (9th hotbar slot, 0-indexed). A mana shield placed here
+     *  is the active shield — all shield logic (capacity, charging, absorption, durability) watches
+     *  this slot. */
+    public static final int SHIELD_SLOT = 8;
 
     /** Create an enchanted key item for the hotbar. */
     private static ItemStack makeKeyItem() {
@@ -2924,6 +2936,149 @@ public final class DungeonInstance {
                 inv.setItem(BOMB_SLOT, makeEmptySlotItem());
             }
         }
+
+        // Slot 9 (index 8): Mana Shield item. A shield here is the active mana shield.
+        syncShieldSlot(p);
+    }
+
+    /** Keep the Mana Shield equip slot (slot 9, index 8) in sync. Slot 9 is a pure equip slot: a
+     *  shield is only active when the player places one here, and it is never auto-moved in — the
+     *  player chooses which shield to equip and puts it in the slot themselves. If the slot holds a
+     *  shield it is left alone (never auto-overwritten). If the equipped shield is persistent and a
+     *  strictly better shield is in the inventory, we ask in chat with a clickable Switch button
+     *  instead of auto-replacing it. When the slot is empty of a shield it shows an indicator: a
+     *  green "Equip Shield" pane when the player owns a shield elsewhere (so they know they can
+     *  equip one), or the standard empty placeholder when they own none. All shield logic watches
+     *  this slot. */
+    private void syncShieldSlot(Player p) {
+        PlayerInventory inv = p.getInventory();
+        ItemStack inSlot = inv.getItem(SHIELD_SLOT);
+        if (inSlot != null && !inSlot.getType().isAir() && GearFactory.isShield(inSlot)) {
+            // A shield is equipped in the slot. Never auto-overwrite it. If it is persistent and a
+            // strictly better shield exists in the inventory, offer to swap via a chat prompt.
+            if (GearFactory.isPersistent(inSlot)) {
+                ItemStack better = bestBetterShield(inv, inSlot);
+                if (better != null) promptShieldSwitch(p, inSlot, better);
+            }
+            // The green equip indicator should only exist while the slot is empty of a shield. Once a
+            // shield is equipped, sweep up any panes left over from a hotbar swap so they don't linger.
+            clearEquipIndicators(inv);
+            return;
+        }
+        // The slot is empty of a shield. It is a manual equip slot, so we never pull a shield in
+        // automatically — we only show an indicator: green when a shield is available to equip, the
+        // standard empty placeholder when none is owned. First sweep away any stray panes so exactly
+        // one indicator exists, then refresh the slot with the correct one.
+        clearEquipIndicators(inv);
+        ItemStack indicator = (GearFactory.findShieldItem(inv) != null)
+                ? makeEquipSlotItem() : makeEmptySlotItem();
+        ItemStack cur = inv.getItem(SHIELD_SLOT);
+        if (cur == null || cur.getType() != indicator.getType()) {
+            inv.setItem(SHIELD_SLOT, indicator);
+        }
+    }
+
+    /** Find the shield with the highest capacity in the inventory (main hand, offhand, then storage),
+     *  excluding the one currently in the shield slot, whose capacity is strictly higher than the
+     *  given equipped shield. Returns null if no strictly better shield is owned. */
+    private static ItemStack bestBetterShield(PlayerInventory inv, ItemStack current) {
+        int curMax = GearFactory.getShieldMax(current);
+        ItemStack best = null;
+        int bestMax = curMax;
+        if (GearFactory.isShield(inv.getItemInMainHand())) {
+            int m = GearFactory.getShieldMax(inv.getItemInMainHand());
+            if (m > bestMax) { bestMax = m; best = inv.getItemInMainHand(); }
+        }
+        if (GearFactory.isShield(inv.getItemInOffHand())) {
+            int m = GearFactory.getShieldMax(inv.getItemInOffHand());
+            if (m > bestMax) { bestMax = m; best = inv.getItemInOffHand(); }
+        }
+        for (int slot = 0; slot < inv.getSize(); slot++) {
+            if (slot == SHIELD_SLOT) continue;
+            ItemStack s = inv.getItem(slot);
+            if (s == null || !GearFactory.isShield(s)) continue;
+            int m = GearFactory.getShieldMax(s);
+            if (m > bestMax) { bestMax = m; best = s; }
+        }
+        return best;
+    }
+
+    /** Cooldown between repeated "switch persistent shield" prompts so the per-tick sync doesn't spam. */
+    private static final long SHIELD_SWITCH_COOLDOWN_MS = 8000;
+    private final Map<UUID, Long> lastShieldSwitchPrompt = new HashMap<>();
+
+    /** Ask the player to swap their equipped persistent shield for a better shield in their inventory,
+     *  with a clickable Switch button. Gated by a cooldown so it appears at most once per interval. */
+    private void promptShieldSwitch(Player p, ItemStack current, ItemStack better) {
+        long now = System.currentTimeMillis();
+        Long last = lastShieldSwitchPrompt.get(p.getUniqueId());
+        if (last != null && now - last < SHIELD_SWITCH_COOLDOWN_MS) return;
+        lastShieldSwitchPrompt.put(p.getUniqueId(), now);
+        String curName = itemDisplayName(current);
+        String betterName = itemDisplayName(better);
+        net.kyori.adventure.text.Component msg = net.kyori.adventure.text.Component.text(
+                "§7A better shield (§b" + betterName + "§7) is in your inventory. Your §e" + curName
+                        + "§7 is persistent — keep it or switch? ")
+                .append(com.lieyabull.dung.ui.ChatUI.command("§a[Switch]", "/dung shieldswitch",
+                        "Swap in the better shield"));
+        p.sendMessage(msg);
+    }
+
+    /** Perform the persistent-shield swap requested via /dung shieldswitch: place the better shield
+     *  in slot 9 and move the previous persistent shield to where the better one was. */
+    public void doShieldSwitch(Player p) {
+        PlayerInventory inv = p.getInventory();
+        ItemStack current = inv.getItem(SHIELD_SLOT);
+        if (current == null || current.getType().isAir()
+                || !GearFactory.isShield(current) || !GearFactory.isPersistent(current)) {
+            p.sendMessage("§7No persistent shield equipped to switch.");
+            return;
+        }
+        ItemStack better = bestBetterShield(inv, current);
+        if (better == null) {
+            p.sendMessage("§7No better shield available.");
+            return;
+        }
+        int curMax = GearFactory.getShieldMax(current);
+        int bestLoc = Integer.MIN_VALUE;
+        int bestMax = curMax;
+        if (GearFactory.isShield(inv.getItemInMainHand())
+                && GearFactory.getShieldMax(inv.getItemInMainHand()) > bestMax) {
+            bestMax = GearFactory.getShieldMax(inv.getItemInMainHand());
+            bestLoc = -1;
+        }
+        if (GearFactory.isShield(inv.getItemInOffHand())
+                && GearFactory.getShieldMax(inv.getItemInOffHand()) > bestMax) {
+            bestMax = GearFactory.getShieldMax(inv.getItemInOffHand());
+            bestLoc = -2;
+        }
+        for (int slot = 0; slot < inv.getSize(); slot++) {
+            if (slot == SHIELD_SLOT) continue;
+            ItemStack s = inv.getItem(slot);
+            if (s == null || !GearFactory.isShield(s)) continue;
+            int m = GearFactory.getShieldMax(s);
+            if (m > bestMax) { bestMax = m; bestLoc = slot; }
+        }
+        if (bestLoc == Integer.MIN_VALUE) {
+            p.sendMessage("§7No better shield available.");
+            return;
+        }
+        // Swap: slot 9 gets the better shield; the previous persistent shield moves to its old spot.
+        inv.setItem(SHIELD_SLOT, better);
+        if (bestLoc == -1) inv.setItemInMainHand(current);
+        else if (bestLoc == -2) inv.setItemInOffHand(current);
+        else inv.setItem(bestLoc, current);
+        lastShieldSwitchPrompt.remove(p.getUniqueId());
+        p.sendMessage("§aSwitched to §b" + itemDisplayName(better) + "§a.");
+    }
+
+    private static String itemDisplayName(ItemStack s) {
+        if (s == null) return "?";
+        if (s.getItemMeta() != null) {
+            String n = s.getItemMeta().getDisplayName();
+            if (n != null && !n.isEmpty()) return n;
+        }
+        return s.getType().name();
     }
 
     /** Compare two ItemStacks for Dung run-item equality (type + PDC tag). */
@@ -2937,10 +3092,10 @@ public final class DungeonInstance {
         return aIsRun == bIsRun;
     }
 
-    /** Remove key/bomb run items from a player's hotbar slots 7 and 8. */
+    /** Remove key/bomb run items from a player's hotbar slots 7, 8 and 9. */
     private static void clearHotbarItems(Player p) {
         PlayerInventory inv = p.getInventory();
-        for (int slot : new int[]{KEY_SLOT, BOMB_SLOT}) {
+        for (int slot : new int[]{KEY_SLOT, BOMB_SLOT, SHIELD_SLOT}) {
             ItemStack s = inv.getItem(slot);
             if (s != null && isRunItem(s)) inv.setItem(slot, null);
         }
@@ -2960,6 +3115,46 @@ public final class DungeonInstance {
                     org.bukkit.persistence.PersistentDataType.STRING, "empty");
         });
         return s;
+    }
+
+    /** Create a green stained glass pane labelled "Equip Shield" shown in slot 9 when the player owns
+     *  a shield elsewhere in their inventory. Unlike the key/bomb placeholders this is NOT tagged as a
+     *  run item: slot 9 is a real equip slot, so the pane must stay swappable for the player to place
+     *  a shield into the slot manually. It carries its own {@link ItemTags#EQUIP_INDICATOR} tag so the
+     *  sync can recognise and sweep up any panes (so it only exists while the slot is empty of a shield).
+     *  It holds no gameplay value, so it can't be exploited. */
+    private static ItemStack makeEquipSlotItem() {
+        ItemStack s = new ItemStack(Material.LIME_STAINED_GLASS_PANE);
+        s.editMeta(meta -> {
+            meta.setDisplayName("§aEquip Shield");
+            meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+            meta.getPersistentDataContainer().set(
+                    org.bukkit.NamespacedKey.minecraft(ItemTags.EQUIP_INDICATOR),
+                    org.bukkit.persistence.PersistentDataType.STRING, "true");
+        });
+        return s;
+    }
+
+    /** True if the item is our green "Equip Shield" indicator pane. */
+    private static boolean isEquipIndicator(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return false;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        return pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.EQUIP_INDICATOR),
+                org.bukkit.persistence.PersistentDataType.STRING);
+    }
+
+    /** Remove every green "Equip Shield" indicator pane from the inventory except the one in the shield
+     *  slot (so a swap never leaves a duplicate pane behind). Slot 9 is handled separately by the caller. */
+    private static void clearEquipIndicators(PlayerInventory inv) {
+        for (int i = 0; i < inv.getSize(); i++) {
+            if (i == SHIELD_SLOT) continue;
+            ItemStack s = inv.getItem(i);
+            if (s != null && isEquipIndicator(s)) inv.setItem(i, null);
+        }
+        if (inv.getHeldItemSlot() != SHIELD_SLOT && isEquipIndicator(inv.getItemInMainHand())) {
+            inv.setItemInMainHand(null);
+        }
+        if (isEquipIndicator(inv.getItemInOffHand())) inv.setItemInOffHand(null);
     }
 
     // ---------- utilities ----------

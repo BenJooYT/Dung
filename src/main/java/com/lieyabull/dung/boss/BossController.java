@@ -204,6 +204,11 @@ public final class BossController {
         return boss.getLocation();
     }
 
+    /** The boss's backing entity (used for line-of-sight checks). */
+    public Entity entity() {
+        return boss;
+    }
+
     /** Damage the boss. When the boss takes damage, it dashes behind the nearest player
      *  (a fast, non-teleport movement) so ranged attackers can't just kite it from afar. */
     public void damage(double dmg, Player attacker) {

@@ -20,6 +20,7 @@ public final class ItemTags {
     public static final String DURABILITY = "dung.durability";
     public static final String MAX_DURABILITY = "dung.maxdurability";
     public static final String RUN_ITEM = "dung.runitem";   // key|bomb — run-only hotbar item
+    public static final String EQUIP_INDICATOR = "dung.equip_indicator"; // shield-slot "Equip Shield" pane — swappable, unlike RUN_ITEM
     public static final String STARTER = "dung.starter";    // free starter-kit gear — never salvageable
     public static final String UUID = "dung.uuid";        // unique persistent item identifier
     public static final String MANA_SHIELD = "dung.mana_shield"; // "true" if this is a mana shield item

@@ -488,42 +488,53 @@ public final class PlotManager {
     private void buildPlotBordersAndPaths(World w, int px, int pz, int baseY) {
         int ox = px * CELL_SIZE;
         int oz = pz * CELL_SIZE;
+        int slabY = baseY + 1; // slabs and paths sit on top of the grass surface
 
         // --- Border: oak slab ring ---
         // Top and bottom edges (z = 0 and z = 17)
         for (int x = 0; x <= PLOT_SIZE + 1; x++) {
-            setBlock(w, ox + x, baseY, oz, Material.OAK_SLAB);
-            setBlock(w, ox + x, baseY, oz + PLOT_SIZE + 1, Material.OAK_SLAB);
+            setBlock(w, ox + x, slabY, oz, Material.OAK_SLAB);
+            setBlock(w, ox + x, slabY, oz + PLOT_SIZE + 1, Material.OAK_SLAB);
         }
         // Left and right edges (x = 0 and x = 17), excluding corners
         for (int z = 1; z <= PLOT_SIZE; z++) {
-            setBlock(w, ox, baseY, oz + z, Material.OAK_SLAB);
-            setBlock(w, ox + PLOT_SIZE + 1, baseY, oz + z, Material.OAK_SLAB);
+            setBlock(w, ox, slabY, oz + z, Material.OAK_SLAB);
+            setBlock(w, ox + PLOT_SIZE + 1, slabY, oz + z, Material.OAK_SLAB);
         }
 
-        // --- Path: 2-block-wide stone brick paths ---
+        // --- Path: 2-block-wide stone brick paths (lowered by 1 block to sit at grass level) ---
+        // Paths are cleared 2 blocks above (baseY+1..baseY+2) on every regen so leftover
+        // blocks from previous generations don't linger above the walkway.
         // Top path (z = -2 to -1)
         for (int x = 0; x <= PLOT_SIZE + 1 + PATH_WIDTH; x++) {
             for (int pzOff = 1; pzOff <= PATH_WIDTH; pzOff++) {
                 setBlock(w, ox + x, baseY, oz - pzOff, Material.STONE_BRICKS);
+                setBlock(w, ox + x, baseY + 1, oz - pzOff, Material.AIR);
+                setBlock(w, ox + x, baseY + 2, oz - pzOff, Material.AIR);
             }
         }
         // Bottom path (z = 18 to 19)
         for (int x = 0; x <= PLOT_SIZE + 1 + PATH_WIDTH; x++) {
             for (int pzOff = 1; pzOff <= PATH_WIDTH; pzOff++) {
                 setBlock(w, ox + x, baseY, oz + PLOT_SIZE + 1 + pzOff, Material.STONE_BRICKS);
+                setBlock(w, ox + x, baseY + 1, oz + PLOT_SIZE + 1 + pzOff, Material.AIR);
+                setBlock(w, ox + x, baseY + 2, oz + PLOT_SIZE + 1 + pzOff, Material.AIR);
             }
         }
         // Left path (x = -2 to -1)
         for (int z = 0; z <= PLOT_SIZE + 1 + PATH_WIDTH; z++) {
             for (int px2 = 1; px2 <= PATH_WIDTH; px2++) {
                 setBlock(w, ox - px2, baseY, oz + z, Material.STONE_BRICKS);
+                setBlock(w, ox - px2, baseY + 1, oz + z, Material.AIR);
+                setBlock(w, ox - px2, baseY + 2, oz + z, Material.AIR);
             }
         }
         // Right path (x = 18 to 19)
         for (int z = 0; z <= PLOT_SIZE + 1 + PATH_WIDTH; z++) {
             for (int px2 = 1; px2 <= PATH_WIDTH; px2++) {
                 setBlock(w, ox + PLOT_SIZE + 1 + px2, baseY, oz + z, Material.STONE_BRICKS);
+                setBlock(w, ox + PLOT_SIZE + 1 + px2, baseY + 1, oz + z, Material.AIR);
+                setBlock(w, ox + PLOT_SIZE + 1 + px2, baseY + 2, oz + z, Material.AIR);
             }
         }
     }

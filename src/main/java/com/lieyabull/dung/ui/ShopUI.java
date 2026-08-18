@@ -95,7 +95,7 @@ public final class ShopUI implements Listener {
                 GUI_RUN_SHOP, "armor"));
         // Slot 2: Random Shield
         inv.setItem(2, makeShopItem(Material.SHIELD, "§bRandom Shield",
-                List.of("§7Buy a random mana shield", "§7Sneak to charge with mana", "§7Absorbs damage while active", "", "§e" + RUN_ARMOR_COST + " coins"),
+                List.of("§7Buy a random mana shield", "§7Auto-slots into hotbar slot 9", "§7Sneak to charge with mana", "§7Absorbs damage while active", "", "§e" + RUN_ARMOR_COST + " coins"),
                 GUI_RUN_SHOP, "shield"));
 
         // Row 0: Consumables
@@ -155,17 +155,13 @@ public final class ShopUI implements Listener {
                 GUI_PERSISTENT_SHOP, "armor"));
         // Slot 2: Random Shield (persistent)
         inv.setItem(2, makeShopItem(Material.SHIELD, "§bRandom Shield",
-                List.of("§7Buy a random mana shield", "§7(persists through death)", "§7Sneak to charge with mana", "", "§6" + PERSISTENT_ARMOR_COST + " coins"),
+                List.of("§7Buy a random mana shield", "§7(persists through death)", "§7Auto-slots into hotbar slot 9", "§7Sneak to charge with mana", "", "§6" + PERSISTENT_ARMOR_COST + " coins"),
                 GUI_PERSISTENT_SHOP, "shield"));
 
-        // Slot 3: Repair Item (repair first damaged persistent item in inventory)
-        inv.setItem(3, makeShopItem(Material.ANVIL, "§aRepair Item",
-                List.of("§7Repair a damaged persistent item", "§7Cost scales with repair count", "§7Base: §6" + REPAIR_COST_PER_10 + " coins§7 per 10 durability"),
-                GUI_PERSISTENT_SHOP, "repair"));
+        // Slot 3: Repair Item (repair the held persistent item)
+        inv.setItem(3, makeRepairItemButton(p));
         // Slot 4: Repair All
-        inv.setItem(4, makeShopItem(Material.DIAMOND, "§bRepair All",
-                List.of("§7Repair all damaged persistent gear", "§7Cost scales with repair count", "§7Base: §6" + REPAIR_COST_PER_10 + " coins§7 per 10 durability each"),
-                GUI_PERSISTENT_SHOP, "repair_all"));
+        inv.setItem(4, makeRepairAllButton(p));
 
         // Slot 5: Upgrades (opens upgrades GUI)
         inv.setItem(5, makeShopItem(Material.NETHER_STAR, "§bPermanent Upgrades",
@@ -181,6 +177,98 @@ public final class ShopUI implements Listener {
 
         openGuis.put(inv, GUI_PERSISTENT_SHOP);
         p.openInventory(inv);
+    }
+
+    /** Build the "Repair All" button showing the total calculated cost for all damaged items. */
+    private ItemStack makeRepairAllButton(Player p) {
+        List<String> lore = new ArrayList<>();
+        lore.add("§7Repair all damaged persistent gear");
+        lore.add("§7Cost scales with repair count");
+        int totalCost = 0;
+        int count = 0;
+        // Scan inventory
+        for (int slot = 0; slot < p.getInventory().getSize(); slot++) {
+            ItemStack s = p.getInventory().getItem(slot);
+            if (s == null || s.getType() == Material.AIR) continue;
+            int d = GearFactory.getDurability(s);
+            int m = GearFactory.getMaxDurability(s);
+            if (d > 0 && m > 0 && d < m) {
+                int missing = m - d;
+                int repairAmt = Math.min(missing, 10);
+                int repairCount = GearFactory.getRepairCount(s);
+                int costMult = 1 + repairCount;
+                int itemCost = (repairAmt / 10) * REPAIR_COST_PER_10 * costMult;
+                if (repairAmt % 10 != 0) itemCost += REPAIR_COST_PER_10 * costMult;
+                totalCost += itemCost;
+                count++;
+            }
+        }
+        // Scan armor
+        org.bukkit.inventory.EquipmentSlot[] armorSlots = {
+                org.bukkit.inventory.EquipmentSlot.HEAD,
+                org.bukkit.inventory.EquipmentSlot.CHEST,
+                org.bukkit.inventory.EquipmentSlot.LEGS,
+                org.bukkit.inventory.EquipmentSlot.FEET
+        };
+        for (org.bukkit.inventory.EquipmentSlot slot : armorSlots) {
+            ItemStack s = p.getInventory().getItem(slot);
+            if (s == null || s.getType() == Material.AIR) continue;
+            int d = GearFactory.getDurability(s);
+            int m = GearFactory.getMaxDurability(s);
+            if (d > 0 && m > 0 && d < m) {
+                int missing = m - d;
+                int repairAmt = Math.min(missing, 10);
+                int repairCount = GearFactory.getRepairCount(s);
+                int costMult = 1 + repairCount;
+                int itemCost = (repairAmt / 10) * REPAIR_COST_PER_10 * costMult;
+                if (repairAmt % 10 != 0) itemCost += REPAIR_COST_PER_10 * costMult;
+                totalCost += itemCost;
+                count++;
+            }
+        }
+        lore.add("");
+        if (count > 0) {
+            lore.add("§7Items to repair: §f" + count);
+            lore.add("§7Total cost: §6" + totalCost + " coins");
+        } else {
+            lore.add("§7No damaged items found");
+        }
+        return makeShopItem(Material.DIAMOND, "§bRepair All", lore, GUI_PERSISTENT_SHOP, "repair_all");
+    }
+
+    /** Build the "Repair Item" button showing the actual calculated cost for the held item. */
+    private ItemStack makeRepairItemButton(Player p) {
+        ItemStack held = p.getInventory().getItemInMainHand();
+        List<String> lore = new ArrayList<>();
+        lore.add("§7Repair the item in your main hand");
+        lore.add("§7Cost scales with repair count");
+        if (held != null && held.getType() != Material.AIR && GearFactory.isPersistent(held)) {
+            int dur = GearFactory.getDurability(held);
+            int max = GearFactory.getMaxDurability(held);
+            if (dur > 0 && max > 0 && dur < max) {
+                int missing = max - dur;
+                int repairAmt = Math.min(missing, 10);
+                int repairCount = GearFactory.getRepairCount(held);
+                int costMult = 1 + repairCount;
+                int cost = (repairAmt / 10) * REPAIR_COST_PER_10 * costMult;
+                if (repairAmt % 10 != 0) cost += REPAIR_COST_PER_10 * costMult;
+                lore.add("");
+                lore.add("§7Held: §f" + held.getItemMeta().getDisplayName());
+                lore.add("§7Durability: §f" + dur + "§7/§f" + max);
+                lore.add("§7Repair #" + (repairCount + 1) + ": §6" + cost + " coins");
+            } else if (dur <= 0) {
+                lore.add("");
+                lore.add("§cHeld item is broken — use 'Repair Broken Item'");
+            } else {
+                lore.add("");
+                lore.add("§aHeld item is at full durability");
+            }
+        } else {
+            lore.add("");
+            lore.add("§7Hold a damaged persistent item");
+            lore.add("§7to see the repair cost");
+        }
+        return makeShopItem(Material.ANVIL, "§aRepair Item", lore, GUI_PERSISTENT_SHOP, "repair");
     }
 
     // ==================== UPGRADES GUI ====================
@@ -390,45 +478,19 @@ public final class ShopUI implements Listener {
                 reopen(() -> openPersistentShop(p)); // refresh
             }
             case "repair" -> {
-                // Find the first damaged (but not broken) persistent item in the player's inventory
-                ItemStack target = null;
-                int targetSlot = -1;
-                for (int slot = 0; slot < p.getInventory().getSize(); slot++) {
-                    ItemStack s = p.getInventory().getItem(slot);
-                    if (s == null || s.getType() == Material.AIR) continue;
-                    int dur = GearFactory.getDurability(s);
-                    int max = GearFactory.getMaxDurability(s);
-                    if (dur > 0 && max > 0 && dur < max) {
-                        target = s;
-                        targetSlot = slot;
-                        break;
-                    }
-                }
-                // Also check armor
-                if (target == null) {
-                    org.bukkit.inventory.EquipmentSlot[] armorSlots = {
-                            org.bukkit.inventory.EquipmentSlot.HEAD,
-                            org.bukkit.inventory.EquipmentSlot.CHEST,
-                            org.bukkit.inventory.EquipmentSlot.LEGS,
-                            org.bukkit.inventory.EquipmentSlot.FEET
-                    };
-                    for (org.bukkit.inventory.EquipmentSlot slot : armorSlots) {
-                        ItemStack s = p.getInventory().getItem(slot);
-                        if (s == null || s.getType() == Material.AIR) continue;
-                        int dur = GearFactory.getDurability(s);
-                        int max = GearFactory.getMaxDurability(s);
-                        if (dur > 0 && max > 0 && dur < max) {
-                            target = s;
-                            break;
-                        }
-                    }
-                }
-                if (target == null) {
-                    p.sendMessage("§cYou have no damaged persistent gear to repair.");
+                // Repair the item the player is holding in their main hand
+                ItemStack target = p.getInventory().getItemInMainHand();
+                if (target == null || target.getType() == Material.AIR
+                        || !GearFactory.isPersistent(target)) {
+                    p.sendMessage("§cHold a damaged persistent item in your main hand to repair it.");
                     return;
                 }
                 int dur = GearFactory.getDurability(target);
                 int max = GearFactory.getMaxDurability(target);
+                if (dur <= 0 || max <= 0 || dur >= max) {
+                    p.sendMessage("§cThat item is not damaged or is broken. Use 'Repair Broken Item' for broken items.");
+                    return;
+                }
                 int missing = max - dur;
                 int repairAmt = Math.min(missing, 10);
                 int repairCount = GearFactory.getRepairCount(target);
