@@ -51,7 +51,7 @@ clearing rooms banks persistent coins and kill/full-clear stats that survive dea
 /dung class mage  # pick a class (warrior | mage | ranger) before starting
 /shop             # between runs: spend persistent coins on gear
 /upgrades         # between runs: spend shards on permanent upgrades
-/salvage          # in a run: break held armor into permanent shards
+/salvage          # break held armor into permanent shards
 /party create     # create a party for multiplayer dungeons
 /plots            # teleport to the plots world
 /plot claim       # claim a plot (250 shards or 150 coins; ×1.25 per plot you own)
@@ -111,7 +111,7 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/dung leave` | all | Ends the current run (strips run gear, keeps persistent items). |
 | `/shop` | all | Opens the between-run shop GUI: spend persistent coins on persistent gear. |
 | `/upgrades` | all | Opens the upgrades GUI: spend shards on permanent stat upgrades. |
-| `/salvage` | all | Break the held Dung armor piece into permanent shards (in a run). |
+| `/salvage` | all | Break the held Dung armor piece into permanent shards. Outside a run, shards go straight to your persistent balance; in a run they're banked on boss defeat. |
 | `/salvage all` | all | Salvage every Dung armor piece in your bag outside the hotbar, equipped slots, and offhand — favorites are skipped. |
 | `/salvage favorite` | all | Toggle the favorite flag on the held armor piece (favorited gear can never be salvaged). |
 | `/dung stats` | all | Prints the profile: class, coins, shards, deaths, best floor, kills, clears. |
@@ -119,7 +119,7 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/dung give <t>` | `dung.admin` | Debug: `rareweapon`, `heal`, `coins`. |
 | `/dung help` | all | Shows clickable chat actions (`ChatUI.startPrompt`). |
 | `/party create` | all | Create a new party (you become leader). |
-| `/party invite <player>` | all | Invite a player to your party (leader only). |
+| `/party invite <player>` | all | Invite a player to your party (leader only; 5s anti-spam cooldown). |
 | `/party accept` | all | Accept a pending party invite. |
 | `/party decline` | all | Decline a pending party invite. |
 | `/party leave` | all | Leave your current party. |
@@ -137,6 +137,7 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/plot public on\|off` | all | Toggle public access (anyone may build/open containers). |
 | `/plot trust <player>` / `/plot untrust <player>` | all | Grant/revoke build access on the plot you're standing on. |
 | `/plot container <player>` / `/plot uncontainer <player>` | all | Grant/revoke container access on the plot you're standing on. |
+| `/plot pickup <player>` / `/plot unpickup <player>` | all | Grant/revoke item-pickup access on the plot you're standing on. |
 | `/plot unclaim` | all | Unclaim the plot you're standing on (frees it for re-claiming). |
 | `/leaderboard [category] [page]` | all | Top players by `persistent_coins`/`shards`/`kills`/`clears`/`max_floor`, including offline players. |
 | `/dung bossbar` | `dung.admin` | Remove any stuck boss bars from the server. |
@@ -163,7 +164,7 @@ run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
 
 - **Persistent coins** — earned by beating bosses (banked each floor), survive death, and are
   spent in `/shop` on gear that persists between runs.
-- **Shards** — earned in a run by breaking armor with `/salvage` (held piece) or `/salvage all`
+- **Shards** — earned by breaking armor with `/salvage` (held piece) or `/salvage all`
   (every armor piece in the bag outside hotbar/equipment). Value scales with rarity and defense.
   Favorited pieces (`/salvage favorite`) are always skipped by salvage. Spent in `/upgrades` on
   permanent stat upgrades: **Permanent Damage** (+1/lv),
@@ -339,7 +340,9 @@ of the mob's native health. Enemies spawn at random walkable positions throughou
   feedback (`ENTITY_PLAYER_HURT` sound + `CRIT` particles) on non-lethal damage, and triggers
   the death poof + sound when defeated.
 - `alive()`, `despawn()`, `playDeathAnimation()`, `deathSound()`, `faceTarget()`,
-  `isWalkable()` (walls include boss-room deepslate; floors stay walkable).
+  `isWalkable()` (rejects any solid block, so every wall material blocks movement; floors stay
+  walkable), `pathClear(from,to)` (samples the straight line so the spider leap and charger
+  dash can't skip over a wall in one teleport).
 
 ### `items` — gear, rarity & loot
 
@@ -477,17 +480,24 @@ Lifecycle:
   room door directions; corridors span the full vertical range between template and procedural
   rooms so multi-level templates connect correctly.
 - `enterRoom(n)` — marks visited, applies spawn-grace invuln, spawns enemies for un-cleared
-  COMBAT/ELITE rooms (locks doors), spawns room pickups, opens the shop GUI on SHOP rooms,
-  places the five workstations on UPGRADE rooms, and checks the boss on BOSS rooms.
+  COMBAT/ELITE rooms (locks doors, only once all members are inside), spawns room pickups, opens
+  the shop GUI on SHOP rooms, places the five workstations on UPGRADE rooms, and checks the boss
+  on BOSS rooms. A room that already spawned its enemies keeps its sealed state on re-entry (it
+  isn't silently unlocked). Room activation is also retried from the per-tick room loop, so a
+  combat room can never stay dormant if everyone is inside but no member triggered an
+  `enterRoom` transition.
 - `onPlayerMoved(loc)` — room-crossing detection from movement.
 - `descend()` / `endRun()` / `onPlayerDeath(p)` / `resetPlayerToSpawn()` — see the
   [death model](#death--persistence-model).
 
 Combat:
 - `tick()` (per game tick): checks death, syncs stats from real gear, drains melee cooldown,
-  applies speed, clears rooms when all enemies die, ticks current room's enemies + boss,
-  regens mana/HP, syncs the real HP bar proportionally, keeps food low, and throttles the
-  action bar.
+  applies speed, activates + clears rooms when all enemies die, ticks current room's enemies +
+  boss, regens mana/HP, syncs the real HP bar proportionally, keeps food low, and throttles the
+  action bar. A combat/elite room is cleared whenever its last enemy is dead **or** an enemy has
+  strayed far outside the room (despawned and dropped) — so a wall-escaped mob can't permanently
+  block the clear. A green HP bar is drawn above each party member's head during a run
+  (`updateHeadHp`, refreshed only when the value changes).
 - `registerAttack()` — melee arc: damages enemies within reach (horizontal + vertical), with
   a wider arc on the boss. Applies class ability damage boosts (War Cry) and guaranteed crits
   (Shadow Step).
@@ -517,7 +527,8 @@ Combat:
   half-durability gear, on failure it's returned one rarity worse; SALVAGE destroys the item for
   **run coins** (per-run, lost on death — not bankable shards).
 - `tryUnlockRoom(p, loc)` — right-click an IRON_BLOCK barrier with a key item to unlock a
-  LOCKED room (consumes 1 key, spawns pedestal loot).
+  LOCKED room (consumes 1 key, spawns pedestal loot). The unlocking player is **not** teleported
+  inside; the freed door blocks burst END_ROD particles where they stood.
 - `tryBombWall(p, loc)` — right-click a CRACKED_STONE_BRICKS wall with a bomb item to blast
   open a hidden SECRET room (consumes 1 bomb, reveals pedestal loot).
 - `syncHotbarItems(p)` — locks key (TRIPWIRE_HOOK) and bomb (TNT) items into hotbar slots 7-8,
@@ -538,6 +549,14 @@ Combat:
   restore, so persistent items take durability damage when the run ends normally.
 - `reviveDeadPlayers()` — resets `PlayerState.dead = false` after removing from `deadPlayers`,
   so the tick loop doesn't re-trigger `onPlayerDeath` on the next cycle.
+- **Broken gear is preserved, not destroyed** — when a persistent piece breaks (durability 0) it's
+  unequipped and moved into a free main-inventory slot (dropped on the ground only if the bag is
+  full) and the player is notified — previously a broken piece was deleted. Durability is applied
+  by iterating every inventory slot exactly once (the old overlap double-damaged and re-broke pieces).
+- **Persistent items aren't duplicated on restore/revive** — the pre-run snapshot only re-inserts
+  persistent items whose `dung.uuid` is still owned (or legacy uuid-less items). A piece dropped,
+  exchanged, or preserved during the run is not resurrected, and an owned piece isn't doubled up
+  as an undamaged copy alongside the damaged current one.
 
 Rooms/rewards:
 - `onRoomClear(n, k)` — clears the room, opens doors, awards coins + gear.
@@ -582,14 +601,18 @@ sound + `CRIT` particles), and at 0, despawns + calls `GameManager.onBossDefeate
   IRON_BLOCK; bomb destructible walls with bomb item on CRACKED_STONE_BRICKS; claim pedestal
   loot on POLISHED_BLACKSTONE_SLAB (checked before armor-equip detection so holding an armor
   piece doesn't equip it when clicking a pedestal).
-- `onAttack` — left-click triggers `registerAttack()` and cancels the vanilla hit.
+- `onAttack` — left-click triggers `registerAttack()` and cancels the vanilla hit. **Outside a
+  run**, Dung weapons still hit hostile (`Monster`) mobs but at **25%** of their vanilla damage,
+  so you're not defenceless in the plots world but a run weapon isn't an overpowered freebie.
 - `onEnemyDamage` — **cancels all vanilla damage from Dung entities** (mobs + their projectiles,
   via `isDungSource`) so only `PlayerState`-based damage applies.
 - `onPickup` — intercepts pickups (heart/coin/key/bomb) and applies their effect.
 - `onDropItem` — sneak+drop (Q) casts class ability; non-sneak drop of key/bomb run items
   is cancelled to keep them locked in the hotbar.
 - `onQuit` — saves the player's current location to `MetaProfile` (for rejoin restoration),
-  then ends the run (clears inventory) on logout.
+  then ends the run (clears inventory) on logout. The death path guards against applying the
+  persistent-gear durability penalty twice if the player quits between the death event and the
+  scheduled tick.
 
 ### `plot` — the Plots world & land claims
 
@@ -601,23 +624,30 @@ slab borders and 2-wide stone-brick paths.
 - **Claiming:** `claimPlot` charges 250 shards or 150 coins; `showClaimOptions` shows clickable,
   affordability-gated buttons. Players may own **multiple plots** — each additional plot costs
   base price **×1.25 per plot already owned** (`claimShardCost`/`claimCoinCost`).
-- **Settings:** per-plot `pvp`, `fireSpread`, `isPublic` flags and `buildTrust`/`containerTrust`
-  UUID sets, persisted in `plots.yml`. `setPlotToggle`, `setPlotTrust`, `showPlotSettings` back the
-  `/plot` settings commands.
+- **Settings:** per-plot `pvp`, `fireSpread`, `isPublic` flags and `buildTrust`/`containerTrust`/
+  `pickupTrust` UUID sets, persisted in `plots.yml`. `setPlotToggle`, `setPlotTrust`,
+  `showPlotSettings` back the `/plot` settings commands. `onPickup` in `PlotListener` restricts
+  picking up dropped items to the owner / public plots / pickup-trusted players.
 - **Neighbour paths:** `canUseSharedPath` grants build access to the path between two plots owned
   by the same player; `buildPlotBordersAndPaths` skips re-clearing a same-owner shared path so it
   survives reload/regen.
+- **Plots world gameplay:** `KEEP_INVENTORY` is on, and a custom **daylight cycle** (`ADVANCE_TIME`
+  off) runs a full 24h day/night over 20 real minutes with the **daylight portion twice as long as
+  the night**. Claimed plots never have their borders/paths regenerated. **Tree growth** may spread
+  into the buildable area of an edge-adjacent same-owner plot (and across the shared path), so a
+  canopy isn't cut off at your own boundary. **Cut logs** trigger accelerated leaf decay so the
+  detached canopy falls quickly instead of waiting on vanilla random decay.
 - `getPlotsWorld` (lazy world + custom `PlotChunkGenerator`), `preGenerateGrid`, `buildPlot`
   (starter chest), `clearAll` (admin reset via `/dung reset`), atomic `load()`/`save()`.
 
 **`PlotListener`** — enforces ownership and per-plot settings: build/break/bucket/ignite gated by
 `canModify` (owner, trusted builder, or public plot; shared-path owners may use the path); chests
-open for owner/public/container-trusted; PVP cancelled on plots with it disabled; fire burn/spread
-cancelled unless enabled. Explosions are always cancelled in the plots world; crop trampling and
-out-of-bounds tree/plant growth are pruned.
+open for owner/public/container-trusted; dropped-item pickup restricted to owner/public/pickup-trusted;
+PVP cancelled on plots with it disabled; fire burn/spread cancelled unless enabled. Explosions are
+always cancelled in the plots world; crop trampling and out-of-bounds tree/plant growth are pruned.
 
 **`PlotCommand`** — `/plots` (warp) and `/plot` (claim, home, name, warp, settings, pvp/fire/
-public, trust/untrust, container/uncontainer, unclaim) with tab completion.
+public, trust/untrust, container/uncontainer, pickup/unpickup, unclaim) with tab completion.
 
 ### `meta` — persistent progression
 
@@ -789,13 +819,20 @@ immediately and spent in `/upgrades`.
   a bomb consumes 1 bomb, blasts a 3-wide opening, and reveals pedestal loot. This is the "true"
   hidden secret (no visible doorway).
 - **Locked rooms** — `LOCKED` rooms sit on dead-end branches behind an `IRON_BLOCK` barrier.
-  Crossing the threshold with a key spends 1 key, unlocks + clears the room, and spawns loot.
+  Right-clicking the barrier with a key item spends 1 key, unlocks + clears the room, and spawns
+  loot — the unlocking player stays where they are (no teleport) and the freed doorway bursts
+  END_ROD particles.
 - **Pedestal loot** — treasure/locked/clear rewards spawn on a `POLISHED_BLACKSTONE_SLAB`
   pedestal with an invulnerable, invisible item frame; right-click to claim. Pedestals are torn
   down with the run (`clearPedestals`).
 - **Persistent gear durability** — on death each `dung.persistent` item loses 10% of max
-  durability (min 1); a piece that breaks is removed from the inventory. Death now costs
+  durability (min 1). A piece that breaks is **unequipped and moved to the inventory** (dropped
+  only if the bag is full) with a repair notice — never silently deleted. Death now costs
   persistent gear, not just the run.
+- **Salvage works anywhere** — `/salvage` no longer requires being inside a run. Outside a run
+  the shards go straight into your persistent balance; inside a run they're banked to that balance
+  on the floor boss's defeat (`onBossDefeated`).
+- **Party invite cooldown** — `/party invite` has a 5s anti-spam cooldown.
 - **Workstation (UPGRADE) rooms** — every 5th floor has five physical workstations for
   progression (costs scale with floor depth): **UPGRADE** raises an item's core stat by 10%/level
   (max 5) for run coins + shards; **REFORGE** rerolls an item's procedural affixes for shards, with
@@ -811,6 +848,23 @@ immediately and spent in `/upgrades`.
   you were before starting the run (recorded per-player in `returnLocs`).
 - **Rejoin location persistence** — Players who quit return to the same world they left from
   (e.g. plots world), saved in `MetaProfile.lastWorld`/`lastX`/`lastY`/`lastZ`/`lastYaw`/`lastPitch`.
+- **Enemies can't walk through walls** — `isWalkable` now rejects any solid block (previously
+  only two brick types, so mobs walked through mossy/blackstone/cobble walls and left the room),
+  and `pathClear` stops the spider leap / charger dash from skipping a wall in one teleport. The
+  room-clear check also despawns an enemy that strays far outside its room so a wall-escaped mob
+  can't permanently block clearing.
+- **Room activation is self-healing** — combat/elite rooms also activate from the per-tick room
+  loop (not only on a room-entry transition), so a room won't stay dormant if everyone is already
+  alive and inside it.
+- **HP above players' heads** — during a run each party member shows a green/red HP bar
+  (`cur/max`) above their name, updated only when the value changes; dead players are marked by
+  drifting white-smoke particles.
+- **Plots world** — `keepInventory` is on and a custom daylight cycle makes day last twice as long
+  as night. Claimed plots never have their borders/paths regenerated; tree growth can spread into
+  an edge-adjacent same-owner plot / across the shared path; cutting logs accelerates leaf decay so
+  the canopy falls quickly.
+- **Life Drain heal** — right-clicking a player no longer heals while sneaking (sneak+right-click
+  casts the AoE Life Drain ability instead); a successful heal plays a sound for both players.
 - **Persistent gear durability on run end** — Persistent items now take durability damage when
   the run ends normally (not just on death), applied after inventory restore so the damage sticks.
 - **Weapon ability durability cost** — Persistent weapons lose 1-2 random durability each time

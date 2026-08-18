@@ -56,6 +56,11 @@ public final class PlotManager {
     /** Each plot a player already owns multiplies the price of their next plot by this factor. */
     public static final double PRICE_MULTIPLIER = 1.25;
 
+    /** World tick where daylight ends and night begins (sunset). */
+    private static final long DAY_END_TICK = 13000L;
+    /** Real seconds for a full 24h day/night cycle (20 min = vanilla total). */
+    private static final int DAY_CYCLE_SECONDS = 1200;
+
     private final Dung plugin;
     private final File plotsFile;
     private final YamlConfiguration plotsData = new YamlConfiguration();
@@ -63,6 +68,7 @@ public final class PlotManager {
     private final Map<String, PlotCoord> nameToPlot = new LinkedHashMap<>();
     private long nextPlotId = 1;
     private World plotsWorld;
+    private boolean daylightTaskStarted;
 
     public PlotManager(Dung plugin) {
         this.plugin = plugin;
@@ -86,6 +92,7 @@ public final class PlotManager {
                 plotsWorld.setGameRule(GameRules.ADVANCE_TIME, false);
                 plotsWorld.setGameRule(GameRules.ADVANCE_WEATHER, false);
                 plotsWorld.setGameRule(GameRules.FIRE_SPREAD_RADIUS_AROUND_PLAYER, 0);
+                plotsWorld.setGameRule(GameRules.KEEP_INVENTORY, true);
                 plotsWorld.setTime(6000); // noon
                 // Set world spawn to the path cross-section between the four corner plots
                 plotsWorld.setSpawnLocation(-1, SURFACE_Y + 1, -1);
@@ -93,7 +100,28 @@ public final class PlotManager {
                 preGenerateGrid();
             }
         }
+        if (plotsWorld != null) startDaylightCycle(plotsWorld);
         return plotsWorld;
+    }
+
+    /**
+     * Start the custom daylight cycle for the plots world. A full 24h cycle takes
+     * {@link #DAY_CYCLE_SECONDS} real seconds (the same 20-minute total as vanilla), but the
+     * daylight portion is stretched so it lasts twice as long as the night.
+     * <p>Minecraft's day runs for world-ticks {@code 0..13000} (daylight) and night for
+     * {@code 13000..24000}. We advance the clock manually (ADVANCE_TIME is off) and use a larger
+     * step at night so day occupies 2/3 of the cycle and night 1/3.
+     */
+    private void startDaylightCycle(World w) {
+        if (daylightTaskStarted) return;
+        daylightTaskStarted = true;
+        Bukkit.getScheduler().runTaskTimer(plugin, () -> {
+            long t = w.getTime();
+            long step = t < DAY_END_TICK
+                    ? Math.round((double) DAY_END_TICK / (DAY_CYCLE_SECONDS * 2.0 / 3.0))
+                    : Math.round((double) (24000L - DAY_END_TICK) / (DAY_CYCLE_SECONDS / 3.0));
+            w.setTime((t + step) % 24000);
+        }, 20L, 20L);
     }
 
     /** Wipe all plot data from memory and disk. */
@@ -141,6 +169,7 @@ public final class PlotManager {
         public boolean isPublic;    // anyone may build & open containers (default off)
         public final Set<UUID> buildTrust = new LinkedHashSet<>();      // may build
         public final Set<UUID> containerTrust = new LinkedHashSet<>();  // may open containers
+        public final Set<UUID> pickupTrust = new LinkedHashSet<>();     // may pick up dropped items
 
         public PlotInfo(UUID owner, long claimedAt) {
             this.owner = owner;
@@ -206,23 +235,8 @@ public final class PlotManager {
         List<PlotCoord> out = new ArrayList<>();
         if (!isPathLocation(loc)) return out;
         PlotCoord coord = plotAt(loc);
-        if (coord == null) return out;
-        Location origin = plotOrigin(coord);
-        if (origin == null) return out;
-        int dx = loc.getBlockX() - origin.getBlockX();
-        int dz = loc.getBlockZ() - origin.getBlockZ();
-        PlotCoord neighbor;
-        if (dx >= PLOT_SIZE + 2 && dx <= PLOT_SIZE + 3) {
-            neighbor = new PlotCoord(coord.x() + 1, coord.z());
-        } else if (dx >= -2 && dx <= -1) {
-            neighbor = new PlotCoord(coord.x() - 1, coord.z());
-        } else if (dz >= PLOT_SIZE + 2 && dz <= PLOT_SIZE + 3) {
-            neighbor = new PlotCoord(coord.x(), coord.z() + 1);
-        } else if (dz >= -2 && dz <= -1) {
-            neighbor = new PlotCoord(coord.x(), coord.z() - 1);
-        } else {
-            return out;
-        }
+        PlotCoord neighbor = neighborAcrossPath(loc);
+        if (coord == null || neighbor == null) return out;
         PlotInfo a = plots.get(coord);
         PlotInfo b = plots.get(neighbor);
         UUID uid = p.getUniqueId();
@@ -231,6 +245,46 @@ public final class PlotManager {
             out.add(neighbor);
         }
         return out;
+    }
+
+    /** The plot on the far side of the path band that {@code loc} sits on, or null if the location
+     *  is not on a path. */
+    private PlotCoord neighborAcrossPath(Location loc) {
+        PlotCoord coord = plotAt(loc);
+        if (coord == null) return null;
+        Location origin = plotOrigin(coord);
+        if (origin == null) return null;
+        int dx = loc.getBlockX() - origin.getBlockX();
+        int dz = loc.getBlockZ() - origin.getBlockZ();
+        if (dx >= PLOT_SIZE + 2 && dx <= PLOT_SIZE + 3) return new PlotCoord(coord.x() + 1, coord.z());
+        if (dx >= -2 && dx <= -1) return new PlotCoord(coord.x() - 1, coord.z());
+        if (dz >= PLOT_SIZE + 2 && dz <= PLOT_SIZE + 3) return new PlotCoord(coord.x(), coord.z() + 1);
+        if (dz >= -2 && dz <= -1) return new PlotCoord(coord.x(), coord.z() - 1);
+        return null;
+    }
+
+    /** True if {@code loc} lies on a path shared between two adjacent plots owned by the same
+     *  player, where {@code origin} is one of the two plots. */
+    public boolean isSharedPathBetween(PlotCoord origin, Location loc) {
+        if (!isPathLocation(loc)) return false;
+        PlotInfo info = plots.get(origin);
+        if (info == null) return false;
+        UUID owner = info.owner;
+        PlotCoord self = plotAt(loc);
+        PlotCoord neighbor = neighborAcrossPath(loc);
+        if (self == null || neighbor == null) return false;
+        if (!origin.equals(self) && !origin.equals(neighbor)) return false;
+        PlotInfo a = plots.get(self);
+        PlotInfo b = plots.get(neighbor);
+        return a != null && b != null && owner.equals(a.owner) && owner.equals(b.owner);
+    }
+
+    /** True if {@code a} and {@code b} are edge-adjacent plots owned by the same player. */
+    public boolean isSameOwnerNeighbor(PlotCoord a, PlotCoord b) {
+        if (Math.abs(a.x() - b.x()) + Math.abs(a.z() - b.z()) != 1) return false;
+        PlotInfo ai = plots.get(a);
+        PlotInfo bi = plots.get(b);
+        return ai != null && bi != null && ai.owner.equals(bi.owner);
     }
 
     /** True if the location is on the path between two plots BOTH owned by the given player.
@@ -359,14 +413,13 @@ public final class PlotManager {
             profile.persistentCoins -= coinCost;
         }
 
-        // Claim the plot
+        // Build the plot (border, path, starter chest) BEFORE marking it claimed so the
+        // claimed-plot regen guard in buildPlotBordersAndPaths doesn't skip this initial build,
+        // and a crash mid-claim can't leave a plot owned but never built.
         PlotInfo info = new PlotInfo(p.getUniqueId(), System.currentTimeMillis());
         info.id = nextPlotId++;
-        plots.put(coord, info);
-
-        // Build the plot (border, path, starter chest) BEFORE persisting so a crash
-        // mid-claim can't leave a plot owned but never built.
         buildPlot(coord);
+        plots.put(coord, info);
         save();
         // Persist the shard/coin charge immediately so it can't roll back on a crash.
         plugin.meta().save();
@@ -575,8 +628,9 @@ public final class PlotManager {
             p.sendMessage("  §7Public: " + (info.isPublic ? ON : OFF));
             p.sendMessage("  §7Build access: " + namesOf(info.buildTrust));
             p.sendMessage("  §7Container access: " + namesOf(info.containerTrust));
+            p.sendMessage("  §7Item pickup access: " + namesOf(info.pickupTrust));
         }
-        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Set these with §f/plot pvp|fire|public on|off§7, §f/plot trust|untrust <name>§7, §f/plot container|uncontainer <name>§7."));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Set these with §f/plot pvp|fire|public on|off§7, §f/plot trust|untrust <name>§7, §f/plot container|uncontainer <name>§7, §f/plot pickup|unpickup <name>§7."));
         return null;
     }
 
@@ -604,21 +658,29 @@ public final class PlotManager {
         return null;
     }
 
-    /** Add or remove a player to/from build or container trust on the plot(s) the player is
-     *  standing on. On a shared path this applies to both own plots. */
+    /** Add or remove a player to/from build, container, or item-pickup access on the plot(s) the
+     *  player is standing on. On a shared path this applies to both own plots. */
     public String setPlotTrust(Player p, String kind, boolean add, String targetName) {
         List<PlotCoord> coords = ownedPlotsForConfig(p);
         if (coords.isEmpty()) return "§cStand on a plot you own to manage access.";
         UUID id = resolveUUID(targetName);
-        boolean container = kind.toLowerCase().contains("container");
+        String k = kind.toLowerCase();
+        String access;
+        if (k.contains("container")) access = "container";
+        else if (k.contains("pickup")) access = "pickup";
+        else access = "build";
         for (PlotCoord c : coords) {
             PlotInfo info = plots.get(c);
-            Set<UUID> set = container ? info.containerTrust : info.buildTrust;
+            Set<UUID> set = switch (access) {
+                case "container" -> info.containerTrust;
+                case "pickup" -> info.pickupTrust;
+                default -> info.buildTrust;
+            };
             if (add) set.add(id); else set.remove(id);
         }
         save();
-        String access = (container ? "container" : "build") + " access";
-        String verb = add ? "granted §f" + targetName + "§a " + access : "revoked §f" + targetName + "§a from " + access;
+        String verb = add ? "granted §f" + targetName + "§a " + access + " access"
+                          : "revoked §f" + targetName + "§a from " + access + " access";
         p.sendMessage("§a" + verb + " on " + affectedMessage(coords) + ".");
         return null;
     }
@@ -679,6 +741,11 @@ public final class PlotManager {
 
     /** Build borders and paths for a single plot at the given grid coordinate. */
     private void buildPlotBordersAndPaths(World w, int px, int pz, int baseY) {
+        // Never regenerate borders/paths on an already-claimed plot: its breakable border and
+        // shared paths may have been customized by the owner. Claimed plots keep what was built.
+        if (plots.containsKey(new PlotCoord(px, pz))) {
+            return;
+        }
         int ox = px * CELL_SIZE;
         int oz = pz * CELL_SIZE;
         int slabY = baseY + 1; // slabs and paths sit on top of the grass surface
@@ -804,6 +871,9 @@ public final class PlotManager {
                 for (String u : plotsData.getStringList(key + ".containerTrust")) {
                     try { info.containerTrust.add(UUID.fromString(u)); } catch (IllegalArgumentException ignored) {}
                 }
+                for (String u : plotsData.getStringList(key + ".pickupTrust")) {
+                    try { info.pickupTrust.add(UUID.fromString(u)); } catch (IllegalArgumentException ignored) {}
+                }
                 plots.put(coord, info);
                 if (info.name != null) {
                     String nk = info.name.toLowerCase();
@@ -852,6 +922,7 @@ public final class PlotManager {
                 plotsData.set(key + ".public", e.getValue().isPublic);
                 plotsData.set(key + ".buildTrust", e.getValue().buildTrust.stream().map(UUID::toString).collect(Collectors.toList()));
                 plotsData.set(key + ".containerTrust", e.getValue().containerTrust.stream().map(UUID::toString).collect(Collectors.toList()));
+                plotsData.set(key + ".pickupTrust", e.getValue().pickupTrust.stream().map(UUID::toString).collect(Collectors.toList()));
             }
             plotsFile.getParentFile().mkdirs();
             File tmp = new File(plotsFile.getParentFile(), plotsFile.getName() + ".tmp");

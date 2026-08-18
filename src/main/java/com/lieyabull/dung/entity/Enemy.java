@@ -259,7 +259,7 @@ public final class Enemy {
                     double nx = dx / dist, nz = dz / dist;
                     double leapDist = Math.min(dist, 3.0);
                     Location leapTarget = el.clone().add(nx * leapDist, 0.5, nz * leapDist);
-                    if (isWalkable(leapTarget)) {
+                    if (isWalkable(leapTarget) && pathClear(el, leapTarget)) {
                         entity.teleport(leapTarget);
                         // AoE check: damage player if close enough after landing
                         Location after = entity.getLocation();
@@ -314,7 +314,7 @@ public final class Enemy {
                 double nx = dx / dist, nz = dz / dist;
                 double lunge = Math.min(speed * 2.5 * (deltaMs / 1000.0), 0.8);
                 Location next = el.clone().add(nx * lunge, 0, nz * lunge);
-                if (isWalkable(next)) entity.teleport(next);
+                if (isWalkable(next) && pathClear(entity.getLocation(), next)) entity.teleport(next);
             }
             faceTarget(p);
             return;
@@ -386,9 +386,23 @@ public final class Enemy {
     private boolean isWalkable(Location l) {
         Material m = l.getWorld().getBlockAt(l).getType();
         Material up = l.getWorld().getBlockAt(l.clone().add(0, 1, 0)).getType();
-        return m != Material.STONE_BRICKS && up != Material.STONE_BRICKS
-                && m != Material.DEEPSLATE_BRICKS && up != Material.DEEPSLATE_BRICKS
-                && m != Material.BEDROCK;
+        return m != Material.BEDROCK && !m.isSolid() && !up.isSolid();
+    }
+
+    /** True if no solid wall lies along the straight line from {@code from} to {@code to} (sampled
+     *  in small steps at the entity's elevation), so multi-block leaps/dashes can't skip over a wall
+     *  and out of the room in a single teleport. */
+    private boolean pathClear(Location from, Location to) {
+        double dist = from.distance(to);
+        if (dist <= 0.4) return true;
+        org.bukkit.util.Vector dir = to.toVector().subtract(from.toVector()).normalize();
+        int steps = (int) Math.ceil(dist / 0.4);
+        Location p = from.clone();
+        for (int i = 1; i < steps; i++) {
+            p.add(dir.clone().multiply(0.4));
+            if (!isWalkable(p)) return false;
+        }
+        return true;
     }
 
     private void faceTarget(Player p) {

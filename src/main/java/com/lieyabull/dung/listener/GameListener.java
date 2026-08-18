@@ -43,6 +43,8 @@ import org.bukkit.inventory.PlayerInventory;
 
 /** Wires Paper events to the game. Routes events to the correct dungeon instance per player. */
 public final class GameListener implements Listener {
+    /** Dung weapons deal only this fraction of their vanilla damage to hostile mobs outside a run. */
+    private static final double OUTSIDE_DAMAGE_MULTIPLIER = 0.25;
     private final Dung plugin;
 
     public GameListener(Dung plugin) {
@@ -133,7 +135,13 @@ public final class GameListener implements Listener {
             e.setDeathMessage(null);
             p.sendMessage("§cYou died.");
             org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
-                di.onPlayerDeath(p);
+                // Guard: the player may have quit (or the run ended) between the death event and
+                // this scheduled tick. In that case removePlayer already restored their inventory
+                // and delivered pending persists — running onPlayerDeath again would apply the
+                // persistent-gear durability penalty a second time.
+                if (plugin.game().instanceOf(p) == di && di.isRunning()) {
+                    di.onPlayerDeath(p);
+                }
             });
         }
     }
@@ -338,7 +346,8 @@ public final class GameListener implements Listener {
         di.tryCastClassAbility(p);
     }
 
-    /** Left click / attack to fire tears. */
+    /** Left click / attack to fire tears. Outside a dungeon, Dung weapons still hit hostile mobs
+     *  but at a nerfed 25% of their vanilla damage. */
     @EventHandler
     public void onAttack(EntityDamageByEntityEvent e) {
         if (e.getDamager() instanceof Player p) {
@@ -346,8 +355,27 @@ public final class GameListener implements Listener {
             if (di != null) {
                 e.setCancelled(true);
                 di.registerAttack(p);
+                return;
+            }
+            if (isHostile(e.getEntity()) && isDungWeapon(p.getInventory().getItemInMainHand())) {
+                e.setDamage(e.getDamage() * OUTSIDE_DAMAGE_MULTIPLIER);
             }
         }
+    }
+
+    /** Hostile mobs (zombies, skeletons, creepers, ...) — Dung weapons only work against these. */
+    private static boolean isHostile(Entity e) {
+        return e instanceof org.bukkit.entity.Monster;
+    }
+
+    /** True if the held item is a Dung weapon (and not broken). */
+    private boolean isDungWeapon(ItemStack item) {
+        if (item == null || item.getType().isAir()) return false;
+        if (GearFactory.isBroken(item)) return false;
+        String kind = item.getItemMeta().getPersistentDataContainer().get(
+                new org.bukkit.NamespacedKey(plugin, ItemTags.KIND),
+                org.bukkit.persistence.PersistentDataType.STRING);
+        return "weapon".equals(kind);
     }
 
     /** Dung mobs/boss are real vanilla mobs whose native AI also attacks the player. Block ALL
@@ -562,8 +590,9 @@ public final class GameListener implements Listener {
         Player p = e.getPlayer();
         DungeonInstance di = instanceOf(p);
         if (di == null) return;
-        // Life Drain: right-click a player to heal them with stored health
-        if (e.getRightClicked() instanceof Player target && p != target) {
+        // Life Drain: right-click a player (normal click, not sneak) to heal them with stored health.
+        // Sneak+right-click instead casts the AoE Life Drain ability, so never heal while sneaking.
+        if (e.getRightClicked() instanceof Player target && p != target && !p.isSneaking()) {
             ItemStack held = p.getInventory().getItemInMainHand();
             if (held != null && !held.getType().isAir() && held.getItemMeta() != null) {
                 var pdc = held.getItemMeta().getPersistentDataContainer();
@@ -581,6 +610,10 @@ public final class GameListener implements Listener {
                                 GearFactory.setStoredHealth(held, 0);
                                 p.sendMessage("§aHealed " + target.getName() + " for §c" + stored + "❤");
                                 target.sendMessage("§a" + p.getName() + " healed you for §c" + stored + "❤");
+                                // Play the heal sound for both the healer and the healed player
+                                org.bukkit.Sound healSound = org.bukkit.Sound.ENTITY_WITCH_DRINK;
+                                p.getWorld().playSound(p.getLocation(), healSound, 0.8f, 1.0f);
+                                p.getWorld().playSound(target.getLocation(), healSound, 0.8f, 1.0f);
                                 // Spawn damage_indicator particles from sender to receiver
                                 Location src = p.getLocation().add(0, 1, 0);
                                 Location dst = target.getLocation().add(0, 1, 0);

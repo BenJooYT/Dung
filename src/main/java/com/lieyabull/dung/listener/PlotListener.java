@@ -2,10 +2,15 @@ package com.lieyabull.dung.listener;
 
 import com.lieyabull.dung.Dung;
 import com.lieyabull.dung.plot.PlotManager;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.Chest;
+import org.bukkit.block.data.type.Leaves;
 import org.bukkit.entity.Player;
+import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -22,8 +27,12 @@ import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.event.player.PlayerBucketFillEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerPickupItemEvent;
 import org.bukkit.event.world.StructureGrowEvent;
 
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 import java.util.UUID;
 
 /** Enforces plot ownership: players may only modify the buildable area of their own plot. */
@@ -113,6 +122,20 @@ public final class PlotListener implements Listener {
         e.getPlayer().sendMessage("§cThat chest belongs to someone else!");
     }
 
+    /** Picking up dropped items on a plot is restricted to the owner and any player the owner
+     *  granted pickup access. Public plots allow anyone to pick up items. */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onPickup(PlayerPickupItemEvent e) {
+        PlotManager pm = plugin.plotManager();
+        PlotManager.PlotCoord coord = pm.plotAt(e.getItem().getLocation());
+        if (coord == null) return;
+        PlotManager.PlotInfo info = pm.getInfo(coord);
+        if (info == null) return;
+        UUID uid = e.getPlayer().getUniqueId();
+        if (info.owner.equals(uid) || info.isPublic || info.pickupTrust.contains(uid)) return;
+        e.setCancelled(true);
+    }
+
     /** PVP is off by default on plots. A plot with PVP disabled protects anyone standing on it
      *  from player-vs-player damage. */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -164,11 +187,18 @@ public final class PlotListener implements Listener {
         }
     }
 
-    /** True if the given location lies within the buildable area of the plot at {@code origin}
-     *  (same plot, not on its border or the paths between plots). */
+    /** True if a block at {@code loc} may be occupied by growth from the tree/plant rooted at the
+     *  origin plot: inside the origin's buildable area, inside the buildable area of an edge-adjacent
+     *  same-owner plot, or on a path shared between two same-owner adjacent plots. Adjacent plots
+     *  owned by the same player are treated as one contiguous area for tree growth, so a canopy can
+     *  grow across the shared boundary instead of being cut off at the path. */
     private boolean withinPlot(PlotManager pm, PlotManager.PlotCoord origin, Location loc) {
         PlotManager.PlotCoord c = pm.plotAt(loc);
-        return c != null && c.equals(origin) && pm.isBuildableArea(loc);
+        if (c == null) return false;
+        if (pm.isBuildableArea(loc)) {
+            return c.equals(origin) || pm.isSameOwnerNeighbor(origin, c);
+        }
+        return pm.isSharedPathBetween(origin, loc);
     }
 
     /** Saplings growing into trees can push trunk/leaves beyond the plot's buildable area (onto
@@ -203,5 +233,85 @@ public final class PlotListener implements Listener {
         if (!withinPlot(pm, coord, e.getNewState().getLocation())) {
             e.setCancelled(true);
         }
+    }
+
+    // ==================== LEAF DECAY ACCELERATION ====================
+
+    private static boolean isLog(Material m) {
+        String n = m.name();
+        return n.endsWith("_LOG") || n.equals("LOG") || n.equals("LOG_2");
+    }
+
+    private static boolean isLeaves(Material m) {
+        String n = m.name();
+        return n.endsWith("_LEAVES") || n.equals("LEAVES") || n.equals("LEAVES_2");
+    }
+
+    private boolean inPlotsWorld(Block b) {
+        World w = b.getWorld();
+        return w != null && w.getName().equals(PlotManager.PLOTS_WORLD_NAME);
+    }
+
+    /** True if the leaf is within 6 blocks (Manhattan) of a log, i.e. still attached to a tree.
+     *  Otherwise it has become detached and would normally decay. */
+    private boolean connectedToLog(Block leaf) {
+        int bx = leaf.getX(), by = leaf.getY(), bz = leaf.getZ();
+        World w = leaf.getWorld();
+        for (int dx = -6; dx <= 6; dx++)
+            for (int dy = -6; dy <= 6; dy++)
+                for (int dz = -6; dz <= 6; dz++) {
+                    if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > 6) continue;
+                    if (isLog(w.getBlockAt(bx + dx, by + dy, bz + dz).getType())) return true;
+                }
+        return false;
+    }
+
+    /** When a tree is cut in the plots world, make its now-detached leaves fall quickly instead of
+     *  waiting on the slow vanilla random decay. Persistent (builder-placed) leaves are left alone. */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onLogBreak(BlockBreakEvent e) {
+        Block block = e.getBlock();
+        if (!isLog(block.getType()) || !inPlotsWorld(block)) return;
+        scheduleLeafDecay(block.getLocation());
+    }
+
+    /** Scan once for leaves near the cut log, then over a short burst repeatedly decay any that are
+     *  no longer attached to a log so the canopy visibly falls instead of lingering. */
+    private void scheduleLeafDecay(Location origin) {
+        World w = origin.getWorld();
+        if (w == null) return;
+        List<Location> leaves = new ArrayList<>();
+        int bx = origin.getBlockX(), by = origin.getBlockY(), bz = origin.getBlockZ();
+        for (int dx = -7; dx <= 7; dx++)
+            for (int dy = -7; dy <= 7; dy++)
+                for (int dz = -7; dz <= 7; dz++) {
+                    Block b = w.getBlockAt(bx + dx, by + dy, bz + dz);
+                    if (isLeaves(b.getType())) leaves.add(b.getLocation());
+                }
+        if (leaves.isEmpty()) return;
+
+        BukkitTask[] holder = new BukkitTask[1];
+        holder[0] = Bukkit.getScheduler().runTaskTimer(plugin, new Runnable() {
+            int passes = 0;
+            @Override
+            public void run() {
+                passes++;
+                Iterator<Location> it = leaves.iterator();
+                boolean any = false;
+                while (it.hasNext()) {
+                    Block b = it.next().getBlock();
+                    if (!isLeaves(b.getType())) { it.remove(); continue; }
+                    if (b.getBlockData() instanceof Leaves lv && lv.isPersistent()) { it.remove(); continue; }
+                    if (!connectedToLog(b)) {
+                        it.remove();
+                        b.breakNaturally(); // drops saplings/apples as the leaves fall
+                        any = true;
+                    }
+                }
+                if (leaves.isEmpty() || !any || passes >= 12) {
+                    Bukkit.getScheduler().cancelTask(holder[0].getTaskId());
+                }
+            }
+        }, 2L, 3L);
     }
 }

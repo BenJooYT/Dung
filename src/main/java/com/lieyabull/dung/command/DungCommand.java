@@ -24,11 +24,15 @@ import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public final class DungCommand implements CommandExecutor, TabCompleter {
     private final Dung plugin;
+    private final Map<UUID, Long> lastPartyInvite = new HashMap<>();
+    private static final long PARTY_INVITE_COOLDOWN_MS = 5000;
 
     public DungCommand(Dung plugin) {
         this.plugin = plugin;
@@ -208,6 +212,12 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
             }
             case "invite": {
                 if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: /party invite <player>")); return true; }
+                long now = System.currentTimeMillis();
+                Long last = lastPartyInvite.get(p.getUniqueId());
+                if (last != null && now - last < PARTY_INVITE_COOLDOWN_MS) {
+                    p.sendMessage("§cYou can't invite yet. Wait " + ((PARTY_INVITE_COOLDOWN_MS - (now - last)) / 1000 + 1) + "s.");
+                    return true;
+                }
                 Player target = Bukkit.getPlayer(args[1]);
                 if (target == null) { p.sendMessage("§cPlayer not found."); return true; }
                 if (target.equals(p)) { p.sendMessage("§cYou can't invite yourself."); return true; }
@@ -216,6 +226,7 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                     return true;
                 }
                 if (pm.invite(p, target)) {
+                    lastPartyInvite.put(p.getUniqueId(), now);
                     p.sendMessage("§aInvited " + target.getName() + " to the party.");
                     target.sendMessage(
                             com.lieyabull.dung.ui.ChatUI.command("§a[Accept]", "/party accept", "Join the party")
@@ -320,39 +331,45 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
         return salvageHeld(p);
     }
 
-    /** Break the held Dung armor piece into salvage shards (only during a run). Shards are added to
-     *  a per-floor counter and only become persistent shards when the floor boss is defeated. */
+    /** Break the held Dung armor piece into salvage shards. Shards are permanent: during a run they're
+     *  added to a per-floor counter that becomes persistent shards when the floor boss is defeated;
+     *  outside a run they go straight into your persistent shard balance. */
     private boolean salvageHeld(Player p) {
-        GameManager gm = plugin.game();
-        if (!gm.isInInstance(p)) {
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cSalvage only works while inside a run. Start one with /dung start."));
-            return true;
-        }
-        DungeonInstance di = gm.instanceOf(p);
-        if (di == null) return true;
         ItemStack held = p.getInventory().getItemInMainHand();
         String kind = tag(held, ItemTags.KIND);
         if (!"armor".equals(kind)) {
             p.sendMessage("§cHold a Dung armor piece in your main hand to salvage it.");
             return true;
         }
-        if (com.lieyabull.dung.items.GearFactory.isFavorite(held)) {
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§8That armor is §bfavorited§8. Run §f/salvage favorite§8 to un-favorite it first."));
+        if (GearFactory.isFavorite(held)) {
+            p.sendMessage(ChatUI.clickableCommands("§8That armor is §bfavorited§8. Run §f/salvage favorite§8 to un-favorite it first."));
             return true;
         }
-        if (com.lieyabull.dung.items.GearFactory.isStarter(held)) {
+        if (GearFactory.isStarter(held)) {
             p.sendMessage("§8That's your free starter kit — it can't be salvaged.");
             return true;
         }
+        // Persistent gear IS salvable when held, so a player can consciously turn a permanent piece
+        // into shards. Favorite it (via /salvage favorite) if you want it protected from accidental
+        // salvage. Bulk salvage (/salvage all) still skips persistent gear.
+        String name = held.getItemMeta() == null ? held.getType().name() : held.getItemMeta().getDisplayName();
         int value = salvageValue(held);
-        held.setAmount(held.getAmount() - 1);
+        int amount = held.getAmount() - 1;
+        if (amount <= 0) p.getInventory().setItemInMainHand(null);
+        else held.setAmount(amount);
         UUID pid = p.getUniqueId();
-        Run run = di.run();
-        run.salvageShards.merge(pid, value, Integer::sum);
-        int total = run.salvageShards.getOrDefault(pid, 0);
-        p.sendMessage("§bSalvaged " + rarityColor(held)
-                + (held.getItemMeta() == null ? held.getType().name() : held.getItemMeta().getDisplayName())
-                + "§b → §b+" + value + " shards§7 (floor total §b" + total + "§7).");
+        DungeonInstance di = plugin.game().instanceOf(p);
+        if (di == null) {
+            addShards(p, value);
+            p.sendMessage("§bSalvaged " + rarityColor(held) + name
+                    + "§b → §b+" + value + " shards§7 (balance §b" + plugin.meta().profile(pid).shards + "§7).");
+        } else {
+            Run run = di.run();
+            run.salvageShards.merge(pid, value, Integer::sum);
+            int total = run.salvageShards.getOrDefault(pid, 0);
+            p.sendMessage("§bSalvaged " + rarityColor(held) + name
+                    + "§b → §b+" + value + " shards§7 (floor total §b" + total + "§7).");
+        }
         return true;
     }
 
@@ -371,15 +388,9 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
     }
 
     /** Salvage every salvable armor piece in the main inventory OUTSIDE the hotbar, armor slots,
-     *  and offhand. Favorited pieces are always skipped. */
+     *  and offhand. Favorited pieces are always skipped. Shards go to the persistent balance outside
+     *  a run, or to the per-floor counter during a run. */
     private boolean salvageAll(Player p) {
-        GameManager gm = plugin.game();
-        if (!gm.isInInstance(p)) {
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cSalvage only works while inside a run. Start one with /dung start."));
-            return true;
-        }
-        DungeonInstance di = gm.instanceOf(p);
-        if (di == null) return true;
         org.bukkit.inventory.PlayerInventory inv = p.getInventory();
         int pieces = 0, totalValue = 0;
         // main storage only (0-35); slots 36+ are armor/offhand which getSize() ALSO includes,
@@ -396,11 +407,18 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         UUID pid = p.getUniqueId();
-        Run run = di.run();
-        run.salvageShards.merge(pid, totalValue, Integer::sum);
-        int total = run.salvageShards.getOrDefault(pid, 0);
-        p.sendMessage("§bSalvaged §f" + pieces + "§b armor pieces §b→ §b+" + totalValue
-                + " shards§7 (floor total §b" + total + "§7).");
+        DungeonInstance di = plugin.game().instanceOf(p);
+        if (di == null) {
+            addShards(p, totalValue);
+            p.sendMessage("§bSalvaged §f" + pieces + "§b armor pieces §b→ §b+" + totalValue
+                    + " shards§7 (balance §b" + plugin.meta().profile(pid).shards + "§7).");
+        } else {
+            Run run = di.run();
+            run.salvageShards.merge(pid, totalValue, Integer::sum);
+            int total = run.salvageShards.getOrDefault(pid, 0);
+            p.sendMessage("§bSalvaged §f" + pieces + "§b armor pieces §b→ §b+" + totalValue
+                    + " shards§7 (floor total §b" + total + "§7).");
+        }
         return true;
     }
 

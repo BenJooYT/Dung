@@ -483,6 +483,49 @@ tab = detailed build/run/progression).
       side whose two bounding plots are owned by the same player, so the owner's shared path is exempt
       from the regen "clear" (the 2-block AIR clear above paths).
 
+### Iteration 32 — enemy wall fix, room reliability, broken-gear preservation, plots QoL & run head-HP
+- [x] **Enemies can't walk through walls:** `Enemy.isWalkable` rejected only two brick types, so mobs
+      walked through mossy/blackstone/cobble walls and left the room. It now rejects **any solid block**
+      (same fix in `BossController`), and a new `pathClear(from,to)` samples the straight line so the
+      spider leap and charger dash can't skip over a wall in a single teleport.
+- [x] **Rooms always clear:** the per-tick clear check now also **despawns and drops** an enemy that has
+      strayed >3 blocks outside its room (`insideRoom(..., 3.0)`), so a wall-escaped mob can't keep a room
+      locked forever. Clear also runs for a re-entered room even if its locked flag was reset.
+- [x] **Rooms always activate:** combat/elite rooms are also spawned+locked from the per-tick room loop
+      (not only on an `enterRoom` transition), so a room can't stay dormant when everyone is alive and
+      inside but no member triggered a room-crossing event. Re-entering a spawned room no longer unlocks it.
+- [x] **Broken gear is preserved, not deleted:** `handleBrokenArmor` unequips a broken persistent piece,
+      moves it into a free main-inventory slot (drops on the ground only if the bag is full), and notifies
+      the player with the `/shop` repair hint — instead of silently destroying it. Durability is applied by
+      iterating every inventory slot **exactly once** (the old overlap double-damaged and re-broke pieces).
+- [x] **Persistent items aren't duplicated on restore/revive:** the pre-run snapshot only re-inserts
+      persistent items whose `dung.uuid` is still owned (or legacy uuid-less items); dropped/exchanged/
+      preserved pieces aren't resurrected, and owned pieces aren't doubled as undamaged copies.
+- [x] **HP bar above players' heads:** during a run each party member shows a green/red HP bar
+      (`cur/max`) above their name (`updateHeadHp`, refreshed only when the value changes); dead
+      (spectator) players are marked by drifting white-smoke particles.
+- [x] **Key-room unlock QoL:** unlocking a LOCKED room no longer teleports the player inside (they walk
+      in themselves), and the freed door blocks burst END_ROD particles where the barrier stood.
+- [x] **Plots world gameplay:** `KEEP_INVENTORY` gamerule is on; a custom **daylight cycle** runs a full
+      24h day over 20 real minutes with **day twice as long as night** (`ADVANCE_TIME` off); claimed plots
+      never have their borders/paths regenerated (`buildPlotBordersAndPaths` early-returns).
+- [x] **Plot tree growth across same-owner plots:** `isSameOwnerNeighbor` + `withinPlot` treat edge-adjacent
+      same-owner plots (and the shared path) as one contiguous growth area, so a canopy isn't pruned at
+      your own boundary.
+- [x] **Plot leaf-decay acceleration:** cutting a log in the plots world scans a 7-block radius and quickly
+      decays now-detached leaves (skipping builder-placed persistent leaves), so the canopy falls instead
+      of lingering on vanilla random decay. `breakNaturally()` still drops saplings/apples.
+- [x] **Plot item-pickup access:** `PlotInfo.pickupTrust` persisted; `/plot pickup|unpickup <name>`
+      (owner-only, both plots on a shared path); enforced in `PlotListener.onPickup`
+      (owner/public/pickup-trusted).
+- [x] **Outside-dungeon weapon nerf:** Dung weapons deal only **25%** of their vanilla damage to hostile
+      (`Monster`) mobs outside a run, so a run weapon isn't an overpowered freebie in the plots world.
+- [x] **Salvage works anywhere:** `/salvage` no longer requires being inside a run — outside, shards go
+      straight to the persistent balance; inside, they're banked to it on the floor boss's defeat.
+- [x] **Life Drain & party polish:** right-click heal is blocked while sneaking (sneak+right-click casts
+      the AoE ability) and plays a sound; `/party invite` has a 5s anti-spam cooldown; the death path
+      guards against applying the persistent-gear durability penalty twice if a player quits mid-death.
+
 ### Remaining candidate work
 - [ ] **Status effects** — Poison (DoT), Slow, Weakness, Stun on both players and enemies. Weapons/
       abilities could apply them; enemies could apply them on hit. Adds strategic depth to combat.
@@ -511,4 +554,4 @@ tab = detailed build/run/progression).
 gradlew build            # compiles + jars
 gradlew runServer        # boots a Paper 1.21.11 server with the plugin
 ```
-Commands: `/dung start|descend|leave|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop` (opens GUI) `/upgrades` (opens GUI) `/salvage [all|favorite]` `/leaderboard [category] [page]` `/plots [warp <name>]` `/plot claim|home|name|warp|settings|pvp|fire|public|trust|untrust|container|uncontainer|unclaim`
+Commands: `/dung start|descend|leave|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop` (opens GUI) `/upgrades` (opens GUI) `/salvage [all|favorite]` `/leaderboard [category] [page]` `/plots [warp <name>]` `/plot claim|home|name|warp|settings|pvp|fire|public|trust|untrust|container|uncontainer|pickup|unpickup|unclaim`

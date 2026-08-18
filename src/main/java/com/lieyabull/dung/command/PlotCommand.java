@@ -81,6 +81,7 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot pvp|fire|public on|off §7— Toggle a plot setting"));
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot trust|untrust <name> §7— Grant/revoke build access"));
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot container|uncontainer <name> §7— Grant/revoke container access"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot pickup|unpickup <name> §7— Grant/revoke item pickup access"));
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot unclaim §7— Unclaim the plot you're standing on"));
             return true;
         }
@@ -168,12 +169,15 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
             case "trust":
             case "untrust":
             case "container":
-            case "uncontainer": {
+            case "uncontainer":
+            case "pickup":
+            case "unpickup": {
                 if (args.length < 2) {
                     p.sendMessage("§cUsage: §f/plot " + args[0].toLowerCase() + " <player>§c.");
                     return true;
                 }
-                boolean add = args[0].equalsIgnoreCase("trust") || args[0].equalsIgnoreCase("container");
+                boolean add = args[0].equalsIgnoreCase("trust") || args[0].equalsIgnoreCase("container")
+                        || args[0].equalsIgnoreCase("pickup");
                 String err = pm.setPlotTrust(p, args[0].toLowerCase(), add, args[1]);
                 if (err != null) p.sendMessage(err);
                 return true;
@@ -201,7 +205,8 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
         // /plot tab completion
         if (args.length == 1) {
             List<String> subs = new ArrayList<>(List.of("claim", "home", "name", "warp", "unclaim",
-                    "settings", "pvp", "fire", "public", "trust", "untrust", "container", "uncontainer"));
+                    "settings", "pvp", "fire", "public", "trust", "untrust", "container", "uncontainer",
+                    "pickup", "unpickup"));
             return subs.stream().filter(s -> s.startsWith(args[0].toLowerCase())).toList();
         }
         if (args.length == 2) {
@@ -213,7 +218,8 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
                 return List.of("on", "off").stream().filter(s -> s.startsWith(args[1].toLowerCase())).toList();
             }
             if (args[0].equalsIgnoreCase("trust") || args[0].equalsIgnoreCase("untrust")
-                    || args[0].equalsIgnoreCase("container") || args[0].equalsIgnoreCase("uncontainer")) {
+                    || args[0].equalsIgnoreCase("container") || args[0].equalsIgnoreCase("uncontainer")
+                    || args[0].equalsIgnoreCase("pickup") || args[0].equalsIgnoreCase("unpickup")) {
                 return playerNames(args[1]);
             }
         }

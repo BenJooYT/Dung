@@ -269,9 +269,7 @@ public final class BossController {
     private boolean isWalkable(Location l) {
         org.bukkit.Material m = l.getWorld().getBlockAt(l).getType();
         org.bukkit.Material up = l.getWorld().getBlockAt(l.clone().add(0, 1, 0)).getType();
-        return m != org.bukkit.Material.STONE_BRICKS && up != org.bukkit.Material.STONE_BRICKS
-                && m != org.bukkit.Material.DEEPSLATE_BRICKS && up != org.bukkit.Material.DEEPSLATE_BRICKS
-                && m != org.bukkit.Material.BEDROCK;
+        return m != org.bukkit.Material.BEDROCK && !m.isSolid() && !up.isSolid();
     }
 
     public void despawn() {

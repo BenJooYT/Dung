@@ -82,6 +82,7 @@ public final class DungeonInstance {
     private int tabTickCounter = 0;
     private final Map<UUID, Double> lastBarHearts = new HashMap<>();
     private final Map<UUID, Double> lastBarMana = new HashMap<>();
+    private final Map<UUID, String> lastHeadHp = new HashMap<>();
     private final Map<UUID, ItemStack[]> lastGear = new HashMap<>();
     private BossController boss;
     private Floor.RoomNode bossRoom;
@@ -190,6 +191,7 @@ public final class DungeonInstance {
         lastBarHearts.clear();
         lastBarMana.clear();
         lastGear.clear();
+        lastHeadHp.clear();
         barTick = 0;
         tabTickCounter = 0;
         curRoom = null;
@@ -346,7 +348,8 @@ public final class DungeonInstance {
         if (snapshot == null) return;
         PlayerInventory inv = p.getInventory();
         // Collect persistent items the player currently has (after stripRunGear) — these are the
-        // ones they still own at run end. Items dropped or salvaged during the run won't be here.
+        // ones they still own at run end. Items dropped, exchanged, or preserved during the run
+        // won't be here.
         java.util.List<ItemStack> currentPersistent = new java.util.ArrayList<>();
         for (int i = 0; i < inv.getSize(); i++) {
             ItemStack s = inv.getItem(i);
@@ -358,29 +361,66 @@ public final class DungeonInstance {
         ItemStack off = inv.getItemInOffHand();
         if (off != null && isPersistentGear(off)) currentPersistent.add(off.clone());
 
+        // Build a set of UUIDs for persistent items the player still owns. Used to skip
+        // restoring snapshot persistent items that were dropped, exchanged, or preserved —
+        // giving them back would duplicate them since the original still exists elsewhere.
+        java.util.Set<String> ownedPersistUuids = new java.util.HashSet<>();
+        for (ItemStack ps : currentPersistent) {
+            String uuid = GearFactory.getUuid(ps);
+            if (uuid != null) ownedPersistUuids.add(uuid);
+        }
+
         // Clear the entire inventory first so no run leftovers remain
         inv.clear();
+        // Restore snapshot, but skip persistent items the player no longer owns.
         for (int i = 0; i < inv.getSize(); i++) {
             if (i < snapshot.length && snapshot[i] != null) {
-                inv.setItem(i, snapshot[i].clone());
+                ItemStack snapItem = snapshot[i];
+                if (isPersistentGear(snapItem)) {
+                    String uuid = GearFactory.getUuid(snapItem);
+                    // Skip if the player no longer has this item (dropped/exchanged/preserved).
+                    // Pre-UUID items (uuid == null) are still restored to avoid data loss.
+                    if (uuid != null && !ownedPersistUuids.contains(uuid)) continue;
+                }
+                inv.setItem(i, snapItem.clone());
             }
         }
         // Restore armor
         ItemStack[] armor = new ItemStack[4];
         for (int i = 0; i < 4; i++) {
             int idx = inv.getSize() + i;
-            armor[i] = (idx < snapshot.length && snapshot[idx] != null) ? snapshot[idx].clone() : null;
+            if (idx < snapshot.length && snapshot[idx] != null) {
+                ItemStack snapItem = snapshot[idx];
+                if (isPersistentGear(snapItem)) {
+                    String uuid = GearFactory.getUuid(snapItem);
+                    if (uuid != null && !ownedPersistUuids.contains(uuid)) {
+                        armor[i] = null;
+                        continue;
+                    }
+                }
+                armor[i] = snapItem.clone();
+            } else {
+                armor[i] = null;
+            }
         }
         inv.setArmorContents(armor);
         // Restore off hand
         int offIdx = inv.getSize() + 4;
         if (offIdx < snapshot.length && snapshot[offIdx] != null) {
-            inv.setItemInOffHand(snapshot[offIdx].clone());
+            ItemStack snapItem = snapshot[offIdx];
+            if (isPersistentGear(snapItem)) {
+                String uuid = GearFactory.getUuid(snapItem);
+                if (uuid == null || ownedPersistUuids.contains(uuid)) {
+                    inv.setItemInOffHand(snapItem.clone());
+                }
+            } else {
+                inv.setItemInOffHand(snapItem.clone());
+            }
         }
 
         // Now add back any persistent items the player still had at run end that are NOT already
         // in the restored inventory. This preserves new persistent items picked up during the run
-        // (shop, pedestals) and naturally excludes dropped/salvaged ones.
+        // (shop, pedestals) and naturally excludes dropped/exchanged/preserved ones.
         // For items that DO match a snapshot item, preserve mid-run durability loss: if the
         // current version has lower durability, replace the snapshot version with the damaged one.
         for (ItemStack ps : currentPersistent) {
@@ -539,8 +579,7 @@ public final class DungeonInstance {
                 int dmg = ThreadLocalRandom.current().nextInt(1, 5); // 1-4 durability loss
                 boolean broken = GearFactory.damageItem(s, dmg);
                 if (broken) {
-                    inv.setItem(slot, null);
-                    p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour " + (s.getItemMeta() != null ? s.getItemMeta().getDisplayName() : s.getType().name()) + " §c broke from the descent! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));
+                    handleBrokenArmor(p, s, " from the descent");
                 }
             }
         }
@@ -745,7 +784,12 @@ public final class DungeonInstance {
         n.visited = true;
         run.floor.visited.add(n);
         long rk = run.floor.key(n.x, n.z);
-        roomLocked.put(rk, false);
+        // Preserve the sealed state for a room that already spawned enemies: re-entering it
+        // mid-fight (stepping out and back in) must not silently unlock it, or its doors would
+        // stay open while enemies remain and the room's lock/unlock bookkeeping would drift.
+        if (!spawnedRooms.contains(rk)) {
+            roomLocked.put(rk, false);
+        }
 
         long invulnMs = (n == run.floor.start ? 2500 : 1000);
         for (Player p : party.onlineMembers()) {
@@ -859,19 +903,26 @@ public final class DungeonInstance {
     }
 
     private boolean insideRoom(Location loc, Floor.RoomNode rn) {
+        return insideRoom(loc, rn, 0);
+    }
+
+    /** Like {@link #insideRoom(Location, Floor.RoomNode)} but allows a {@code margin} of extra blocks
+     *  beyond the room's buildable footprint (used to give enemies a little slack around doorways
+     *  without letting them block a room clear once they've strayed outside). */
+    private boolean insideRoom(Location loc, Floor.RoomNode rn, double margin) {
         if (rn.template != null) {
             // Template room footprint (may differ from the procedural grid shell)
             RoomBounds t = rn.template.total();
-            double minX = baseX(rn) - t.minX;
-            double minZ = baseZ(rn) - t.minZ;
-            double maxX = minX + t.width();
-            double maxZ = minZ + t.depth();
+            double minX = baseX(rn) - t.minX - margin;
+            double minZ = baseZ(rn) - t.minZ - margin;
+            double maxX = minX + t.width() + margin * 2;
+            double maxZ = minZ + t.depth() + margin * 2;
             return loc.getX() >= minX && loc.getX() < maxX
                     && loc.getZ() >= minZ && loc.getZ() < maxZ;
         }
         double ox = loc.getX() - (baseX(rn) + RoomGen.WALL);
         double oz = loc.getZ() - (baseZ(rn) + RoomGen.WALL);
-        return ox >= 0 && ox < rn.sizeW && oz >= 0 && oz < rn.sizeH;
+        return ox >= -margin && ox < rn.sizeW + margin && oz >= -margin && oz < rn.sizeH + margin;
     }
 
     /** Check whether every online, alive party member is physically inside the given room (using their
@@ -1284,16 +1335,38 @@ public final class DungeonInstance {
         for (Floor.RoomNode rn : activeNodes) {
             long k = run.floor.key(rn.x, rn.z);
             List<Enemy> list = roomEnemies.get(k);
-            if (list == null) continue;
-            // Room cleared check
-            if (roomLocked.getOrDefault(k, false)) {
-                int before = list.size();
-                list.removeIf(e -> e.dead || !e.alive());
-                if (list.size() < before && run != null) run.kills += (before - list.size());
-                if (list.isEmpty()) {
-                    onRoomClear(rn, k);
-                    continue;
+            // Activate combat/elite rooms from the tick as a fallback to the enterRoom event, so a
+            // room can never stay dormant if everyone is already alive and inside it but the last
+            // member didn't trigger an enterRoom transition (e.g. they were already tracked as in it).
+            if (!rn.cleared && (rn.type == RoomType.COMBAT || rn.type == RoomType.ELITE)
+                    && !spawnedRooms.contains(k) && list == null) {
+                if (allMembersInRoom(rn) && spawnEnemies(rn)) {
+                    spawnedRooms.add(k);
+                    lockDoors(rn);
                 }
+            }
+            list = roomEnemies.get(k);
+            if (list == null) continue;
+            // Room cleared check — runs for ANY room that has spawned enemies, whether or not its
+            // doors are currently sealed, so a re-entered combat room still clears when the last
+            // enemy dies. Gating the clear on roomLocked let a re-entered room (whose locked flag
+            // was reset by enterRoom) sit forever with dead mobs never removed from the list.
+            int before = list.size();
+            // An enemy that has strayed well outside the room (escaped through a wall/door) is
+            // despawned and dropped so it can't leave the room without ever dying and permanently
+            // block the clear.
+            java.util.Iterator<Enemy> it = list.iterator();
+            while (it.hasNext()) {
+                Enemy e = it.next();
+                if (e.dead || !e.alive() || !insideRoom(e.entity.getLocation(), rn, 3.0)) {
+                    if (!e.dead && e.alive()) e.despawn();
+                    it.remove();
+                }
+            }
+            if (list.size() < before && run != null) run.kills += (before - list.size());
+            if (list.isEmpty()) {
+                onRoomClear(rn, k);
+                continue;
             }
             // Tick enemies against the nearest alive party member
             for (Enemy e : list) {
@@ -1370,6 +1443,16 @@ public final class DungeonInstance {
 
             // Perfection particles: END_ROD sparkles around items at max upgrade level
             spawnPerfectionParticles(p);
+        }
+
+        // Spectator effect: white smoke sprinkles from the heads of dead (spectator) players
+        if (world != null && tickCounter % 2 == 0) {
+            for (UUID spectatorId : deadPlayers) {
+                Player spec = Bukkit.getPlayer(spectatorId);
+                if (spec == null || !spec.isOnline() || spec.getGameMode() != org.bukkit.GameMode.SPECTATOR) continue;
+                world.spawnParticle(org.bukkit.Particle.WHITE_SMOKE,
+                        spec.getLocation().add(0, 1.8, 0), 3, 0.25, 0.15, 0.25, 0.01);
+            }
         }
 
         refreshUI();
@@ -1886,7 +1969,7 @@ public final class DungeonInstance {
                 break;
             }
             case "Life Drain": {
-                // Drain enemies within 5 blocks AND in line of sight (no more zero-aim full-room
+                // Drain enemies within 8.5 blocks AND in line of sight (no more zero-aim full-room
                 // nuke). Each enemy contributes 50% of its drain damage to stored health
                 // independently (not summed).
                 Location casterLoc = caster.getLocation().add(0, 1, 0);
@@ -1895,7 +1978,7 @@ public final class DungeonInstance {
                 for (Enemy e : roomList) {
                     if (e.dead) continue;
                     // Range cap + line-of-sight gate: drain only what you can see and reach.
-                    if (e.entity.getLocation().distance(caster.getLocation()) > 5.0) continue;
+                    if (e.entity.getLocation().distance(caster.getLocation()) > 8.5) continue;
                     if (!caster.hasLineOfSight(e.entity)) continue;
                     double drainDmg = dmg * 0.5;
                     e.damage(drainDmg, caster, 0, 0);
@@ -1916,9 +1999,9 @@ public final class DungeonInstance {
                         world.spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
                     }
                 }
-                // Also drain the boss (same 5-block range + line-of-sight rules)
+                // Also drain the boss (same 8.5-block range + line-of-sight rules)
                 if (boss != null && boss.isActive()
-                        && boss.location().distance(caster.getLocation()) <= 5.0
+                        && boss.location().distance(caster.getLocation()) <= 8.5
                         && caster.hasLineOfSight(boss.entity())) {
                     double bossDrain = dmg * 0.5;
                     boss.damage(bossDrain, caster);
@@ -2356,6 +2439,15 @@ public final class DungeonInstance {
             plugin.meta().addPersistentCoins(p.getUniqueId(), bank);
             p.sendMessage("§dYou banked §6" + bank + "§d coins into your persistent wallet.");
         }
+        // Bank each player's salvage shards earned this floor into their persistent balance
+        for (Player p : party.onlineMembers()) {
+            Integer shardsEarned = run.salvageShards.remove(p.getUniqueId());
+            if (shardsEarned != null && shardsEarned > 0) {
+                MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+                prof.shards += shardsEarned;
+                p.sendMessage("§dYou banked §b" + shardsEarned + "§d shards from salvaged gear.");
+            }
+        }
         plugin.meta().save();
         // Revive all dead party members BEFORE showing the descend button so revived players
         // can see the button and click it. They become spectators on death and get restored
@@ -2417,9 +2509,13 @@ public final class DungeonInstance {
         }
     }
 
-    /** Restore persistent gear items from the pre-run inventory snapshot. Only items marked
-     *  as persistent dung gear are restored — non-persistent items from the snapshot are skipped
-     *  so the player keeps their current run inventory otherwise. */
+    /** Never re-insert persistent gear from the pre-run snapshot on revive. stripRunGear only removes
+     *  non-persistent run gear, so every persistent item the player still owns is still in their
+     *  inventory on death (carrying its mid-run durability / death penalty). Re-inserting an owned
+     *  UUID'd item would duplicate the same UUID (undamaged snapshot copy + the damaged current copy)
+     *  and undo the death durability penalty; re-inserting an un-owned UUID'd item would resurrect a
+     *  piece the player deliberately destroyed during the run (salvaged or dropped). Only pre-UUID
+     *  legacy items (uuid == null) are re-inserted, as a data-loss safety net. */
     private void restorePersistentGear(Player p) {
         ItemStack[] snapshot = savedInventories.get(p.getUniqueId());
         if (snapshot == null) return;
@@ -2427,6 +2523,8 @@ public final class DungeonInstance {
         // Restore persistent gear into main inventory slots
         for (int i = 0; i < inv.getSize(); i++) {
             if (i < snapshot.length && snapshot[i] != null && isPersistentGear(snapshot[i])) {
+                String uuid = GearFactory.getUuid(snapshot[i]);
+                if (uuid != null) continue;
                 // Only set if the slot is currently empty — don't overwrite existing items
                 ItemStack cur = inv.getItem(i);
                 if (cur == null || cur.getType() == Material.AIR) {
@@ -2444,6 +2542,8 @@ public final class DungeonInstance {
         for (int i = 0; i < 4; i++) {
             int idx = inv.getSize() + i;
             if (idx < snapshot.length && snapshot[idx] != null && isPersistentGear(snapshot[idx])) {
+                String uuid = GearFactory.getUuid(snapshot[idx]);
+                if (uuid != null) continue;
                 ItemStack cur = inv.getItem(slots[i]);
                 if (cur == null || cur.getType() == Material.AIR) {
                     inv.setItem(slots[i], snapshot[idx].clone());
@@ -2453,9 +2553,12 @@ public final class DungeonInstance {
         // Restore persistent gear into offhand
         int offIdx = inv.getSize() + 4;
         if (offIdx < snapshot.length && snapshot[offIdx] != null && isPersistentGear(snapshot[offIdx])) {
-            ItemStack cur = inv.getItemInOffHand();
-            if (cur == null || cur.getType() == Material.AIR) {
-                inv.setItemInOffHand(snapshot[offIdx].clone());
+            String uuid = GearFactory.getUuid(snapshot[offIdx]);
+            if (uuid == null) {
+                ItemStack cur = inv.getItemInOffHand();
+                if (cur == null || cur.getType() == Material.AIR) {
+                    inv.setItemInOffHand(snapshot[offIdx].clone());
+                }
             }
         }
     }
@@ -2762,16 +2865,30 @@ public final class DungeonInstance {
         world.playSound(doorLoc, org.bukkit.Sound.BLOCK_IRON_DOOR_OPEN, 1.0f, 1.2f);
         world.spawnParticle(org.bukkit.Particle.PORTAL, doorLoc.clone().add(0, 1.5, 0), 30, 1.5, 1.5, 8, 0.3);
 
-        // Remove the IRON_BLOCK door barrier
+        // Remove the IRON_BLOCK door barrier, bursting END_ROD particles at the freed blocks
+        // so the opening is clearly visible where the door used to be.
         removeLockedDoorBarrier(lockedRoom);
+        Location c = RoomGen.center(world, lockedRoom, BASE_Y, spacing, offsetX, offsetZ);
+        int bx = baseX(lockedRoom), bz = baseZ(lockedRoom);
+        for (int d = 0; d < 4; d++) {
+            if (!lockedRoom.doors[d]) continue;
+            boolean horiz = d == 1 || d == 3;
+            int half = horiz ? lockedRoom.sizeW / 2 : lockedRoom.sizeH / 2;
+            int wallX = c.getBlockX() + new int[]{0, 1, 0, -1}[d] * (half + RoomGen.WALL);
+            int wallZ = c.getBlockZ() + new int[]{-1, 0, 1, 0}[d] * (half + RoomGen.WALL);
+            int perpC = horiz ? (bz + RoomGen.PERP_CENTER) : (bx + RoomGen.PERP_CENTER);
+            for (int off = -1; off <= 1; off++) {
+                int px = horiz ? wallX : (perpC + off);
+                int pz = horiz ? (perpC + off) : wallZ;
+                world.spawnParticle(org.bukkit.Particle.END_ROD,
+                        new org.bukkit.Location(world, px + 0.5, BASE_Y + RoomGen.ROOM_HEIGHT / 2.0 + 1, pz + 0.5),
+                        6, 0.5, 1.5, 0.5, 0.01);
+            }
+        }
 
         // Mark the room as cleared so it doesn't re-lock, and spawn loot
         lockedRoom.cleared = true;
         spawnRoomPickups(lockedRoom);
-
-        // Teleport the player into the room
-        Location enterLoc = RoomGen.center(world, lockedRoom, BASE_Y, spacing, offsetX, offsetZ).add(0, 1, 0);
-        p.teleport(enterLoc);
     }
 
     /**
@@ -3341,6 +3458,9 @@ public final class DungeonInstance {
         lastGear.remove(pid);
         lastBarHearts.remove(pid);
         lastBarMana.remove(pid);
+        lastHeadHp.remove(pid);
+        p.setCustomName(null);
+        p.setCustomNameVisible(false);
         playerRoom.remove(pid);
         stripRunGear(p);
         restoreSavedInventory(p);
@@ -3437,25 +3557,10 @@ public final class DungeonInstance {
     /** Damage all persistent gear on death: reduce durability by 10 (or 10% of max). */
     private void damagePersistentGear(Player p) {
         PlayerInventory inv = p.getInventory();
-        // Check main hand + off hand
-        ItemStack[] handItems = {inv.getItemInMainHand(), inv.getItemInOffHand()};
-        for (ItemStack s : handItems) {
-            if (s == null || s.getType() == Material.AIR) continue;
-            damageIfPersistent(s, p);
-        }
-        // Check armor slots
-        org.bukkit.inventory.EquipmentSlot[] slots = {
-                org.bukkit.inventory.EquipmentSlot.HEAD,
-                org.bukkit.inventory.EquipmentSlot.CHEST,
-                org.bukkit.inventory.EquipmentSlot.LEGS,
-                org.bukkit.inventory.EquipmentSlot.FEET
-        };
-        for (org.bukkit.inventory.EquipmentSlot slot : slots) {
-            ItemStack s = inv.getItem(slot);
-            if (s == null || s.getType() == Material.AIR) continue;
-            damageIfPersistent(s, p);
-        }
-        // Check inventory contents
+        // PlayerInventory.getSize() covers storage + hotbar (the main hand is one of the hotbar
+        // slots), the 4 armor slots, and the offhand. Iterate every slot EXACTLY once so a piece is
+        // never damaged twice (double-damage made each piece lose ~20% instead of 10%, and re-broke
+        // an already-broken item which handleBrokenArmor then kept re-moving and duplicating).
         for (int slot = 0; slot < inv.getSize(); slot++) {
             ItemStack s = inv.getItem(slot);
             if (s == null || s.getType() == Material.AIR) continue;
@@ -3475,27 +3580,73 @@ public final class DungeonInstance {
         int dmg = Math.max(1, max / 10);
         boolean broken = GearFactory.damageItem(s, dmg);
         if (broken) {
-            // Remove the item from inventory
-            for (int slot = 0; slot < p.getInventory().getSize(); slot++) {
-                if (p.getInventory().getItem(slot) == s) {
-                    p.getInventory().setItem(slot, null);
-                    break;
-                }
-            }
-            org.bukkit.inventory.EquipmentSlot[] armorSlots = {
-                    org.bukkit.inventory.EquipmentSlot.HEAD,
-                    org.bukkit.inventory.EquipmentSlot.CHEST,
-                    org.bukkit.inventory.EquipmentSlot.LEGS,
-                    org.bukkit.inventory.EquipmentSlot.FEET
-            };
-            for (org.bukkit.inventory.EquipmentSlot slot : armorSlots) {
-                if (p.getInventory().getItem(slot) == s) {
-                    p.getInventory().setItem(slot, null);
-                    break;
-                }
-            }
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour " + s.getItemMeta().getDisplayName() + " §c broke! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));
+            handleBrokenArmor(p, s, "");
         }
+    }
+
+    /** Display a player's current/max health as a bar above their name while a run is active,
+     *  updating only when the shown value changes (avoids re-sending entity metadata every tick).
+     *  The bar sits on its own line above the player name, not beside it. */
+    private void updateHeadHp(Player p, PlayerState st) {
+        int cur = (int) Math.ceil(st.hearts);
+        int max = st.maxHearts;
+        int filled = Math.max(0, Math.min(10, (int) Math.round(10.0 * cur / max)));
+        StringBuilder bar = new StringBuilder();
+        for (int i = 0; i < 10; i++) {
+            bar.append(i < filled ? "§a█" : "§c█");
+        }
+        String text = bar + " §c" + cur + "§f/§c" + max + "\n§f" + p.getName();
+        String last = lastHeadHp.get(p.getUniqueId());
+        if (text.equals(last)) return;
+        p.setCustomName(text);
+        p.setCustomNameVisible(true);
+        lastHeadHp.put(p.getUniqueId(), text);
+    }
+
+    /** Handle a persistent gear item reaching 0 durability: if it is actually equipped (an armor
+     *  slot or the offhand) unequip it and move it into a free main-inventory slot, dropping it on
+     *  the ground only if the bag is full. A broken item already sitting in the main inventory is
+     *  left where it is (it isn't granting stats, so there's nothing to unequip). Always notifies
+     *  the player. Never duplicates: the equipped slot is cleared BEFORE the item is placed, and
+     *  items already in the inventory are not moved at all. */
+    private void handleBrokenArmor(Player p, ItemStack item, String reason) {
+        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+        // Unequip: clear whichever equip slot (armor or offhand) currently holds this item.
+        boolean equipped = false;
+        org.bukkit.inventory.EquipmentSlot[] armorSlots = {
+                org.bukkit.inventory.EquipmentSlot.HEAD,
+                org.bukkit.inventory.EquipmentSlot.CHEST,
+                org.bukkit.inventory.EquipmentSlot.LEGS,
+                org.bukkit.inventory.EquipmentSlot.FEET
+        };
+        for (org.bukkit.inventory.EquipmentSlot slot : armorSlots) {
+            if (inv.getItem(slot) == item) {
+                inv.setItem(slot, null);
+                equipped = true;
+                break;
+            }
+        }
+        if (inv.getItemInOffHand() == item) {
+            inv.setItemInOffHand(null);
+            equipped = true;
+        }
+        if (equipped) {
+            // Try to place in a free main-inventory slot, otherwise drop on the ground.
+            boolean placed = false;
+            for (int slot = 0; slot < 36; slot++) {
+                ItemStack s = inv.getItem(slot);
+                if (s == null || s.getType().isAir()) {
+                    inv.setItem(slot, item);
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) {
+                p.getWorld().dropItemNaturally(p.getLocation().add(0, 0.5, 0), item);
+            }
+        }
+        String name = item.getItemMeta() != null ? item.getItemMeta().getDisplayName() : item.getType().name();
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour " + name + " §c broke" + reason + "! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));
     }
 
     /** Set a transient status message for a player, shown in the action bar alongside HP/mana.
@@ -3538,6 +3689,8 @@ public final class DungeonInstance {
             p.setGameMode(org.bukkit.GameMode.SURVIVAL);
             p.setHealth(p.getMaxHealth());
             p.setFoodLevel(20);
+            p.setCustomName(null);
+            p.setCustomNameVisible(false);
             teleportOut(p);
         }
         clearRoomEntities();
@@ -3545,6 +3698,7 @@ public final class DungeonInstance {
         tabs.clear();
         playerBoards.clear();
         deadPlayers.clear();
+        lastHeadHp.clear();
         returnLocs.clear();
         savedInventories.clear();
         // Remove this instance from the GameManager registry
@@ -3651,6 +3805,7 @@ public final class DungeonInstance {
             // competing sendActionBar calls (which flickered/overwrote each other).
             PlayerState st = run.playerStateOf(p.getUniqueId());
             if (st == null) continue;
+            updateHeadHp(p, st);
             barTick++;
             // Collect status messages: secret hint + transient status (room locked, doors opened, etc.)
             String hint = "";
