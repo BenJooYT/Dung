@@ -352,6 +352,7 @@ typos into compile errors instead of silent save incompatibility. All tags live 
 | `dung.ability` | string | weapon ability id |
 | `dung.cost` | int | ability mana cost override |
 | `dung.runitem` | string | `"key"` or `"bomb"` — marks a hotbar run item |
+| `dung.equip_indicator` | string | `"true"` — marks the slot-9 "Equip Shield" pane (swappable, unlike run items) |
 | `dung.magic_damage` | int | magic damage (magic weapons use this for abilities, melee is 1) |
 | `dung.mana_shield` | string | `"true"` — this item is a mana shield |
 | `dung.shield_max` | int | mana-shield capacity (COMMON=30 → MYTHIC=130) |
@@ -372,9 +373,9 @@ typos into compile errors instead of silent save incompatibility. All tags live 
 - `withMagicDamage(s, magicDmg)` — tags `dung.magic_damage`, overrides melee damage to 1, and
   rewrites the lore's "Damage" line to "Magic Damage".
 - `armor(id, name, mat, r, defense, health)` — tags defense/health, builds armor lore.
-- `shield(r)` — a mana shield: `dung.kind = "shield"` (never counts as a weapon for stats), with
-  `dung.shield_max` capacity and a native durability bar repurposed to show current charge
-  (empty to start).
+- `shield(r)` — a mana shield: `dung.kind = "shield"` (never counts as a weapon for stats), with a
+  `dung.shield_max` capacity and a real durability pool (50) that absorbing damage wears down; its
+  native durability bar is repurposed to show the current charge.
 - `markPersistent(s)` — stamps `dung.persistent` + a unique `dung.uuid` and prepends a ★ to the
   display name so persistent gear is visually distinct.
 - `persistize(s)` — converts a run item to a persistent copy delivered at **half durability**
@@ -514,6 +515,13 @@ Combat:
   tagged as a run item to prevent duplication via inventory click/drag.
 - `makeEmptySlotItem()` — creates a black stained glass pane marked with `dung.runitem` so
   inventory click/drag handlers block moving it (prevents tick-by-tick duplication).
+- `syncShieldSlot(p)` — slot 9 is a **manual mana-shield equip slot**: a shield is only active while
+  the player places one there (it is never auto-pulled in). While the slot is empty it shows a green
+  "Equip Shield" pane when the player owns a shield elsewhere, or the black empty placeholder when
+  they own none. The green pane carries a `dung.equip_indicator` tag (distinct from the click-blocking
+  run-item tag, so it stays swappable) and is swept up the moment a shield is equipped. An equipped
+  persistent shield with a strictly better shield in the inventory offers a clickable **Switch** prompt
+  instead of auto-replacing.
 - `tryCastAbility(p, item)` — after casting a weapon ability, persistent weapons lose 1-2
   random durability via `GearFactory.damageItem()`; broken items are removed from the main hand.
 - `endRun()` — now calls `damagePersistentGear(p)` for each online member after inventory
@@ -660,11 +668,11 @@ status (rooms explored/cleared, boss state).
   shared **400ms global cooldown** applies to all ability casts so weapon-swapping can't stack them.
 - **Magic damage** — magic weapons (Storm Rod, Blaze Staff, Soul Siphon) deal 1 melee damage and
   use `dung.magic_damage` for their abilities; a **Magic Damage** permanent upgrade boosts it.
-- **Mana Shield** — a held shield with a rarity-scaled capacity. Sneaking with it in the main hand
-  spends ~15 mana/sec to charge it; when not sneaking it decays (~30/sec). `PlayerState.hurt()`
-  absorbs damage with the shield before applying to hearts. A deactivated shield keeps leftover
-  charge but bleeds it slowly; a full, active shield halts mana regen. Not counted as a weapon
-  for stat computation.
+- **Mana Shield** — a shield equipped in hotbar slot 9 (a manual equip slot) with a rarity-scaled
+  capacity. It only provides absorption while equipped there. To charge it, **hold it** (slot 9
+  selected) and sneak — spends ~15 mana/sec; while not being charged it decays (~30/sec).
+  `PlayerState.hurt()` absorbs damage with the equipped shield before applying to hearts. A full,
+  active shield halts mana regen. Not counted as a weapon for stat computation.
 - **Permanent upgrades** — shard-bought levels from `/upgrades` add damage, max hearts, defense,
   crit chance, move speed, and max mana on top of gear and class every run.
 - **Natural healing** — out-of-combat regen (`healPerSecond`, 5s after damage). Vanilla hunger

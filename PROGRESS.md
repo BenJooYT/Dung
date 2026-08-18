@@ -11,7 +11,7 @@ distributed (sidebar = live info, boss bar = encounters, chat = notifications/ac
 tab = detailed build/run/progression).
 
 ## Current status (verified working)e     
-- [x] Gradle 9.7 + Paper 1.21.11 toolchain; plugin jar builds (`Dung-1.0.0.jar`).
+- [x] Gradle 9.7 + Paper 1.21.11 toolchain; plugin jar builds (`Dung-1.0.1.jar`).
 - [x] **Headless server boot verified:** `[Dung] Dung enabled.` + `Done (12.790s)!`, no exceptions.
 - [x] Core lifecycle: `/dung start`, floor generation, room building, descend, leave.
 - [x] Isaac-style floor gen: random-walk branching, BFS-farthest = BOSS, shop/treasure/elite/secret placement.
@@ -424,6 +424,30 @@ tab = detailed build/run/progression).
 - [x] **UI:** single unified `WorkstationUI` chest GUI for all five stations — item list → detail panel
       with exact costs and result preview → CONFIRM (two-click for destructive ops) → BACK. Removed the
       old `PersistUI` and its villager wiring in `GameListener`/`Dung`.
+
+- [x] **UI:** single unified `WorkstationUI` chest GUI for all five stations — item list → detail panel
+      with exact costs and result preview → CONFIRM (two-click for destructive ops) → BACK. Removed the
+      old `PersistUI` and its villager wiring in `GameListener`/`Dung`.
+
+### Iteration 30 — Mana Shield equip-slot + shield durability (v1.0.1)
+- [x] **Manual shield equip slot:** hotbar slot 9 is now a pure **equip slot** — a shield is only active
+      while the player places one there; it is never auto-pulled in from the inventory. While the slot
+      is empty a **green "Equip Shield" pane** shows when the player owns a shield elsewhere (so they
+      know they can equip one), or the standard black empty placeholder when they own none.
+- [x] **No lingering indicator:** the green pane carries its own `dung.equip_indicator` tag (distinct
+      from the click-blocking run-item tag, so it stays swappable) and `syncShieldSlot` sweeps up any
+      stray panes the moment a shield is equipped — it only ever exists while the slot is empty.
+- [x] **Charge while held:** shields now only charge while the player is **holding them** (slot 9
+      selected) and sneaking; absorption still comes from the equipped slot-9 shield regardless of what
+      is in the main hand.
+- [x] **Persistent-shield switch prompt:** an equipped persistent shield with a strictly better shield in
+      the inventory shows a clickable **Switch** button (runs `/dung shieldswitch`) instead of
+      auto-replacing — the player keeps their chosen persistent shield unless they opt in.
+- [x] **Real shield durability pool:** mana shields gain a native durability pool (50) that absorbing
+      damage wears down; the vanilla durability bar is repurposed to display charge on shields, and is
+      now also synced to custom durability on weapons/armor.
+- [x] **Related fixes shipped in 1.0.1:** plot border/path height fix, party-leader transfer bugfix, and
+      ShopUI updates.
 
 ### Remaining candidate work
 - [ ] **Status effects** — Poison (DoT), Slow, Weakness, Stun on both players and enemies. Weapons/
