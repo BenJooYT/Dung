@@ -4,6 +4,7 @@ version: ${version}
 api-version: 1.21
 authors: [lieyabull]
 description: Room-based dungeon roguelite with MMORPG-style combat and progression.
+depend: [WorldEdit]
 commands:
   dung:
     description: Dung game commands
@@ -20,6 +21,9 @@ commands:
   salvage:
     description: Break held/favorited Dung armor into permanent shards (in a run)
     usage: /salvage [all|favorite]
+  stash:
+    description: Open your takeout-only stash (broken gear that couldn't fit in your bag)
+    usage: /stash
   party:
     description: Party management commands
     usage: /party <create|invite|accept|decline|leave|kick|disband>
@@ -35,9 +39,6 @@ commands:
   leaderboard:
     description: View leaderboards for various categories
     usage: /leaderboard [category] [page]
-  room:
-    description: Room editor and room-template commands
-    usage: /room <new|pos1|pos2|region|spawnfloor|conn|marker|playerspawn|shopkeeper|capture|info|validate|export|test|testlocal|list|open>
 permissions:
   dung.admin:
     description: Admin debug commands

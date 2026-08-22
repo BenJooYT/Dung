@@ -21,13 +21,15 @@ clearing rooms banks persistent coins and kill/full-clear stats that survive dea
 4. [Package reference](#package-reference)
    - [`com.lieyabull.dung` — plugin root](#comlieyabullndung--plugin-root)
    - [`dungeon` — floor & room generation](#dungeon--floor--room-generation)
-   - [`room` — room editor & template system](#room--room-editor--template-system)
+   - [`room` — shared room geometry](#room--shared-room-geometry)
+   - [`structure` — WorldEdit structure library](#structure--worldedit-structure-library)
    - [`entity` — enemies & AI](#entity--enemies--ai)
    - [`items` — gear, rarity & loot](#items--gear-rarity--loot)
    - [`game` — run state, combat & lifecycle](#game--run-state-combat--lifecycle)
    - [`boss` — the Warden](#boss--the-warden)
    - [`listener` — Paper event wiring](#listener--paper-event-wiring)
    - [`plot` — the Plots world & land claims](#plot--the-plots-world--land-claims)
+   - [`compost` — composter feeding mechanic](#compost--composter-feeding-mechanic)
    - [`meta` — persistent progression](#meta--persistent-progression)
    - [`pickup` — floor pickups](#pickup--floor-pickups)
    - [`ui` — HUD, tab menu & chat](#ui--hud-tab-menu--chat)
@@ -86,6 +88,7 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
   │       ├─ Floor        room grid (data)
   │       ├─ FloorGenerator  builds the branching room graph
   │       ├─ RoomGen      projects rooms/corridors into the world
+  │       ├─ structure    WorldEdit schematic library (structure package)
   │       ├─ Enemy        runtime mob + AI
   │       └─ BossController  the Warden (HP scales with party size)
   ├─ GameListener         Paper events -> GameManager -> correct DungeonInstance
@@ -94,6 +97,7 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
   ├─ ItemPool / GearFactory / ItemTags / Rarity   loot system
   ├─ Pickup               floor pickup identity & effects
   ├─ PlotManager / PlotListener / PlotCommand   plots world, land claims, plot settings
+  ├─ CompostManager / CompostListener           composter feeding mechanic
   └─ HUD / TabUI / ChatUI display
 ```
 
@@ -109,7 +113,7 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/dung start` | all | Begins a new run (errors if one is active). |
 | `/dung descend` | all | After beating the boss, generates and enters the next floor. |
 | `/dung leave` | all | Ends the current run (strips run gear, keeps persistent items). |
-| `/shop` | all | Opens the between-run shop GUI: spend persistent coins on persistent gear. |
+| `/shop` | all | Opens the between-run gacha shop GUI: pick a tab (weapons/armor/mana shields), roll with persistent coins, then KEEP or SALVAGE the result. |
 | `/upgrades` | all | Opens the upgrades GUI: spend shards on permanent stat upgrades. |
 | `/salvage` | all | Break the held Dung armor piece into permanent shards. Outside a run, shards go straight to your persistent balance; in a run they're banked on boss defeat. |
 | `/salvage all` | all | Salvage every Dung armor piece in your bag outside the hotbar, equipped slots, and offhand — favorites are skipped. |
@@ -141,20 +145,11 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/plot unclaim` | all | Unclaim the plot you're standing on (frees it for re-claiming). |
 | `/leaderboard [category] [page]` | all | Top players by `persistent_coins`/`shards`/`kills`/`clears`/`max_floor`, including offline players. |
 | `/dung bossbar` | `dung.admin` | Remove any stuck boss bars from the server. |
-| `/room toggle` | `dung.admin` | Toggle `custom-rooms` in `config.yml` (procedural-only vs. custom templates) for new floors. |
-| `/room tutorial [next|back|reset|skip <n>]` | all | Walk-through tutorial for the room editor (replayable). |
-| `/room open` | all | Teleport to the room editor world. |
-| `/room new <id> [types]` | all | Create a new room template. |
-| `/room pos1` / `/room pos2` | all | Mark selection corners for bounds / spawn floors. |
-| `/room region` | all | Add the selection as a bound cuboid. |
-| `/room conn <dir> [type] [w] [h]` | all | Add a doorway connection. |
-| `/room playerspawn` | all | Set the player spawn marker at your position. |
-| `/room spawnfloor` | all | Add the selection as an enemy spawn floor. |
-| `/room capture` | all | Snapshot blocks inside all bound regions. |
-| `/room validate` | all | Validate the template (must pass before export). |
-| `/room export <id>` | all | Write the asset + manifest to `plugins/Dung/rooms/`. |
-| `/room testlocal` | all | Test the in-progress template in a test pad. |
-| `/room list` | all | List registered production room templates. |
+| `/dung room gen <id> [types]` | `dung.admin` | Auto-write `<id>.yml`+`<id>.schem` from your WorldEdit `//copy`. The id is the schematic name; reads marker signs for spawn/markers. Doors are carved procedurally at generation. |
+| `/dung room list` | `dung.admin` | List registered room structures. |
+| `/dung room reload` | `dung.admin` | Re-scan `plugins/Dung/structures/` and re-register structures. |
+| `/dung room validate <id>` | `dung.admin` | Re-validate one structure (metadata + physical build). |
+| `/dung room preview <id> [0-3]` | `dung.admin` | Paste a preview of a structure at your location, at the given rotation. |
 
 `/dung give` is a free admin debug surface: `rareweapon` now spawns a persistent weapon at no
 coin cost (real purchases go through `/shop weapon`); `/dung give coins` drops 10 gold-nugget
@@ -234,77 +229,92 @@ every 5th floor).
 - `center(w, n, baseY, spacing)` — the exact room floor center (+1 for the player).
 - Constants: `SQUARE=13`, `LONG=17`, `WALL=1`, `ROOM_HEIGHT=4`, `PERP_CENTER=9`.
 
-### `room` — room editor & template system
+### `room` — shared room geometry
 
-**`RoomEditor`** — coordinates the room-editor subsystem: the isolated editor world, per-player
-authoring sessions, the production registry, and asset export.
+Pure-data building blocks reused by both the procedural generator and the structure library. All
+coordinates are structure-relative (inclusive bounds).
 
-- `openEditor(p)` — teleports the player to the editor world (flat, no mobs, no weather).
-- `session(p)` — returns the `RoomEditSession` for a player (created on first access).
-- `export(tpl)` — writes the template JSON + a human-readable manifest to `plugins/Dung/rooms/`.
-- `registry()` — the `RoomRegistry` of production templates loaded from JAR resources.
+- **`Direction`** — N/E/S/W/U/D; each horizontal direction carries its `card` index (0=N,1=E,2=S,3=W).
+- **`RoomBounds`** — an axis-aligned cuboid: `width()/height()/depth()`, `contains()`, `intersects()`,
+  `normalize()`, `union()`.
+- **`RoomConnector`** / **`RoomConnType`** — legacy room-connection types, kept for reference. The
+  current generator does NOT store or use connectors: doorways and corridors are carved procedurally
+  on the shared corridor line, so the only connection between rooms is a corridor.
+- **`SpawnFloor`** — a `RoomBounds` region where enemies may spawn.
+- **`RoomMarker`** / **`RoomMarkerType`** — gameplay markers (PLAYER_SPAWN, SHOPKEEPER, LOOT, ...).
+- **`RoomValidationIssue`** — a validation finding (ERROR / WARNING) with code, message, and position.
 
-**`RoomEditSession`** — per-player authoring state for one in-progress room template.
+### `structure` — WorldEdit structure library
 
-- `template()` — the `RoomTemplate` being edited.
-- `pos1`/`pos2` — world-coordinate selection corners for bounds / spawn floors.
-- `newRoom(id, types)` — creates a fresh template with the given id and room types.
-- `addRegion()` — adds the current selection as a bound cuboid.
-- `addSpawnFloor()` — adds the current selection as an enemy spawn floor.
-- `addConnector(dir, type, width, height)` — adds a doorway connection at the player's position.
-- `setPlayerSpawn()` — sets the `PLAYER_SPAWN` marker at the player's position.
-- `setShopkeeper()` — sets the `SHOPKEEPER` marker at the player's position.
-- `addMarker(type, name)` — adds a generic marker at the player's position.
-- `capture()` — snapshots all blocks inside bound regions into the template.
-- `info()` — returns a summary of the in-progress template.
+The dungeon's room library is built on WorldEdit schematics instead of a bespoke JSON template
+format. Every room is an `<id>.schem` (the physical build, owned by WorldEdit) paired with an
+`<id>.yml` sidecar (the Dung metadata: room types, spawn floors, markers, rotation rules). The room
+**id is the schematic name** (without `.schem`), and both files share that basename. Files are dropped
+into `plugins/Dung/structures/` and picked up with `/dung room reload`; on a fresh install with no
+user structures, built-in defaults keep the game playable.
 
-**`RoomTemplate`** — pure-data room definition: bounds, blocks, connectors, spawn floors, markers.
+Doorways and corridors are **not** part of the metadata: the generator carves them procedurally at
+build time on the shared corridor line (`RoomGen.PERP_CENTER`), the same line procedural rooms use.
+That guarantees every structure room opens only the door directions the floor graph requires, keeps
+the openings well away from corners, and connects to its neighbours without ever leaving a hole
+between the room's outer wall and the corridor wall.
 
-- `id`, `types`, `description`, `version`, `validated` — metadata.
-- `bounds` — list of `RoomBounds` cuboids defining the room's volume.
-- `blocks` — list of `RoomBlock` entries (x, y, z, block state string).
-- `connectors` — list of `RoomConnector` entries (direction, type, position, width, height, floorY, clearance).
-- `spawnFloors` — list of `SpawnFloor` cuboids where enemies can spawn.
-- `markers` — list of `RoomMarker` entries (type, position, optional name).
-- `total()` — computes the overall bounding box across all regions.
-- `connectorFacing(dir)` — finds a connector on the given direction.
-- `markersOf(type)` — filters markers by type.
+**`StructureDefinition`** — pure metadata contract. All coordinates are structure-relative: a block at
+schematic (x,y,z) is metadata (x,y,z). The generator pastes the schematic at a world origin and
+transforms the metadata identically, so the two always stay in sync after rotation.
 
-**`RoomIo`** — JSON serialization/deserialization for `RoomTemplate` (Gson-based).
+- `bounds`, `spawnFloors`, `markers` — same geometry types as `room` (no `connectors`).
+- `total()` — unioned bounding box; `inAnyBound(x,y,z)`; `markersOf(type)`;
+  `serves(type)`; `allowsRotation(steps)`.
 
-**`RoomTemplateRotator`** — creates a rotated copy of a `RoomTemplate` so its connectors align with
-the door directions required by the floor graph.
+**`StructureMetadata`** — SnakeYAML serialization of the `<id>.yml` sidecar (`load(yaml)` /
+`dump(def)`). Pure and unit-tested.
 
-- `requiredRotation(template, openDoors)` — determines the rotation (0&deg;/90&deg;/180&deg;/270&deg; CW)
-  needed to align the template's connectors with the room's open door directions. Returns null if no
-  rotation makes all doors match.
-- `rotate(template, rotation)` — creates a rotated copy of the template, transforming blocks,
-  connectors, bounds, markers, and spawn floors around the template's vertical center axis using
-  double-precision arithmetic for symmetric results on odd-dimensioned templates.
-- `Rotation` enum — `NONE`, `CW_90`, `CW_180`, `CW_270` with helper methods `applyToDirection(dir)`
-  and `applyInverseToDirection(dir)`.
+**`StructureTransform`** — rotates the metadata consistently with the WorldEdit clipboard rotation.
+Rotates around the clipboard origin (0,0,0) — the same pivot `StructureWorldEdit.paste` uses via
+`AffineTransform.rotateY` — so schematic and metadata stay in sync. `rotateY(90)` maps `(x,z) -> (z,-x)`.
 
-**`RoomValidator`** — validates a room template for self-containment, connectivity, and safety.
+- `Rotation` enum — `NONE`, `CW_90`, `CW_180`, `CW_270` (`applyToDirection` / `applyInverseToDirection`).
+- `pickRandom(structure, rng)` — a random allowed rotation for cosmetic variety (doorways are carved
+  procedurally, so no connector alignment is needed).
+- `rotate(structure, rotation)` — a rotated copy of the metadata (bounds, spawn floors, markers); the
+  original is never modified.
 
-- `validate(tpl)` — returns a `Result` with `valid` flag and a list of `Issue`s.
-- Rules: all blocks must be inside bounds, all connectors must be open (air), player spawn must
-  be on a solid floor with headroom, spawn floors must be solid, no disconnected geometry.
-- SECRET rooms may lack a player spawn and connectors (they're entered via a destructible wall).
+**`StructureValidator`** — validates a structure before it may be registered: identity, types,
+schematic, rotations, bounds, spawn floors (inside bounds, solid floor, headroom), markers (player
+spawn present/not inside a block, SHOPKEEPER for SHOP rooms). Takes an optional `BlockLookup` for
+physical block checks.
 
-**`RoomTester`** — tests a room template by instantiating it in a test pad.
+**`BlockLookup`** — a `@FunctionalInterface` exposing solid/air occupancy at structure coordinates;
+`StructureWorldEdit.blockLookup(clipboard)` adapts a clipboard to it.
 
-- `test(tpl, p)` — builds the room at a safe offset, verifies connectors are open, checks the
-  spawn is safe, and spawns a test enemy. Returns a `Result` with feedback lines.
+**`SignScanner`** — reads written signs back out of a WorldEdit clipboard (pure, depends only on
+WorldEdit's NBT model). WorldEdit schematics preserve sign text as tile-entity NBT, so authors can
+place an in-world wall sign like `[PLAYER_SPAWN]`, `[SHOPKEEPER]`, `[LOOT]`, `[HAZARD]`,
+`[MECHANIC]`, `[SPECIAL]`, or `[SPAWN_FLOOR]` instead of hand-writing coordinates into the sidecar.
+`/dung room gen` turns each recognized sign into the matching marker / spawn floor and strips the sign
+from the saved schematic, so markers never appear in the generated room. Unrecognized signs are left
+in place as decoration.
 
-**`RoomTutorial`** — walk-through tutorial for the room editor. Guides a player step by step
-through building, capturing, validating, exporting, and testing a room template.
+**`StructureWorldEdit`** — the thin WorldEdit integration layer (never unit-tested; it needs a live
+WorldEdit). `load(file)` reads a `.schem` into a `Clipboard`; `save(clipboard, file)` writes one back;
+`blockLookup(clipboard)`; `paste(world, clipboard, ox, oy, oz, rotationSteps)` pastes with a clockwise
+`AffineTransform.rotateY`.
 
-- `start(p)` — begins or resumes the tutorial.
-- `next(p)` / `back(p)` — advance or go back one step.
-- `skipTo(p, n)` — jump to a specific step (1-based).
-- `reset(p)` — restart from the beginning.
-- Auto-advances when the player runs the expected command (e.g. `/room open` advances to step 2).
-- Triggered with `/room tutorial`; replayable any number of times.
+**`DefaultStructures`** — built-in sealed-box rooms per room type (START/COMBAT/TREASURE/SHOP/ELITE/
+BOSS), built directly into WorldEdit `Clipboard`s. Registered only when no user structure serves that
+type. The generator carves doorways/corridors on the shared corridor line, so defaults only open the
+door directions the floor actually requires.
+
+**`StructureRegistry`** — scans `plugins/Dung/structures/` recursively for `<id>.yml` files, derives
+each room id from the filename, loads its sibling `<id>.schem`, validates each, and registers the
+survivors; fills any uncovered room type with `DefaultStructures`. Exposes `byId(id)`, `all()`,
+`forType(...)`, `pick(type, rng)`.
+
+**`StructureManager`** — top-level coordinator owned by `Dung` (replaces the old room editor):
+`registry()` and `reload()`. `DungeonInstance.resolveStructures` picks and rotates structures per room
+and pastes them via `StructureWorldEdit`; the procedural `RoomGen` path remains as the fallback when
+no structure serves a room or `custom-rooms` is off.
 
 ### `entity` — enemies & AI
 
@@ -476,9 +486,12 @@ Lifecycle:
   class + permanent upgrades, applies held gear), sets up scoreboards, grants starter kits,
   fires tutorial (including key/bomb hotbar instructions) for new profiles, then `enterFloor(0)`.
 - `enterFloor(i)` — randomizes spacing (22–28), generates + builds the floor, teleports all
-  party members to the START room. Templates are rotated as needed to align connectors with
-  room door directions; corridors span the full vertical range between template and procedural
-  rooms so multi-level templates connect correctly.
+  party members to the START room. When `custom-rooms` is on, structures from the library are
+  selected per room, given a random allowed rotation for variety, and pasted via
+  `StructureWorldEdit`; structure doorways and corridors are then carved procedurally on the shared
+  corridor line (`PERP_CENTER`), so each structure opens exactly the door directions the floor graph
+  needs and connects to procedural neighbours without a hole between the room wall and the corridor.
+  Rooms without a matching structure fall back to `RoomGen`.
 - `enterRoom(n)` — marks visited, applies spawn-grace invuln, spawns enemies for un-cleared
   COMBAT/ELITE rooms (locks doors, only once all members are inside), spawns room pickups, opens
   the shop GUI on SHOP rooms, places the five workstations on UPGRADE rooms, and checks the boss
@@ -514,7 +527,7 @@ Combat:
   class-specific active ability: **Warrior — War Cry** (10 mana, 8s cd: party damage boost +
   invuln), **Mage — Arcane Nova** (25 mana, 6s cd: AoE 2x damage), **Ranger — Shadow Step**
   (15 mana, 5s cd: teleport behind nearest enemy + guaranteed crit). Triggered by sneak+drop (Q).
-- `openShop(p)` — opens the chest GUI shop for the player in a SHOP room.
+- `openShop(p)` — opens the gacha chest GUI shop for the player in a SHOP room (run coins).
 - `openWorkstation(p, type)` — opens the unified workstation chest GUI for one of the five
   workstations in an UPGRADE room (see [Workstations](#workstations)).
 - `tryUpgrade` / `previewReforge` / `tryReforge` / `tryPreserve` / `trySalvage` — server-side
@@ -645,9 +658,27 @@ slab borders and 2-wide stone-brick paths.
 open for owner/public/container-trusted; dropped-item pickup restricted to owner/public/pickup-trusted;
 PVP cancelled on plots with it disabled; fire burn/spread cancelled unless enabled. Explosions are
 always cancelled in the plots world; crop trampling and out-of-bounds tree/plant growth are pruned.
+Right-clicking a fully grown crop on a plot you can modify harvests it (natural drops fall) and
+auto-replants its seed as a fresh age-0 crop.
 
 **`PlotCommand`** — `/plots` (warp) and `/plot` (claim, home, name, warp, settings, pvp/fire/
 public, trust/untrust, container/uncontainer, pickup/unpickup, unclaim) with tab completion.
+
+### `compost` — composter feeding mechanic
+
+Custom composter: drop a compostable item while looking at a composter to feed it. The dropped
+amount is consumed from your inventory and each item rolls its **vanilla per-item compost chance**
+(`Material.getCompostChance()`, e.g. seeds 30%, apples 65%), stashing any leftover material inside
+the composter. When it reaches the **level-8 "content ready" finished state**, right-clicking
+collects a bone meal and the composter keeps filling from the leftovers until the buffer empties.
+Breaking the composter returns its buffered material. The buffer persists to `compost.yml`.
+
+**`CompostManager`** — per-composter state (leftover buffer + pending bone meal), vanilla-RNG fill,
+collect-and-refill, buffer cleanup on break, and atomic persistence to `compost.yml`.
+
+**`CompostListener`** — `onDrop` feeds a composter you're looking at (consuming the dropped stack
+from your inventory), `onInteract` collects the bone meal from a full composter, `onBreak` returns
+any buffered material when a composter is destroyed.
 
 ### `meta` — persistent progression
 
@@ -888,6 +919,11 @@ immediately and spent in `/upgrades`.
 - **Neighbour-plot paths** — a player owning two adjacent plots gains build access to the 2-wide
   path between them, and that shared path is exempt from the regen/reload path-clear so the owner's
   work survives a reload.
+- **Right-click crop harvest** — on a plot you can modify, right-clicking a fully grown wheat/
+  carrots/potatoes/beetroot breaks it (natural drops) and replants its seed at age 0.
+- **Custom composter mechanic** — drop compostables into a composter to feed it with vanilla per-item
+  RNG, buffering leftovers; right-click a full (level-8) composter to collect bone meal and keep
+  filling from the buffer; breaking it returns the buffered material.
 
 ### Tests
 

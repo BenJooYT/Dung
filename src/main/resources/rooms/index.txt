@@ -1,5 +1,0 @@
-# Room-template manifest. Add one room JSON file name per line to register it.
-# Only validated rooms are registered; invalid ones are skipped with a warning.
-# Author rooms in-game with /room, export, then copy the <id>.json here.
-combatfloored1.json
-treasureco.json

@@ -526,6 +526,40 @@ tab = detailed build/run/progression).
       the AoE ability) and plays a sound; `/party invite` has a 5s anti-spam cooldown; the death path
       guards against applying the persistent-gear durability penalty twice if a player quits mid-death.
 
+### Iteration 33 — gacha slot-machine shop redesign (weapons / armor / mana shields)
+- [x] **Unified 54-slot gacha GUI** replaces the old multi-item shop. Exactly **three tabs** — WEAPONS,
+      ARMOR, MANA SHIELDS (slots 1/3/5) — shared by both the in-run shop (`openRunShop`) and the
+      between-run persistent shop (`openPersistentShop`). Currencies preserved: run coins for the run
+      shop, persistent coins for the persistent shop.
+- [x] **Two-stage horizontal slot-machine roll:** the window (slots 11-15, center 13) first scrolls an
+      **item** strip, then a **rarity** strip, decelerating to a stop. Pure `RollAnimationMath` builds
+      the strip/frames/delays so the server-chosen result always lands in the window center on the final
+      frame.
+- [x] **Server-authoritative RNG:** the result (`ServerSideRollResult`) is generated **once, server-side,
+      before any animation**, and the currency is charged exactly once on ROLL. The client/animations are
+      pure presentation — it can never influence the outcome.
+- [x] **KEEP / SALVAGE resolution:** the final item shows KEEP (add to inventory) and SALVAGE (convert to
+      shards via the existing `WorkstationRules.salvageValue`). In the run shop, salvage shards are banked
+      to the persistent balance on boss defeat (existing behavior); in the persistent shop they go straight
+      to the persistent shard balance and are saved.
+- [x] **Security hardening:** single purchase per roll (state machine guard), no roll while an animation is
+      active, no tab switch mid-roll, no double KEEP/SALVAGE; all shop-GUI clicks are cancelled while
+      player-inventory (non-shift) clicks are allowed so a player can free space; a **full inventory** never
+      loses the item — the result is marked KEEP_PENDING and the player retries (or salvages) after freeing
+      a slot; on disconnect the in-memory session is dropped, but persistent-shop pending results are
+      written to `pending_shop_results.yml` (via `StashUI.encode/decode`) and restored on reopen so they
+      can never be lost.
+- [x] **Repairs + permanent upgrades preserved:** the persistent shop's idle view keeps repair / repair-all /
+      permanent-upgrades utility buttons (slots 47/50/53), and `/upgrades` still opens the upgrades GUI.
+      The old consumables/buffs (hearts/mana/keys/bombs/floor buffs) were removed per the 3-tab spec.
+- [x] **Wiring:** `GameListener.onQuit` now calls `ShopUI.onQuit(p)` to drop the session; `ShopUI.onQuit`
+      exists and `openRunShop`/`openPersistentShop`/`openUpgrades` signatures are unchanged.
+- [x] **Pure, unit-tested core:** `shop/ShopTransaction` (state machine: one roll, one KEEP/SALVAGE, tab
+      switch only while idle, KEEP_PENDING retry), `shop/ShopRules` (per-shop costs + salvage math),
+      `shop/RollAnimationMath` (result lands in window center, decelerating delays), plus
+      `shop/ShopPendingStore` (atomic disk persistence) and `shop/ShopType`/`shop/Category`. Added
+      `ShopTransactionTest`, `ShopRulesTest`, `RollAnimationMathTest` — all pure JUnit, no Bukkit mocks.
+
 ### Remaining candidate work
 - [ ] **Status effects** — Poison (DoT), Slow, Weakness, Stun on both players and enemies. Weapons/
       abilities could apply them; enemies could apply them on hit. Adds strategic depth to combat.
@@ -543,11 +577,158 @@ tab = detailed build/run/progression).
 - [ ] **Leaderboard page/personal stats** — a `/dung stats`-style personal page with more detail (history,
       per-category rank, class breakdown) and richer leaderboard pagination/visuals.
 - [ ] **Class-specific passives/active balance** beyond the three defaults.
-- [x] **Room editor tutorial** — `/room tutorial` walks through building, capturing, validating,
-      exporting, and testing a room template step by step. Auto-advances when the player runs the
-      expected command. Replayable any number of times.
-- [ ] **Room editor authoring/test/export polish** (Iterations 11-13 shipped the subsystem; generate-template
-      floor mode, editor CLI, tests, and registry are in place).
+- [ ] **More room shapes** — cross/ring/bridge shapes and multi-level platforms for the structure library.
+
+### Iteration 34 — WorldEdit structure library replaces the custom room-editor system
+- [x] **Scrapped the custom JSON room-template system** (`RoomTemplate`/`RoomIo`/`RoomRegistry`/
+      `RoomInstantiator`/`RoomTemplateRotator`/`RoomValidator`/`RoomEditor`/`RoomEditSession`/
+      `RoomEditorWorld`/`RoomChunkGenerator`/`RoomTester`/`RoomTutorial`/`RoomCommand` and
+      `resources/rooms/*`). No two competing room systems remain.
+- [x] **WorldEdit schematic rooms:** every room is now a `structure.schem` (owned by WorldEdit) paired
+      with a `structure.yml` metadata sidecar (SnakeYAML). New `structure` package:
+      `StructureDefinition` (pure metadata), `StructureMetadata` (YAML round-trip), `StructureTransform`
+      (rotates metadata consistently with WorldEdit's `AffineTransform.rotateY` — origin-based, so
+      schematic and metadata stay in sync), `StructureValidator` (metadata + physical block checks via a
+      `BlockLookup`), `StructureWorldEdit` (load/paste/blockLookup), `DefaultStructures` (built-in sealed
+      boxes per room type), `StructureRegistry` (scans `plugins/Dung/structures/` + fills defaults),
+      `StructureManager` (owned by `Dung`).
+- [x] **DungeonInstance rewired:** `resolveTemplates` → `resolveStructures` (pick + rotate via
+      `StructureTransform.requiredRotation`, respecting `allowed-rotations`); rooms paste via
+      `StructureWorldEdit.paste`; sealed-box defaults get doorways carved (`carveStructureDoorways`) for
+      exactly the floor's open door directions; `insideRoom`/`roomSpawn`/`shopkeeperLoc`/
+      `templateEnemySpawns`/`sealDoors`/corridor carving all read structure metadata. Procedural
+      `RoomGen` remains the fallback when no structure fits or `custom-rooms` is off.
+- [x] **`/dung room list|reload|validate <id>|preview <id> [0-3]`** admin commands replace the `/room`
+      editor CLI. Drop author files into `plugins/Dung/structures/` and `/dung room reload`.
+- [x] **WorldEdit 7.3.19** compileOnly (7.4.x needs JVM 25; the server toolchain is Java 21). `plugin.yml`
+      now `depend: [WorldEdit]`. Full `gradlew build` green; new pure tests
+      `StructureTransformTest`, `StructureValidatorTest`, `StructureMetadataTest` added.
+- [x] **Auto-detected doors + `/dung room gen`:** new `DoorDetector` scans a schematic's four wall faces
+      for air openings carved at floor level and emits the matching connectors (direction, anchor,
+      width, floor-y, height) automatically — no hand-written coordinates. `/dung room gen <id>
+      [types]` reads the player's WorldEdit `//copy`, runs `DoorDetector`, writes `structure.yml`
+      (bounds + detected doors + auto spawn floor + PLAYER_SPAWN at center) and saves `structure.schem`,
+      then reloads. Doorways are carved open procedurally at build time by `carveStructureDoorways`.
+      Added `StructureWorldEdit.save`, `DoorDetectorTest` (sealed box, single door, all four faces,
+      sub-min-width hole ignored, two doors on one face stay distinct).
+- [x] **Marker signs:** new `SignScanner` reads written signs out of the clipboard (WorldEdit schematics
+      preserve sign text as tile-entity NBT, via `BaseBlock.getNbtReference()`). `/dung room gen` now
+      turns `[PLAYER_SPAWN]` / `[SHOPKEEPER]` / `[LOOT]` / `[HAZARD]` / `[MECHANIC]` / `[SPECIAL]` /
+      `[SPAWN_FLOOR]` signs into the matching markers / spawn floors and strips those signs from the
+      saved schematic so they never appear in the generated room (unrecognized signs stay as decoration).
+      Full `gradlew build` green.
+- [x] **Room id = schematic name; procedural door carving.** The room id is now the schematic basename:
+      `/dung room gen <id>` writes `<id>.schem` + `<id>.yml` and the registry scans any `*.yml` (id
+      derived from the filename, sibling `<id>.schem`). `DoorDetector` is gone — doors are no longer
+      detected from carved holes or stored as connectors. The connector metadata was removed from the
+      structure model (`StructureDefinition`/`StructureMetadata`/`StructureTransform`/
+      `StructureValidator`/`DefaultStructures`); only corridor connections remain, and those are carved
+      procedurally at build time. `carveStructureDoors` + `carveStructureCorridors` carve structure-room
+      doorways and corridors on the same fixed `PERP_CENTER` line the procedural rooms use, so a
+      structure opening always lines up with the corridor (never a hole between the room's outer wall
+      and the corridor wall) and stays well away from corners. `sealDoors` seals that same opening.
+      Rotation is picked randomly among `allowed-rotations` (`StructureTransform.pickRandom`) for
+      variety, since there are no connectors to align. Deleted `DoorDetector`+`DoorDetectorTest`;
+      updated `StructureTransformTest`/`StructureValidatorTest`/`StructureMetadataTest`. Full
+      `gradlew build` green.
+
+### Iteration 35 — plot crop harvesting & composter feeding
+- [x] **Right-click harvest & auto-replant:** right-clicking a fully grown crop (wheat, carrots,
+      potatoes, beetroot) on a plot you can modify breaks it exactly like a player would — all its
+      natural drops fall on the ground — then immediately plants its seed back as a fresh age-0 crop,
+      so the field stays planted without re-seeding by hand. Only the owner, a public plot, or a
+      build-trusted player may harvest; others' crops are untouched.
+- [x] **Drop-to-compost composter mechanic:** dropping a compostable item while looking at a
+      composter consumes the dropped amount from your inventory and feeds it using the **same
+      per-item vanilla RNG** as vanilla (`Material.getCompostChance()`). Any leftover material is
+      stashed inside the composter and persisted to `compost.yml` (atomic writes). When it reaches
+      the **level-8 "content ready" finished state**, right-clicking collects a bone meal and the
+      composter keeps filling from the leftovers until the buffer is empty. Breaking the composter
+      returns its buffered material so nothing is lost.
+
+### Iteration 36 — shop GUI hardening & affordances (run + persistent)
+- [x] **Menu + per-category roll GUIs:** the single 54-slot tabbed shop is split into a sparse
+      27-slot **main menu** (WEAPONS / ARMOR / MANA SHIELDS entries in one row, each showing its
+      roll cost; persistent-only Repair / Upgrades / Repair All below) and a dedicated 54-slot
+      **roll GUI** per category with just Back, the two slot-machine windows, ROLL and
+      KEEP/SALVAGE — no tabs. A paid-for pending result always reopens its roll GUI so it must be
+      resolved; Back is blocked while a result is pending (persistent results additionally survive
+      in the disk-backed pending store).
+- [x] **Single repair-cost helper:** the "next 10 durability / 5 coins per 10 / round up, × (1 +
+      repair count)" math that existed in FOUR places (`repairHeld`, `repairAll`,
+      `makeRepairItemButton`, `makeRepairAllButton`) is now one `repairCost(ItemStack)` helper — the
+      displayed cost can never drift from the charged cost again. Inventory + armor scanning was also
+      deduplicated into `damagedPersistentGear(Player)`.
+- [x] **Plugin-owned PDC key:** `NamespacedKey.minecraft("dung_gui")` (reserved `minecraft:`
+      namespace anti-pattern) replaced with `new NamespacedKey(plugin, "dung_gui")`.
+- [x] **Named constants for repair-broken:** inline 150 coins / 100 shards replaced with
+      `REPAIR_BROKEN_COINS` / `REPAIR_BROKEN_SHARDS`; all messages use them.
+- [x] **Affordances before failure:** the ROLL button renders grayed-out ("Can't afford — need N
+      more") when the balance is short instead of failing with a red chat line after the click;
+      maxed upgrades show a non-clickable BARRIER "MAXED" icon; unaffordable upgrades render as a
+      gray GRAY_DYE icon with a "Need N more shards" line.
+- [x] **Crit description matches the applied effect:** `Upgrades.CRIT_DELTA_PCT` (0.5%/level) is now
+      the single source of truth shared by the upgrade tooltip (`ShopUI.effectDesc`) and the actual
+      application in `PlayerState` (previously 0.005/level was hardcoded in two files).
+- [x] **Persistent-shop quality disclosure:** the persistent shop's cost pane states that rolls
+      produce base-quality gear (floor-scaled rolls are run-shop only).
+- [x] **Decluttered shop GUI:** removed all purely decorative/redundant items from both shops —
+      the ◀/▶ window rails, the gold/diamond info pane (balance already lives in the title), the
+      sunflower cost pane, the paper status pane, and the duplicate result PREVIEW item. Cost +
+      rules now live in the ROLL button's lore (one line each: what it rolls + KEEP/SALVAGE,
+      currency caveat); KEEP/SALVAGE lore condensed to one line apiece. The GUI is now just tabs,
+      the two roll windows, ROLL, KEEP/SALVAGE and (persistent only) repair/upgrade utilities.
+- [x] **Condensed lores everywhere:** upgrade icons show "Lv x/y · Effect …" on one line plus a
+      single cost/affordance line (3 lines max, down from 5); repair buttons merge their two intro
+      lines into one.
+- [x] **Overhead HP bars now actually render:** `Player.setCustomName` does not change a player's
+      nametag on Paper, so the old head-HP display was invisible. Replaced with a non-persistent
+      `TextDisplay` (billboard, 60% view range) riding the player's head: green/gray 10-segment bar
+      plus current/max hearts, re-sending metadata only when the value changes. Removed on leave,
+      death/party-wipe teardown and run start; stale passenger displays are also cleaned up.
+- [x] **Workstation GUI cleanup:** the five workstation info panels and the per-item detail panel
+      now use condensed lores (merged wrapped half-lines; upgrade costs on one line — PRESERVE drops
+      from 9 lines to 4). `NamespacedKey.minecraft("dung_ws")` / `"_slot"` replaced with
+      plugin-owned keys, same as ShopUI. StashUI audited — already minimal, no changes needed.
+- [x] Minor: null-guard on held-item display name in the Repair Item button lore.
+
+### Iteration 37 — audit fixes: high-severity logic + cosmetic sweep
+- [x] **Combat correctness:** entering a room no longer grants invulnerability to the whole party
+      (only the entering player; floor-start keeps the party grant); class/ability targeting now
+      resolves enemies from the caster's own room (`playerRoom`) instead of global `curRoom`, fixing
+      split-party ability mis-hits; attack cooldown is only consumed on a swing that isn't blocked by
+      a broken weapon or a full Soul Siphon.
+- [x] **Data integrity:** Doomblade mythic-downgrade now rewrites its stat/rarity LORE to match the
+      new stats (was showing MYTHIC values); `PartyManager.acceptInvite` rejects players who already
+      joined another party (no more dual membership); `/plot claim|unclaim` are gated mid-run like
+      home/warp.
+- [x] **Cosmetic sweep:** "persistent wallet" → "persistent coins"; descend-vote progress and pass
+      messages use the same yes/needed denominator; shard-cost errors styled like coin errors; broken
+      -item messages cleaned (double spaces / stray codes); salvage success green; head-HP bar shows
+      red current / gray max; death message no longer claims coins are lost when boss revival restores
+      them; room-seal action-bar hint deduped (no per-tick spam); bomb success messages green like key
+      unlocks; plot unknown-subcommand usage lists all subcommands; disabled leaderboard Prev/Next no
+      longer look clickable; unknown leaderboard category errors with the valid list instead of
+      silently falling back; invite-cooldown display uses ceil (no phantom extra second); identical
+      "Run started!" wording for party/solo; `[Shop]`/`[Upgrades]` prompt hovers warn they're
+      unavailable during a run; join prompt hides Start-a-Run for players already in a run.
+- [x] **Salvage rules unified:** bulk eligibility (`isBulkSalvageable`) and per-item shard value
+      (`salvageValueOf`) now live only in `WorkstationRules`; `DungCommand`'s divergent private
+      copies delegate to them (held salvage of weapons/shields now values via `primaryStat`, matching
+      workstations and the shop).
+- [x] **Pickup feedback:** a heart picked up at full HP is now refused and stays on the ground for
+      later (previously it was silently consumed and wasted), with chat feedback ("Hearts is full
+      — left on the ground"); coins/keys/bombs are uncapped and always consumed.
+- [x] **Elite heart burst:** a dying elite now explodes into hearts that scatter randomly around the
+      room (inside its bounds): 3 solo, 5/6/7 for party sizes 2/3/4+. Hearts are NOT grabbable for
+      the first 3 seconds (pickup delay), then stay until the next combat/elite room triggers
+      (`spawnEnemies` clears them; floor change/run teardown also clean up). Picking a heart up
+      plays the same witch-drink sound as the Soul Siphon heal and bursts red dust particles around
+      the player (hearts at full HP are still refused and remain on the ground). The Soul Siphon
+      player-to-player heal now also bursts particles around the healed target, not just along the
+      beam between caster and target.
+- [x] Confirmed as intended, not changed: sneak+Q cancels drop because it is the ability activation;
+      pending salvage shards are awarded on each floor's boss defeat.
 
 ## Build / run
 ```

@@ -293,6 +293,20 @@ public final class PlotManager {
         return !sharedPathPlots(p, loc).isEmpty();
     }
 
+    /** True if {@code loc} lies on a path separating two plots that do NOT share the same owner
+     *  (a plot beside an unclaimed cell counts too, since it has no owner to protect). These are
+     *  public thoroughfares: item pickup and PvP are allowed there for everyone by default. */
+    public boolean isPublicPath(Location loc) {
+        if (!isPathLocation(loc)) return false;
+        PlotCoord self = plotAt(loc);
+        PlotCoord neighbor = neighborAcrossPath(loc);
+        if (self == null || neighbor == null) return false;
+        PlotInfo a = plots.get(self);
+        PlotInfo b = plots.get(neighbor);
+        if (a == null || b == null) return true;
+        return !a.owner.equals(b.owner);
+    }
+
     /** True if both plots are claimed and share the same owner. */
     private boolean sharedPathBetween(PlotCoord a, PlotCoord b) {
         PlotInfo ai = plots.get(a);
@@ -425,9 +439,7 @@ public final class PlotManager {
         plugin.meta().save();
 
         // Teleport player to their new plot
-        Location origin = plotOrigin(coord);
-        Location home = new Location(origin.getWorld(), origin.getBlockX() + 8.5, SURFACE_Y + 1, origin.getBlockZ() + 8.5);
-        p.teleport(home);
+        p.teleport(homeLocation(coord));
 
         String costStr = useShards ? "§e" + shardCost + " shards" : "§6" + coinCost + " coins";
         p.sendMessage("§aPlot claimed for " + costStr + "!");
@@ -480,11 +492,35 @@ public final class PlotManager {
 
     /** Teleport a player to a specific plot coordinate. */
     private boolean teleportToCoord(Player p, PlotCoord coord) {
-        Location origin = plotOrigin(coord);
-        if (origin == null) return false;
-        Location home = new Location(origin.getWorld(), origin.getBlockX() + 8.5, SURFACE_Y + 1, origin.getBlockZ() + 8.5);
+        Location home = homeLocation(coord);
+        if (home == null) return false;
         p.teleport(home);
         return true;
+    }
+
+    /** The home point of a plot (center of its buildable area), where a player lands on claim,
+     *  teleport, or respawn. */
+    public Location homeLocation(PlotCoord coord) {
+        Location origin = plotOrigin(coord);
+        if (origin == null) return null;
+        return new Location(origin.getWorld(), origin.getBlockX() + 8.5, SURFACE_Y + 1, origin.getBlockZ() + 8.5);
+    }
+
+    /** The home of the owner's nearest owned plot to {@code from}, or null if the owner has no
+     *  plots. Used to respawn players who die in the plots world at their own plot. */
+    public Location nearestOwnedPlotHome(UUID owner, Location from) {
+        PlotCoord nearest = null;
+        double best = Double.MAX_VALUE;
+        for (PlotCoord c : ownedPlots(owner)) {
+            Location origin = plotOrigin(c);
+            if (origin == null) continue;
+            double d = origin.distanceSquared(from);
+            if (d < best) {
+                best = d;
+                nearest = c;
+            }
+        }
+        return nearest == null ? null : homeLocation(nearest);
     }
 
     /**

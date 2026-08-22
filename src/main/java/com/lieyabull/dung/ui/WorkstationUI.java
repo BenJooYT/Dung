@@ -49,9 +49,13 @@ public final class WorkstationUI implements Listener {
     private final Map<Inventory, State> openStates = new ConcurrentHashMap<>();
 
     private final Dung plugin;
+    private final org.bukkit.NamespacedKey key;
+    private final org.bukkit.NamespacedKey slotKey;
 
     public WorkstationUI(Dung plugin) {
         this.plugin = plugin;
+        this.key = new org.bukkit.NamespacedKey(plugin, GUI_KEY); // plugin-owned namespace
+        this.slotKey = new org.bukkit.NamespacedKey(plugin, GUI_KEY + "_slot");
     }
 
     private static final class State {
@@ -89,11 +93,9 @@ public final class WorkstationUI implements Listener {
             if (gear == null) continue;
             ItemStack display = gear.clone();
             display.editMeta(meta -> meta.getPersistentDataContainer().set(
-                    org.bukkit.NamespacedKey.minecraft(GUI_KEY),
-                    org.bukkit.persistence.PersistentDataType.STRING, ACTION_SELECT));
+                    key, org.bukkit.persistence.PersistentDataType.STRING, ACTION_SELECT));
             display.editMeta(meta -> meta.getPersistentDataContainer().set(
-                    org.bukkit.NamespacedKey.minecraft(GUI_KEY + "_slot"),
-                    org.bukkit.persistence.PersistentDataType.INTEGER, guiIndex));
+                    slotKey, org.bukkit.persistence.PersistentDataType.INTEGER, guiIndex));
             inv.setItem(i, display);
             state.guiToPlayer[guiIndex] = playerSlot;
         }
@@ -123,45 +125,37 @@ public final class WorkstationUI implements Listener {
 
     private ItemStack makeInfo(WorkstationType type, int floor) {
         List<String> lines = new ArrayList<>();
-        lines.add(type.color + type.label);
         lines.add("§7" + type.description);
         lines.add("");
         switch (type) {
             case UPGRADE -> {
-                lines.add("§eCosts: run coins + shards");
-                lines.add("§7(scales with level AND floor)");
-                lines.add("§7Effect: raises the item's core stat");
-                lines.add("§7by §5+" + (int) (WorkstationRules.UPGRADE_STAT_PER_LEVEL * 100) + "%§7/level");
+                lines.add("§eRun coins + §3shards §7(scale with level AND floor)");
+                lines.add("§7Effect: §5+" + (int) (WorkstationRules.UPGRADE_STAT_PER_LEVEL * 100)
+                        + "%§7 core stat per level");
             }
             case REFORGE -> {
-                lines.add("§3Cost: " + WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor) + " shards");
-                lines.add("§7+§3" + WorkstationRules.REFORGE_SHARD_PER_REFORGE + "§7 shards per");
-                lines.add("§7previous reforge of that item.");
-                lines.add("§7Effect: rerolls the item's affixes");
-                lines.add("§7Keeps base stats, rarity, ability.");
+                int base = WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor);
+                lines.add("§3" + base + " shards§7 (+§3"
+                        + WorkstationRules.REFORGE_SHARD_PER_REFORGE + "§7 per prior reforge)");
+                lines.add("§7Rerolls affixes; keeps base stats, rarity, ability.");
             }
             case PRESERVE -> {
-                lines.add("§e" + WorkstationRules.PRESERVE_COIN_COST + " run coins");
-                lines.add("§dAND " + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " persistent coins");
-                lines.add("§3AND " + WorkstationRules.PRESERVE_SHARD_COST + " shards");
-                lines.add("§7Chance: §a" + (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100) + "%");
-                lines.add("§7Pity: guaranteed to succeed after");
-                lines.add("§7" + WorkstationRules.PRESERVE_PITY + " consecutive failures.");
-                lines.add("§7Success: persists past the run");
-                lines.add("§7(§ehalf durability§7). §cFail: returned one");
-                lines.add("§crarity worse.");
+                lines.add("§7Chance: §a" + (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100)
+                        + "%§7 · pity after " + WorkstationRules.PRESERVE_PITY + " fails");
+                lines.add("§aSuccess: §7persists past the run (§ehalf durability§7). "
+                        + "§cFail: one rarity worse.");
+                lines.add("§e" + WorkstationRules.PRESERVE_COIN_COST + " run coins §d+ "
+                        + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " pc §3+ "
+                        + WorkstationRules.PRESERVE_SHARD_COST + " shards");
             }
             case SALVAGE -> {
-                lines.add("§7Effect: destroy the item for §erun coins§7");
-                lines.add("§7(per-run currency, lost on death — does");
-                lines.add("§7NOT count toward boss persistent reward)");
-                lines.add("§7Value scales with rarity + stats.");
-                lines.add("§cRequires confirmation.");
+                lines.add("§cDestroys the item §7for §erun coins§7 (lost on death — not");
+                lines.add("§7counted toward the boss persistent reward). Value scales");
+                lines.add("§7with rarity + stats. §cRequires confirmation.");
             }
             case STORAGE -> {
-                lines.add("§7This view is §cread-only§7 inside a run.");
-                lines.add("§7You may view but not withdraw persistent");
-                lines.add("§7items while in a run.");
+                lines.add("§cRead-only §7inside a run: you may view but not withdraw");
+                lines.add("§7persistent items while in a run.");
             }
         }
         Material mat = switch (type) {
@@ -188,8 +182,7 @@ public final class WorkstationUI implements Listener {
         ItemMeta meta = clicked.getItemMeta();
         if (meta == null) return;
         var pdc = meta.getPersistentDataContainer();
-        String action = pdc.get(org.bukkit.NamespacedKey.minecraft(GUI_KEY),
-                org.bukkit.persistence.PersistentDataType.STRING);
+        String action = pdc.get(key, org.bukkit.persistence.PersistentDataType.STRING);
 
         if (action == null) {
             // Clicked an item in the player's own inventory (bottom slots) — treat as a selection
@@ -281,11 +274,10 @@ public final class WorkstationUI implements Listener {
                 int coinCost = WorkstationRules.scaledCost(WorkstationRules.upgradeCoinCost(lvl), floor);
                 int shardCost = WorkstationRules.scaledCost(WorkstationRules.upgradeShardCost(lvl), floor);
                 if (isPersistent) {
-                    lines.add("§eCost: " + (coinCost * 2) + " run coins §7(§6persistent§7, 2x)");
-                    lines.add("§3Cost: " + (shardCost * 2) + " shards §7(§6persistent§7, 2x)");
+                    lines.add("§e" + (coinCost * 2) + " run coins §3+ " + (shardCost * 2)
+                            + " shards §7(§6persistent§7, 2x)");
                 } else {
-                    lines.add("§eCost: " + coinCost + " run coins");
-                    lines.add("§3Cost: " + shardCost + " shards");
+                    lines.add("§e" + coinCost + " run coins §3+ " + shardCost + " shards");
                 }
             }
             case REFORGE -> {
@@ -307,28 +299,24 @@ public final class WorkstationUI implements Listener {
             case PRESERVE -> {
                 int fails = state.di.preserveFails().getOrDefault(p.getUniqueId(), 0);
                 boolean guaranteed = WorkstationRules.preserveGuaranteed(fails);
-                lines.add("§dAttempts to preserve this item past the run");
-                lines.add("§7Chance: §a" + (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100) + "%");
+                lines.add("Attempts to preserve this item past the run.");
                 if (guaranteed) {
                     lines.add("§6§l✦ PITY! §7Next attempt guaranteed!");
                 } else {
                     int remaining = WorkstationRules.PRESERVE_PITY - fails;
-                    lines.add("§7Pity: §e" + remaining + "§7 more fail" + (remaining == 1 ? "" : "s")
-                            + " → guaranteed");
+                    lines.add("§a" + (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100) + "% §7· pity: §e"
+                            + remaining + "§7 more fail" + (remaining == 1 ? "" : "s") + " → guaranteed");
                 }
-                lines.add("§7Success: §aques at half durability§7. §cFail: returned");
-                lines.add("§cone rarity worse§7.");
-                lines.add("§e" + WorkstationRules.PRESERVE_COIN_COST + " run coins");
-                lines.add("§dAND " + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " persistent coins");
-                lines.add("§3AND " + WorkstationRules.PRESERVE_SHARD_COST + " shards");
+                lines.add("§aSuccess: §7kept at half durability. §cFail: one rarity worse.");
+                lines.add("§e" + WorkstationRules.PRESERVE_COIN_COST + " run coins §d+ "
+                        + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " pc §3+ "
+                        + WorkstationRules.PRESERVE_SHARD_COST + " shards");
             }
             case SALVAGE -> {
                 int value = WorkstationRules.salvageValue(
                         GearFactory.getRarity(item), WorkstationRules.primaryStat(item));
-                lines.add("§e+ " + value + " run coins");
-                lines.add("§7(per-run, lost on death — not counted");
-                lines.add("§7toward boss persistent coin reward)");
-                lines.add("§cThis destroys the item!");
+                lines.add("§e+ " + value + " run coins §7(per-run, lost on death — not counted");
+                lines.add("§7toward boss persistent coin reward). §cThis destroys the item!");
             }
             default -> {}
         }
@@ -447,8 +435,7 @@ public final class WorkstationUI implements Listener {
         for (String line : lore) lc.add(LEGACY.deserialize(line));
         meta.lore(lc);
         if (action != null) {
-            meta.getPersistentDataContainer().set(
-                    org.bukkit.NamespacedKey.minecraft(GUI_KEY),
+            meta.getPersistentDataContainer().set(key,
                     org.bukkit.persistence.PersistentDataType.STRING, action);
         }
         s.setItemMeta(meta);

@@ -54,6 +54,10 @@ public final class PartyManager {
     public boolean acceptInvite(Player invitee) {
         UUID inviterId = pendingInvites.remove(invitee.getUniqueId());
         if (inviterId == null) return false;
+        if (partyOf(invitee) != null) {
+            invitee.sendMessage("§cYou are already in a party.");
+            return false;
+        }
         Party p = partyOf(inviterId);
         if (p == null || p.size() >= Party.MAX_SIZE) return false;
         if (!p.addMember(invitee)) return false;

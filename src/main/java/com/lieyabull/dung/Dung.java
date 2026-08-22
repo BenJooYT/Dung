@@ -2,16 +2,17 @@ package com.lieyabull.dung;
 
 import com.lieyabull.dung.command.DungCommand;
 import com.lieyabull.dung.command.PlotCommand;
-import com.lieyabull.dung.command.RoomCommand;
 import com.lieyabull.dung.game.GameManager;
 import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.listener.GameListener;
 import com.lieyabull.dung.listener.PlotListener;
 import com.lieyabull.dung.plot.PlotManager;
-import com.lieyabull.dung.room.RoomEditor;
 import com.lieyabull.dung.items.GearFactory;
-import com.lieyabull.dung.room.RoomTutorial;
+import com.lieyabull.dung.compost.CompostManager;
+import com.lieyabull.dung.listener.CompostListener;
+import com.lieyabull.dung.structure.StructureManager;
 import com.lieyabull.dung.ui.ShopUI;
+import com.lieyabull.dung.ui.StashUI;
 import com.lieyabull.dung.ui.WorkstationUI;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
@@ -26,10 +27,11 @@ public final class Dung extends JavaPlugin {
     private GameManager game;
     private MetaManager meta;
     private ShopUI shopUI;
+    private StashUI stashUI;
     private WorkstationUI workstationUI;
     private PlotManager plotManager;
-    private RoomEditor roomEditor;
-    private RoomTutorial roomTutorial;
+    private StructureManager structureManager;
+    private CompostManager compost;
     private World world;
 
     public static Dung instance() {
@@ -44,33 +46,33 @@ public final class Dung extends JavaPlugin {
         meta.load();
         game = new GameManager(this);
         shopUI = new ShopUI(this);
+        stashUI = new StashUI(this);
         workstationUI = new WorkstationUI(this);
         plotManager = new PlotManager(this);
-        roomEditor = new RoomEditor(this);
-        roomTutorial = new RoomTutorial(this, roomEditor);
-        Bukkit.getPluginManager().registerEvents(roomTutorial, this);
+        structureManager = new StructureManager(this);
+        compost = new CompostManager(this);
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
         Bukkit.getPluginManager().registerEvents(new PlotListener(this), this);
+        Bukkit.getPluginManager().registerEvents(new CompostListener(this), this);
         Bukkit.getPluginManager().registerEvents(shopUI, this);
+        Bukkit.getPluginManager().registerEvents(stashUI, this);
         Bukkit.getPluginManager().registerEvents(workstationUI, this);
         getCommand("dung").setExecutor(new DungCommand(this));
         getCommand("dungeon").setExecutor(new DungCommand(this));
         getCommand("shop").setExecutor(new DungCommand(this));
         getCommand("upgrades").setExecutor(new DungCommand(this));
         getCommand("salvage").setExecutor(new DungCommand(this));
+        getCommand("stash").setExecutor(new DungCommand(this));
         getCommand("party").setExecutor(new DungCommand(this));
         getCommand("balance").setExecutor(new DungCommand(this));
         getCommand("leaderboard").setExecutor(new DungCommand(this));
         // Autofill for all DungCommand-backed commands (dung, dungeon, shop, upgrades, salvage,
         // party, balance, leaderboard) so players can see the available arguments.
         DungCommand dungCmd = new DungCommand(this);
-        for (String name : new String[]{"dung", "dungeon", "shop", "upgrades", "salvage", "party", "balance", "leaderboard"}) {
+        for (String name : new String[]{"dung", "dungeon", "shop", "upgrades", "salvage", "stash", "party", "balance", "leaderboard"}) {
             getCommand(name).setExecutor(dungCmd);
             getCommand(name).setTabCompleter(dungCmd);
         }
-        RoomCommand roomCmd = new RoomCommand(this, roomEditor);
-        getCommand("room").setExecutor(roomCmd);
-        getCommand("room").setTabCompleter(roomCmd);
         PlotCommand plotCmd = new PlotCommand(this);
         getCommand("plots").setExecutor(plotCmd);
         getCommand("plots").setTabCompleter(plotCmd);
@@ -85,7 +87,9 @@ public final class Dung extends JavaPlugin {
     public void onDisable() {
         if (game != null) game.shutdown();
         if (meta != null) meta.save();
+        if (stashUI != null) stashUI.save();
         if (plotManager != null) plotManager.save();
+        if (compost != null) compost.save();
         instance = null;
     }
 
@@ -116,6 +120,10 @@ public final class Dung extends JavaPlugin {
         return shopUI;
     }
 
+    public StashUI stashUI() {
+        return stashUI;
+    }
+
     public WorkstationUI workstationUI() {
         return workstationUI;
     }
@@ -124,12 +132,12 @@ public final class Dung extends JavaPlugin {
         return plotManager;
     }
 
-    public RoomEditor roomEditor() {
-        return roomEditor;
+    public StructureManager structures() {
+        return structureManager;
     }
 
-    public RoomTutorial roomTutorial() {
-        return roomTutorial;
+    public CompostManager compost() {
+        return compost;
     }
 
     /** Scan all online players' inventories and assign UUIDs to persistent items

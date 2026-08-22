@@ -6,17 +6,14 @@ import com.lieyabull.dung.dungeon.Floor;
 import com.lieyabull.dung.dungeon.FloorGenerator;
 import com.lieyabull.dung.dungeon.RoomGen;
 import com.lieyabull.dung.dungeon.RoomType;
-import com.lieyabull.dung.room.Direction;
 import com.lieyabull.dung.room.RoomBounds;
-import com.lieyabull.dung.room.RoomConnType;
-import com.lieyabull.dung.room.RoomConnector;
-import com.lieyabull.dung.room.RoomInstantiator;
 import com.lieyabull.dung.room.RoomMarker;
 import com.lieyabull.dung.room.RoomMarkerType;
-import com.lieyabull.dung.room.RoomRegistry;
-import com.lieyabull.dung.room.RoomTemplate;
-import com.lieyabull.dung.room.RoomTemplateRotator;
 import com.lieyabull.dung.room.SpawnFloor;
+import com.lieyabull.dung.structure.StructureDefinition;
+import com.lieyabull.dung.structure.StructureRegistry;
+import com.lieyabull.dung.structure.StructureTransform;
+import com.lieyabull.dung.structure.StructureWorldEdit;
 import com.lieyabull.dung.entity.Enemy;
 import com.lieyabull.dung.entity.MobType;
 import com.lieyabull.dung.items.Affix;
@@ -26,6 +23,7 @@ import com.lieyabull.dung.items.ItemTags;
 import com.lieyabull.dung.items.Rarity;
 import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.party.Party;
+import com.lieyabull.dung.pickup.Pickup;
 import com.lieyabull.dung.ui.HUD;
 import com.lieyabull.dung.ui.TabUI;
 import org.bukkit.Bukkit;
@@ -83,6 +81,8 @@ public final class DungeonInstance {
     private final Map<UUID, Double> lastBarHearts = new HashMap<>();
     private final Map<UUID, Double> lastBarMana = new HashMap<>();
     private final Map<UUID, String> lastHeadHp = new HashMap<>();
+    /** Per-player overhead HP bar: a non-persistent TextDisplay riding the player's head. */
+    private final Map<UUID, org.bukkit.entity.TextDisplay> hpTags = new HashMap<>();
     private final Map<UUID, ItemStack[]> lastGear = new HashMap<>();
     private BossController boss;
     private Floor.RoomNode bossRoom;
@@ -191,6 +191,8 @@ public final class DungeonInstance {
         lastBarHearts.clear();
         lastBarMana.clear();
         lastGear.clear();
+        for (org.bukkit.entity.TextDisplay t : hpTags.values()) t.remove();
+        hpTags.clear();
         lastHeadHp.clear();
         barTick = 0;
         tabTickCounter = 0;
@@ -526,21 +528,25 @@ public final class DungeonInstance {
         // locked barriers) and never get templates.
         // Custom rooms can be disabled via config (custom-rooms: false) or /room toggle.
         if (plugin.getConfig().getBoolean("custom-rooms", true)) {
-            resolveTemplates(run.floor);
+            resolveStructures(run.floor);
         }
         for (Floor.RoomNode n : run.floor.rooms()) {
-            if (n.template != null) {
-                RoomTemplate t = n.template;
-                RoomBounds tot = t.total();
+            if (n.structure != null) {
+                StructureDefinition s = n.structure;
+                RoomBounds tot = s.total();
                 int ox = baseX(n) - tot.minX;
                 int oy = BASE_Y - tot.minY;
                 int oz = baseZ(n) - tot.minZ;
-                RoomInstantiator.instantiate(world, t, ox, oy, oz);
+                StructureWorldEdit.paste(world, n.clipboard, ox, oy, oz, n.rotationSteps);
             } else {
                 RoomGen.build(world, n, BASE_Y, spacing, offsetX, offsetZ);
             }
         }
-        carveMixedCorridors(run.floor);
+        // Structure rooms: carve doorway openings + corridors procedurally on the shared corridor line
+        // (PERP_CENTER), so each structure room opens only the door directions the floor graph needs
+        // and connects to its neighbours without leaving a hole between the room wall and the corridor.
+        carveStructureDoors(run.floor);
+        carveStructureCorridors(run.floor);
         // Register destructible wall locations for SECRET rooms and carve passages
         destructibleWalls.clear();
         revealedSecrets.clear();
@@ -591,181 +597,161 @@ public final class DungeonInstance {
      *  procedural mechanics), are left null and built procedurally. This allows template and
      *  procedural rooms to coexist on the same floor.
      *
-     *  <p>Templates are rotated as needed so their connectors align with the room's open door
-     *  directions. A rotated copy is stored on the room node; the original template is unchanged. */
-    private void resolveTemplates(Floor floor) {
-        int[] DX = {0, 1, 0, -1};
-        int[] DZ = {-1, 0, 1, 0};
+     *  <p>Templates are rotated by a random allowed rotation for visual variety. Doorways/corridors
+     *  are NOT stored in the template — they are carved procedurally at build time on the shared
+     *  corridor line ({@link #carveStructureDoors}), so any rotation is valid for any door graph.
+     *  A rotated copy is stored on the room node; the original template is unchanged. */
+    private void resolveStructures(Floor floor) {
         java.util.Random rnd = new java.util.Random(run.rng.nextLong());
         for (Floor.RoomNode n : floor.rooms()) {
             // SECRET and LOCKED rooms always use procedural mechanics
             if (n.type == RoomType.SECRET || n.type == RoomType.LOCKED) continue;
-            RoomTemplate t = registry().pick(n.type, rnd);
-            if (t == null) continue;
-            // Determine the rotation needed to align the template's connectors with the room's
-            // open door directions. If no rotation works, fall back to procedural.
-            RoomTemplateRotator.Rotation rot = RoomTemplateRotator.requiredRotation(t, n.doors);
-            if (rot == null) continue;
-            // Create a rotated copy of the template and store it on the room node
-            n.template = RoomTemplateRotator.rotate(t, rot);
-            n.templateId = t.id;
+            StructureDefinition s = registry().pick(n.type, rnd);
+            if (s == null) continue;
+            // Pick a random allowed rotation (doors are carved procedurally, so nothing to align).
+            StructureTransform.Rotation rot = StructureTransform.pickRandom(s, rnd);
+            // Rotate a copy of the metadata to match; the (unrotated) WorldEdit clipboard is pasted
+            // with the same clockwise rotation so schematic and metadata stay in sync.
+            StructureDefinition def = StructureTransform.rotate(s, rot);
+            n.structure = def;
+            n.structureId = s.id;
+            n.rotationSteps = rot.steps;
+            StructureRegistry.Registered reg = registry().byId(s.id);
+            n.clipboard = reg == null ? null : reg.clipboard();
         }
     }
 
-    /** Carve connecting corridors between every pair of adjacent rooms that share an open door.
-     *  Handles three cases:
-     *  1. Template ↔ Template: uses both connectors' metadata for width/height/floor alignment.
-     *  2. Template ↔ Procedural: uses the template's connector and the procedural room's wall face.
-     *  3. Procedural ↔ Procedural: already carved by RoomGen.build during the build step, so
-     *     this method only handles cases where at least one side has a template. */
-    private void carveMixedCorridors(Floor floor) {
+    /** Carve a 3-wide doorway through each structure room's own wall, at the fixed corridor line
+     *  ({@link RoomGen#PERP_CENTER}), for exactly the door directions the floor graph opens. The
+     *  perpendicular is anchored to the grid line (the same one procedural rooms use), so a structure
+     *  room's opening always lines up with the corridor — it never leaves a hole between the room's
+     *  outer wall and the corridor wall — and stays well away from the corners. */
+    private void carveStructureDoors(Floor floor) {
+        for (Floor.RoomNode n : floor.rooms()) {
+            if (n.structure == null) continue;
+            RoomBounds t = n.structure.total();
+            for (int d = 0; d < 4; d++) {
+                if (!n.doors[d]) continue;
+                boolean horiz = d == 1 || d == 3;
+                int wallAlong = facingWallAlong(n, d, t);
+                int perpC = horiz ? (baseZ(n) + RoomGen.PERP_CENTER) : (baseX(n) + RoomGen.PERP_CENTER);
+                for (int off = -1; off <= 1; off++) {
+                    for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
+                        int px = horiz ? wallAlong : (perpC + off);
+                        int pz = horiz ? (perpC + off) : wallAlong;
+                        world.getBlockAt(px, y, pz).setType(Material.AIR);
+                    }
+                    int fx = horiz ? wallAlong : perpC;
+                    int fz = horiz ? perpC : wallAlong;
+                    world.getBlockAt(fx, BASE_Y, fz).setType(Material.POLISHED_ANDESITE);
+                    world.getBlockAt(fx, BASE_Y + RoomGen.ROOM_HEIGHT + 1, fz).setType(Material.STONE_BRICKS);
+                }
+            }
+        }
+    }
+
+    /** Carve connecting corridors between every pair of adjacent rooms (at least one side a structure
+     *  room) that share an open door. The tube runs at the fixed {@link RoomGen#PERP_CENTER} line,
+     *  spanning the gap between the two rooms' facing walls, so it merges cleanly with a procedural
+     *  neighbour's own corridor (also carved on that line) and the two structure doorways connect
+     *  without a gap. Procedural↔procedural pairs are already handled by {@link RoomGen#build}. */
+    private void carveStructureCorridors(Floor floor) {
         int[] DX = {0, 1, 0, -1};
         int[] DZ = {-1, 0, 1, 0};
         Set<Long> carved = new HashSet<>();
         for (Floor.RoomNode n : floor.rooms()) {
-            if (n.template == null) continue;
+            if (n.structure == null) continue;
             for (int d = 0; d < 4; d++) {
                 if (!n.doors[d]) continue;
                 Floor.RoomNode m = floor.at(n.x + DX[d], n.z + DZ[d]);
                 if (m == null) continue;
-                Direction dn = Direction.values()[d];
-                RoomConnector ca = n.template.connectorFacing(dn);
-                if (ca == null) continue;
                 long e = floor.key(Math.min(n.x, m.x), Math.min(n.z, m.z));
                 if (!carved.add(e)) continue;
-                int oxA = baseX(n) - n.template.total().minX;
-                int oyA = BASE_Y - n.template.total().minY;
-                int ozA = baseZ(n) - n.template.total().minZ;
-                int axA = oxA + ca.x, azA = ozA + ca.z;
-                int floorY, topY, minP, maxP, lo, hi;
-                boolean horiz = dn == Direction.EAST || dn == Direction.WEST;
-                if (m.template != null) {
-                    // Template ↔ Template: use both connectors
-                    RoomConnector cb = m.template.connectorFacing(dn.opposite());
-                    if (cb == null) continue;
-                    int oyB = BASE_Y - m.template.total().minY;
-                    int axB = baseX(m) - m.template.total().minX + cb.x;
-                    int azB = baseZ(m) - m.template.total().minZ + cb.z;
-                    floorY = Math.min(oyA + ca.floorY, oyB + cb.floorY);
-                    topY = Math.max(oyA + ca.floorY + ca.height, oyB + cb.floorY + cb.height);
-                    minP = Math.min(perpMin(horiz, axA, azA, ca.width, 1), perpMin(horiz, axB, azB, cb.width, 1));
-                    maxP = Math.max(perpMax(horiz, axA, azA, ca.width, 1), perpMax(horiz, axB, azB, cb.width, 1));
-                    int alongA = horiz ? axA : azA;
-                    int alongB = horiz ? axB : azB;
-                    lo = Math.min(alongA, alongB) + 1;
-                    hi = Math.max(alongA, alongB) - 1;
-                } else {
-                    // Template ↔ Procedural: carve from template connector to procedural room's
-                    // interior wall face. The corridor must span the full vertical range from the
-                    // template's connector floor to the procedural room's ceiling, so both openings
-                    // are reachable regardless of height differences.
-                    int mw = m.sizeW + 2 * RoomGen.WALL;
-                    int mh = m.sizeH + 2 * RoomGen.WALL;
-                    int msx = baseX(m);
-                    int msz = baseZ(m);
-                    int wallAlong = horiz
-                            ? (msx + (d == 1 ? mw - 1 : 0))
-                            : (msz + (d == 2 ? mh - 1 : 0));
-                    int alongA = horiz ? axA : azA;
-                    // Template connector's vertical range
-                    int tFloor = oyA + ca.floorY;
-                    int tCeil = oyA + ca.floorY + ca.height;
-                    // Procedural room's vertical range (floor at BASE_Y, ceiling at BASE_Y + ROOM_HEIGHT)
-                    int pFloor = BASE_Y;
-                    int pCeil = BASE_Y + RoomGen.ROOM_HEIGHT;
-                    // Corridor spans from the lower floor to the higher ceiling
-                    floorY = Math.min(tFloor, pFloor);
-                    topY = Math.max(tCeil, pCeil);
-                    minP = perpMin(horiz, axA, azA, ca.width, 1);
-                    maxP = perpMax(horiz, axA, azA, ca.width, 1);
-                    lo = Math.min(alongA, wallAlong) + 1;
-                    hi = Math.max(alongA, wallAlong) - 1;
-                    // Punch the opening through the procedural room's wall at the template's
-                    // connector position, spanning the full corridor height, so the corridor
-                    // connects to the interior even if the procedural room's own corridor was
-                    // carved at a different perpendicular center or height.
-                    for (int p = minP; p <= maxP; p++) {
-                        int wx = horiz ? wallAlong : p;
-                        int wz = horiz ? p : wallAlong;
-                        for (int y = floorY; y <= topY; y++) {
-                            world.getBlockAt(wx, y, wz).setType(Material.AIR);
-                        }
-                        world.getBlockAt(wx, floorY, wz).setType(Material.POLISHED_ANDESITE);
-                        world.getBlockAt(wx, topY + 1, wz).setType(Material.STONE_BRICKS);
-                    }
-                }
-                if (lo > hi) lo = hi;
+                boolean horiz = d == 1 || d == 3;
+                RoomBounds ta = n.structure.total();
+                RoomBounds tb = m.structure == null ? null : m.structure.total();
+                int aAlong = facingWallAlong(n, d, ta);
+                int bAlong = m.structure != null ? facingWallAlong(m, d ^ 2, tb)
+                        : facingWallAlongProcedural(m, d ^ 2);
+                int lo = Math.min(aAlong, bAlong) + 1;
+                int hi = Math.max(aAlong, bAlong) - 1;
+                int perpC = horiz ? (baseZ(n) + RoomGen.PERP_CENTER) : (baseX(n) + RoomGen.PERP_CENTER);
                 for (int t = lo; t <= hi; t++) {
-                    for (int p = minP; p <= maxP; p++) {
-                        int px = horiz ? t : p;
-                        int pz = horiz ? p : t;
-                        world.getBlockAt(px, floorY, pz).setType(Material.POLISHED_ANDESITE);
-                        for (int y = floorY + 1; y <= topY; y++) {
+                    for (int off = -1; off <= 1; off++) {
+                        int px = horiz ? t : (perpC + off);
+                        int pz = horiz ? (perpC + off) : t;
+                        world.getBlockAt(px, BASE_Y, pz).setType(Material.POLISHED_ANDESITE);
+                        for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
                             world.getBlockAt(px, y, pz).setType(Material.AIR);
                         }
-                        world.getBlockAt(px, topY + 1, pz).setType(Material.STONE_BRICKS);
+                        world.getBlockAt(px, BASE_Y + RoomGen.ROOM_HEIGHT + 1, pz).setType(Material.STONE_BRICKS);
                     }
                 }
             }
         }
     }
 
-    /** Perpendicular corridor offset with the validator's symmetric semantics: width W opens the
-     *  blocks c-(W-1)/2 .. c+(W-1)/2, so even widths are asymmetric but never leave a 1-wide gap. */
-    private int perpMin(boolean horiz, int x, int z, int width, int half) {
-        int c = horiz ? z : x;
-        return c - (width - 1) / 2 * half;
+    /** World coordinate of a room's outer wall on side {@code d} (0=N,1=E,2=S,3=W), for a structure room. */
+    private int facingWallAlong(Floor.RoomNode n, int d, RoomBounds t) {
+        boolean horiz = d == 1 || d == 3;
+        int half = horiz ? t.width() : t.depth();
+        int along = horiz ? baseX(n) : baseZ(n);
+        return along + (d == 1 || d == 2 ? half : 0);
     }
 
-    private int perpMax(boolean horiz, int x, int z, int width, int half) {
-        int c = horiz ? z : x;
-        return c + (width - 1) / 2 * half;
+    /** World coordinate of a procedural room's outer wall on side {@code d}. */
+    private int facingWallAlongProcedural(Floor.RoomNode n, int d) {
+        boolean horiz = d == 1 || d == 3;
+        int mw = n.sizeW + 2 * RoomGen.WALL;
+        int mh = n.sizeH + 2 * RoomGen.WALL;
+        int along = horiz ? baseX(n) : baseZ(n);
+        return along + (d == 1 ? mw : (d == 2 ? mh : 0));
     }
 
-    private RoomRegistry registry() {
-        return plugin.roomEditor().registry();
+    private StructureRegistry registry() {
+        return plugin.structures().registry();
     }
 
     /** World spawn location for a room: the template PLAYER_SPAWN marker if present, else the
      *  procedural room centre. */
     private Location roomSpawn(Floor.RoomNode n) {
-        if (n.template != null) {
-            List<RoomMarker> ms = n.template.markersOf(RoomMarkerType.PLAYER_SPAWN);
+        if (n.structure != null) {
+            List<RoomMarker> ms = n.structure.markersOf(RoomMarkerType.PLAYER_SPAWN);
             if (!ms.isEmpty()) {
                 RoomMarker m = ms.get(0);
                 return new Location(world,
-                        baseX(n) - n.template.total().minX + m.x + 0.5,
-                        BASE_Y - n.template.total().minY + m.y,
-                        baseZ(n) - n.template.total().minZ + m.z + 0.5);
+                        baseX(n) - n.structure.total().minX + m.x + 0.5,
+                        BASE_Y - n.structure.total().minY + m.y,
+                        baseZ(n) - n.structure.total().minZ + m.z + 0.5);
             }
         }
         return RoomGen.center(world, n, BASE_Y, spacing, offsetX, offsetZ);
     }
 
-    /** World location of the SHOPKEEPER marker in a template shop room, or null. */
+    /** World location of the SHOPKEEPER marker in a structure shop room, or null. */
     private Location shopkeeperLoc(Floor.RoomNode n) {
-        if (n.template == null) return null;
-        List<RoomMarker> ms = n.template.markersOf(RoomMarkerType.SHOPKEEPER);
+        if (n.structure == null) return null;
+        List<RoomMarker> ms = n.structure.markersOf(RoomMarkerType.SHOPKEEPER);
         if (ms.isEmpty()) return null;
         RoomMarker m = ms.get(0);
         return new Location(world,
-                baseX(n) - n.template.total().minX + m.x + 0.5,
-                BASE_Y - n.template.total().minY + m.y,
-                baseZ(n) - n.template.total().minZ + m.z + 0.5);
+                baseX(n) - n.structure.total().minX + m.x + 0.5,
+                BASE_Y - n.structure.total().minY + m.y,
+                baseZ(n) - n.structure.total().minZ + m.z + 0.5);
     }
 
-    /** Enemy spawn tiles from the template's SPAWN_FLOOR markers, cycled, or null if none. */
+    /** Enemy spawn tiles from the structure's SPAWN_FLOOR markers, cycled, or null if none. */
     private List<Location> templateEnemySpawns(Floor.RoomNode n, int count) {
-        if (n.template == null) return null;
-        List<SpawnFloor> floors = n.template.spawnFloors;
+        if (n.structure == null) return null;
+        List<SpawnFloor> floors = n.structure.spawnFloors;
         if (floors.isEmpty()) return null;
         List<Location> out = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             SpawnFloor sf = floors.get(i % floors.size());
             out.add(new Location(world,
-                    baseX(n) - n.template.total().minX + (sf.minX + sf.maxX) / 2.0 + 0.5,
-                    BASE_Y - n.template.total().minY + sf.minY,
-                    baseZ(n) - n.template.total().minZ + (sf.minZ + sf.maxZ) / 2.0 + 0.5));
+                    baseX(n) - n.structure.total().minX + (sf.minX + sf.maxX) / 2.0 + 0.5,
+                    BASE_Y - n.structure.total().minY + sf.minY,
+                    baseZ(n) - n.structure.total().minZ + (sf.minZ + sf.maxZ) / 2.0 + 0.5));
         }
         return out;
     }
@@ -779,6 +765,10 @@ public final class DungeonInstance {
     }
 
     public void enterRoom(Floor.RoomNode n) {
+        enterRoom(n, null);
+    }
+
+    public void enterRoom(Floor.RoomNode n, Player entering) {
         if (curRoom != null) curRoom.visited = true;
         curRoom = n;
         n.visited = true;
@@ -792,10 +782,17 @@ public final class DungeonInstance {
         }
 
         long invulnMs = (n == run.floor.start ? 2500 : 1000);
-        for (Player p : party.onlineMembers()) {
-            PlayerState ps = run.playerStateOf(p.getUniqueId());
+        if (entering != null) {
+            PlayerState ps = run.playerStateOf(entering.getUniqueId());
             if (ps != null) {
                 ps.invulnUntil = System.currentTimeMillis() + invulnMs;
+            }
+        } else {
+            for (Player p : party.onlineMembers()) {
+                PlayerState ps = run.playerStateOf(p.getUniqueId());
+                if (ps != null) {
+                    ps.invulnUntil = System.currentTimeMillis() + invulnMs;
+                }
             }
         }
 
@@ -855,7 +852,7 @@ public final class DungeonInstance {
             return;
         }
         playerRoom.put(p.getUniqueId(), target);
-        enterRoom(target);
+        enterRoom(target, p);
     }
 
     /** Remove the IRON_BLOCK door barrier for a LOCKED room. */
@@ -910,9 +907,9 @@ public final class DungeonInstance {
      *  beyond the room's buildable footprint (used to give enemies a little slack around doorways
      *  without letting them block a room clear once they've strayed outside). */
     private boolean insideRoom(Location loc, Floor.RoomNode rn, double margin) {
-        if (rn.template != null) {
-            // Template room footprint (may differ from the procedural grid shell)
-            RoomBounds t = rn.template.total();
+        if (rn.structure != null) {
+            // Structure room footprint (may differ from the procedural grid shell)
+            RoomBounds t = rn.structure.total();
             double minX = baseX(rn) - t.minX - margin;
             double minZ = baseZ(rn) - t.minZ - margin;
             double maxX = minX + t.width() + margin * 2;
@@ -939,6 +936,10 @@ public final class DungeonInstance {
     }
 
     private boolean spawnEnemies(Floor.RoomNode n) {
+        // A new combat/elite room triggering is the only gameplay event that clears lingering
+        // elite hearts (floor change/teardown also clean up via clearRoomEntities).
+        for (org.bukkit.entity.Item heart : eliteHearts) if (heart.isValid()) heart.remove();
+        eliteHearts.clear();
         List<Enemy> list = new ArrayList<>();
         long k = run.floor.key(n.x, n.z);
         boolean elite = n.type == RoomType.ELITE;
@@ -1176,25 +1177,19 @@ public final class DungeonInstance {
     private void sealDoors(Floor.RoomNode n, boolean close) {
         int[] DX = {0, 1, 0, -1};
         int[] DZ = {-1, 0, 1, 0};
-        if (n.template != null) {
-            // Template room: seal the connector openings themselves (anchor + perpendicular span).
-            int ox = baseX(n) - n.template.total().minX;
-            int oy = BASE_Y - n.template.total().minY;
-            int oz = baseZ(n) - n.template.total().minZ;
+        if (n.structure != null) {
+            // Structure room: seal the doorway opening itself, on the shared corridor line (same
+            // position carveStructureDoors carved it), so the bars line up with the opening.
+            RoomBounds t = n.structure.total();
             for (int d = 0; d < 4; d++) {
                 if (!n.doors[d]) continue;
-                RoomConnector ca = n.template.connectorFacing(Direction.values()[d]);
-                if (ca == null) continue;
                 boolean horiz = d == 1 || d == 3;
-                int ax = ox + ca.x, az = oz + ca.z;
-                int cperp = horiz ? az : ax;
-                int along = horiz ? ax : az;
-                int half = (ca.width - 1) / 2;
-                for (int off = -half; off <= half; off++) {
-                    int p = cperp + off;
-                    for (int y = oy + ca.floorY + 1; y <= oy + ca.floorY + ca.height; y++) {
-                        int px = horiz ? along : p;
-                        int pz = horiz ? p : along;
+                int wallAlong = facingWallAlong(n, d, t);
+                int perpC = horiz ? (baseZ(n) + RoomGen.PERP_CENTER) : (baseX(n) + RoomGen.PERP_CENTER);
+                for (int off = -1; off <= 1; off++) {
+                    for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
+                        int px = horiz ? wallAlong : (perpC + off);
+                        int pz = horiz ? (perpC + off) : wallAlong;
                         if (close) {
                             world.getBlockAt(px, y, pz).setType(Material.IRON_BARS);
                         } else if (world.getBlockAt(px, y, pz).getType() == Material.IRON_BARS) {
@@ -1271,6 +1266,46 @@ public final class DungeonInstance {
             if (s == null) s = ItemPool.randomArmor(run.floorIndex, i % 4);
             spawnPedestal(c.clone().add((i - (count - 1) / 2.0) * 2, 0, 0), s);
         }
+    }
+
+    // ---------- elite heart drops ----------
+
+    /** Ground hearts dropped by dying elites; picked up freely once their pickup delay expires,
+     *  and cleared only when a new combat/elite room triggers (plus floor change/teardown). */
+    private final List<org.bukkit.entity.Item> eliteHearts = new ArrayList<>();
+    /** Hearts can't be picked up for the first 3 seconds after landing. */
+    private static final int ELITE_HEART_PICKUP_DELAY_TICKS = 60;
+
+    /** An exploding elite bursts into hearts that scatter around the room: 3 solo, then
+     *  5/6/7 for party sizes 2/3/4+. They linger until a new combat room is triggered. */
+    private void scatterEliteHearts(Location deathLoc, Floor.RoomNode rn) {
+        if (world == null || run == null) return;
+        int members = Math.max(1, party.onlineMembers().size());
+        int count = switch (Math.min(members, 4)) {
+            case 1 -> 3;
+            case 2 -> 5;
+            case 3 -> 6;
+            default -> 7;
+        };
+        Location base = roomSpawn(rn);
+        for (int i = 0; i < count; i++) {
+            Location at = randomRoomSpot(base, deathLoc, rn);
+            org.bukkit.entity.Item drop = world.dropItem(at, Pickup.stack(Material.RED_DYE));
+            drop.setPickupDelay(ELITE_HEART_PICKUP_DELAY_TICKS); // 3s before they become grabbable
+            drop.setUnlimitedLifetime(false); // never persist beyond our own cleanup
+            eliteHearts.add(drop);
+        }
+    }
+
+    /** A random spot inside the room (falls back to the death location after a few tries). */
+    private Location randomRoomSpot(Location center, Location fallback, Floor.RoomNode rn) {
+        for (int attempt = 0; attempt < 8; attempt++) {
+            double dx = (ThreadLocalRandom.current().nextDouble() - 0.5) * 6.0;
+            double dz = (ThreadLocalRandom.current().nextDouble() - 0.5) * 6.0;
+            Location at = center.clone().add(dx, 0.5, dz);
+            if (insideRoom(at, rn, 1.0)) return at;
+        }
+        return fallback.add(0, 0.5, 0);
     }
 
     // ---------- combat tick ----------
@@ -1359,8 +1394,10 @@ public final class DungeonInstance {
             while (it.hasNext()) {
                 Enemy e = it.next();
                 if (e.dead || !e.alive() || !insideRoom(e.entity.getLocation(), rn, 3.0)) {
+                    boolean died = e.dead || !e.alive(); // stray escapes despawn without dying
                     if (!e.dead && e.alive()) e.despawn();
                     it.remove();
+                    if (died && e.type.isElite()) scatterEliteHearts(e.entity.getLocation(), rn);
                 }
             }
             if (list.size() < before && run != null) run.kills += (before - list.size());
@@ -1524,7 +1561,6 @@ public final class DungeonInstance {
     public void registerAttack(Player p) {
         PlayerState ps = run.playerStateOf(p.getUniqueId());
         if (!running || ps == null || ps.fireCd > 0) return;
-        ps.fireCd = ps.fireRateTicks;
 
         // Apply damage boost (War Cry) and guaranteed crit (Shadow Step)
         double baseDmg = ps.damage;
@@ -1552,6 +1588,8 @@ public final class DungeonInstance {
             p.sendMessage("§cSoul Siphon is full! Shift+left-click to heal yourself with its stored health.");
             return;
         }
+
+        ps.fireCd = ps.fireRateTicks;
 
         org.bukkit.util.Vector dir = p.getEyeLocation().getDirection().normalize();
         Floor.RoomNode attackRoom = playerRoom.get(p.getUniqueId());
@@ -1693,7 +1731,7 @@ public final class DungeonInstance {
             if (broken) {
                 // Keep the broken item in the inventory (it can be repaired at the shop); it is no
                 // longer usable until repaired.
-                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour " + item.getItemMeta().getDisplayName() + " §c broke and can no longer be used! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour " + item.getItemMeta().getDisplayName() + " §cbroke and can no longer be used! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));
             }
         }
     }
@@ -1731,7 +1769,9 @@ public final class DungeonInstance {
     }
 
     private void dispatchClassAbility(String classId, PlayerState st, Player caster) {
-        long k = run.floor.key(curRoom.x, curRoom.z);
+        Floor.RoomNode casterRoom = playerRoom.get(caster.getUniqueId());
+        if (casterRoom == null) casterRoom = curRoom;
+        long k = run.floor.key(casterRoom.x, casterRoom.z);
         List<Enemy> roomList = roomEnemies.getOrDefault(k, List.of());
         // Mage's Arcane Nova uses magic damage if available
         double baseDmg = "mage".equals(classId) && st.magicDamage > 0 ? st.magicDamage : st.damage;
@@ -1823,7 +1863,9 @@ public final class DungeonInstance {
     }
 
     private void dispatchAbility(String id, PlayerState st, Player caster) {
-        long k = run.floor.key(curRoom.x, curRoom.z);
+        Floor.RoomNode casterRoom = playerRoom.get(caster.getUniqueId());
+        if (casterRoom == null) casterRoom = curRoom;
+        long k = run.floor.key(casterRoom.x, casterRoom.z);
         List<Enemy> roomList = roomEnemies.getOrDefault(k, List.of());
         // Magic abilities use st.magicDamage instead of st.damage
         boolean isMagic = switch (id) {
@@ -2192,7 +2234,7 @@ public final class DungeonInstance {
             return false;
         }
         if (prof.shards < shardCost) {
-            p.sendMessage("§3You need " + shardCost + " shards (have " + prof.shards + ").");
+            p.sendMessage("§cYou need §3" + shardCost + " shards§c (have §b" + prof.shards + "§c).");
             return false;
         }
         st.coins -= coinCost;
@@ -2229,7 +2271,7 @@ public final class DungeonInstance {
         int shardCost = WorkstationRules.scaledCost(WorkstationRules.reforgeShardCost(reforgeCount), floor);
         if (isPersistent) shardCost *= 2;
         if (prof.shards < shardCost) {
-            p.sendMessage("§3You need " + shardCost + " shards (have " + prof.shards + ").");
+            p.sendMessage("§cYou need §3" + shardCost + " shards§c (have §b" + prof.shards + "§c).");
             return false;
         }
         prof.shards -= shardCost;
@@ -2291,7 +2333,7 @@ public final class DungeonInstance {
             return false;
         }
         if (prof.shards < shardCost) {
-            p.sendMessage("§3You need " + shardCost + " shards (have " + prof.shards + ").");
+            p.sendMessage("§cYou need §3" + shardCost + " shards§c (have §b" + prof.shards + "§c).");
             return false;
         }
         // Charge ALL THREE currencies (run coins + persistent coins + shards), not either/or.
@@ -2344,7 +2386,7 @@ public final class DungeonInstance {
         recomputeStats(); // item removed from (possibly) equipped slot — refresh live combat stats
         st.coins += value;
         world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f);
-        p.sendMessage("§cSalvaged the item §e→ +" + value + " run coins§7 (total §e" + st.coins + "§7).");
+        p.sendMessage("§aSalvaged the item §e→ +" + value + " run coins§7 (total §e" + st.coins + "§7).");
         return value;
     }
 
@@ -2437,7 +2479,7 @@ public final class DungeonInstance {
             prof.clears++;
             prof.bestFloor = Math.max(prof.bestFloor, run.floorIndex + 1);
             plugin.meta().addPersistentCoins(p.getUniqueId(), bank);
-            p.sendMessage("§dYou banked §6" + bank + "§d coins into your persistent wallet.");
+            p.sendMessage("§dYou banked §6" + bank + "§d coins into your persistent coins.");
         }
         // Bank each player's salvage shards earned this floor into their persistent balance
         for (Player p : party.onlineMembers()) {
@@ -2602,7 +2644,7 @@ public final class DungeonInstance {
         if (yes >= needed) {
             // Majority reached — descend!
             for (Player p : online) {
-                p.sendMessage("§a§lDescend vote passed! (§e" + yes + "/" + total + "§a)");
+                p.sendMessage("§a§lDescend vote passed! (§e" + yes + "/" + needed + "§a)");
             }
             descendVotes.clear();
             // Revive any dead players before descending so they come along
@@ -2939,7 +2981,7 @@ public final class DungeonInstance {
             world.spawnParticle(org.bukkit.Particle.SMOKE, blockLocation.clone().add(0.5, 0.5, 0.5), 10, 0.3, 0.3, 0.3, 0.02);
             return;
         }
-        p.sendMessage("§4You detonate a bomb! §7(-1 bomb)");
+        p.sendMessage("§aYou detonate a bomb! §7(-1 bomb)");
 
         // Destroy the wall blocks in a 3x3 area centered on the clicked block
         Location center = secretRoom.destructibleWallLoc;
@@ -3364,7 +3406,7 @@ public final class DungeonInstance {
 
         stripRunGear(p);
         // Damage persistent gear on death
-        damagePersistentGear(p);
+        damagePersistentGear(p, DEATH_DURABILITY_DIVISOR);
         int floorReached = run.floorIndex + 1;
         int kills = run.kills;
         int runCoins = st.coins;
@@ -3380,7 +3422,7 @@ public final class DungeonInstance {
         }
         p.sendMessage("§c§lYOU DIED §8— Floor " + floorReached);
         if (kills > 0) p.sendMessage("§7  Kills this run: §f" + kills);
-        if (runCoins > 0) p.sendMessage("§7  Run coins lost: §e" + runCoins + " §7(run gear + coins are gone)");
+        if (runCoins > 0) p.sendMessage("§7  Run coins: §e" + runCoins + " §7(gone unless revived by defeating the boss)");
         p.sendMessage("§7  Persistent gear durability reduced by 10%");
         p.sendMessage("");
         p.sendMessage("§7Unlocks you keep:");
@@ -3459,12 +3501,16 @@ public final class DungeonInstance {
         lastBarHearts.remove(pid);
         lastBarMana.remove(pid);
         lastHeadHp.remove(pid);
-        p.setCustomName(null);
-        p.setCustomNameVisible(false);
+        removeHeadHp(p);
         playerRoom.remove(pid);
         stripRunGear(p);
         restoreSavedInventory(p);
         deliverPendingPersists(p);
+        // Leaving a run early damages persistent gear at half the rate of dying (5% of max
+        // instead of 10%). Applied after restoreSavedInventory so the damage hits the final
+        // inventory state — otherwise the undamaged pre-run snapshot would be restored.
+        damagePersistentGear(p, LEAVE_DURABILITY_DIVISOR);
+        p.sendMessage("§7  Left the run early: persistent gear durability reduced by 5%");
         p.setWalkSpeed(0.2f);
         p.setFoodLevel(20);
         teleportOut(p);
@@ -3554,8 +3600,13 @@ public final class DungeonInstance {
         return isGear && !persistent;
     }
 
+    /** Death penalty: reduce persistent gear durability by 1/10 of max (10%). */
+    private static final int DEATH_DURABILITY_DIVISOR = 10;
+    /** Leaving-a-run penalty: half the death penalty (5% of max). */
+    private static final int LEAVE_DURABILITY_DIVISOR = 20;
+
     /** Damage all persistent gear on death: reduce durability by 10 (or 10% of max). */
-    private void damagePersistentGear(Player p) {
+    private void damagePersistentGear(Player p, int divisor) {
         PlayerInventory inv = p.getInventory();
         // PlayerInventory.getSize() covers storage + hotbar (the main hand is one of the hotbar
         // slots), the 4 armor slots, and the offhand. Iterate every slot EXACTLY once so a piece is
@@ -3564,11 +3615,11 @@ public final class DungeonInstance {
         for (int slot = 0; slot < inv.getSize(); slot++) {
             ItemStack s = inv.getItem(slot);
             if (s == null || s.getType() == Material.AIR) continue;
-            damageIfPersistent(s, p);
+            damageIfPersistent(s, p, divisor);
         }
     }
 
-    private void damageIfPersistent(ItemStack s, Player p) {
+    private void damageIfPersistent(ItemStack s, Player p, int divisor) {
         if (s.getItemMeta() == null) return;
         var pdc = s.getItemMeta().getPersistentDataContainer();
         boolean persistent = pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.PERSISTENT),
@@ -3576,8 +3627,8 @@ public final class DungeonInstance {
         if (!persistent) return;
         int max = GearFactory.getMaxDurability(s);
         if (max <= 0) return;
-        // Reduce by 10% of max (minimum 1)
-        int dmg = Math.max(1, max / 10);
+        // Reduce by 1/divisor of max (minimum 1)
+        int dmg = Math.max(1, max / divisor);
         boolean broken = GearFactory.damageItem(s, dmg);
         if (broken) {
             handleBrokenArmor(p, s, "");
@@ -3586,29 +3637,59 @@ public final class DungeonInstance {
 
     /** Display a player's current/max health as a bar above their name while a run is active,
      *  updating only when the shown value changes (avoids re-sending entity metadata every tick).
-     *  The bar sits on its own line above the player name, not beside it. */
+     *  Implemented as a non-persistent TextDisplay riding the player — Player.setCustomName does
+     *  not change a player's overhead nametag, so the classic approach doesn't render. */
     private void updateHeadHp(Player p, PlayerState st) {
         int cur = (int) Math.ceil(st.hearts);
         int max = st.maxHearts;
         int filled = Math.max(0, Math.min(10, (int) Math.round(10.0 * cur / max)));
         StringBuilder bar = new StringBuilder();
         for (int i = 0; i < 10; i++) {
-            bar.append(i < filled ? "§a█" : "§c█");
+            bar.append(i < filled ? "§a█" : "§8█");
         }
-        String text = bar + " §c" + cur + "§f/§c" + max + "\n§f" + p.getName();
-        String last = lastHeadHp.get(p.getUniqueId());
-        if (text.equals(last)) return;
-        p.setCustomName(text);
-        p.setCustomNameVisible(true);
+        String text = bar + " §c" + cur + " §7/ §f" + max;
+        org.bukkit.entity.TextDisplay tag = hpTags.get(p.getUniqueId());
+        if (tag == null || !tag.isValid()) {
+            if (tag != null) tag.remove();
+            final String initial = text;
+            tag = p.getWorld().spawn(p.getLocation(), org.bukkit.entity.TextDisplay.class, td -> {
+                td.text(legacy(initial));
+                td.setBillboard(org.bukkit.entity.Display.Billboard.CENTER);
+                td.setSeeThrough(false);
+                td.setPersistent(false);
+                td.setViewRange(0.6f);
+            });
+            hpTags.put(p.getUniqueId(), tag);
+            p.addPassenger(tag);
+        } else {
+            String last = lastHeadHp.get(p.getUniqueId());
+            if (text.equals(last)) return;
+            tag.text(legacy(text));
+        }
         lastHeadHp.put(p.getUniqueId(), text);
     }
 
+    private net.kyori.adventure.text.Component legacy(String s) {
+        return net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacySection().deserialize(s);
+    }
+
+    /** Remove a player's overhead HP bar (and any stale passenger), if present. */
+    private void removeHeadHp(Player p) {
+        org.bukkit.entity.TextDisplay tag = hpTags.remove(p.getUniqueId());
+        if (tag != null) tag.remove();
+        lastHeadHp.remove(p.getUniqueId());
+        for (org.bukkit.entity.Entity e : p.getPassengers()) {
+            if (e instanceof org.bukkit.entity.TextDisplay) e.remove();
+        }
+    }
+
     /** Handle a persistent gear item reaching 0 durability: if it is actually equipped (an armor
-     *  slot or the offhand) unequip it and move it into a free main-inventory slot, dropping it on
-     *  the ground only if the bag is full. A broken item already sitting in the main inventory is
-     *  left where it is (it isn't granting stats, so there's nothing to unequip). Always notifies
-     *  the player. Never duplicates: the equipped slot is cleared BEFORE the item is placed, and
-     *  items already in the inventory are not moved at all. */
+     *  slot or the offhand) unequip it and move it into a free main-inventory slot. If the bag is
+     *  full it goes into the player's /stash (takeout-only container) instead of the ground. A
+     *  broken item already sitting in the main inventory is left where it is (it isn't granting
+     *  stats, so there's nothing to unequip). Always notifies the player. Never duplicates: the
+     *  equipped slot is cleared BEFORE the item is placed, and items already in the inventory are
+     *  not moved at all. */
     private void handleBrokenArmor(Player p, ItemStack item, String reason) {
         org.bukkit.inventory.PlayerInventory inv = p.getInventory();
         // Unequip: clear whichever equip slot (armor or offhand) currently holds this item.
@@ -3630,29 +3711,25 @@ public final class DungeonInstance {
             inv.setItemInOffHand(null);
             equipped = true;
         }
+        if (inv.getItem(SHIELD_SLOT) == item) {
+            inv.setItem(SHIELD_SLOT, null);
+            equipped = true;
+        }
         if (equipped) {
-            // Try to place in a free main-inventory slot, otherwise drop on the ground.
-            boolean placed = false;
-            for (int slot = 0; slot < 36; slot++) {
-                ItemStack s = inv.getItem(slot);
-                if (s == null || s.getType().isAir()) {
-                    inv.setItem(slot, item);
-                    placed = true;
-                    break;
-                }
-            }
-            if (!placed) {
-                p.getWorld().dropItemNaturally(p.getLocation().add(0, 0.5, 0), item);
-            }
+            // Move into a free main-inventory slot, or the stash if the bag is full.
+            com.lieyabull.dung.ui.StashUI.placeOrStash(p, item);
         }
         String name = item.getItemMeta() != null ? item.getItemMeta().getDisplayName() : item.getType().name();
-        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour " + name + " §c broke" + reason + "! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour " + name + " §cbroke" + reason + "! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));
     }
 
     /** Set a transient status message for a player, shown in the action bar alongside HP/mana.
      *  The message automatically expires after STATUS_DURATION_MS milliseconds. */
     public void setStatus(Player p, String text) {
-        statusMessages.put(p.getUniqueId(), new StatusMessage(text, System.currentTimeMillis() + STATUS_DURATION_MS));
+        StatusMessage cur = statusMessages.get(p.getUniqueId());
+        long now = System.currentTimeMillis();
+        if (cur != null && cur.text.equals(text) && now < cur.expiresAt) return;
+        statusMessages.put(p.getUniqueId(), new StatusMessage(text, now + STATUS_DURATION_MS));
     }
 
     /** Look up an Enemy by its entity UUID across all rooms. Used by GameListener.onProjectileHit
@@ -3683,14 +3760,13 @@ public final class DungeonInstance {
             // already been charged this durability penalty in onPlayerDeath, so skip them here
             // to avoid a double loss when the whole party falls.
             if (!deadPlayers.contains(p.getUniqueId())) {
-                damagePersistentGear(p);
+                damagePersistentGear(p, DEATH_DURABILITY_DIVISOR);
             }
             // Restore game mode, health, and hunger — players may be in SPECTATOR mode if they died
             p.setGameMode(org.bukkit.GameMode.SURVIVAL);
             p.setHealth(p.getMaxHealth());
             p.setFoodLevel(20);
-            p.setCustomName(null);
-            p.setCustomNameVisible(false);
+            removeHeadHp(p);
             teleportOut(p);
         }
         clearRoomEntities();
@@ -3698,6 +3774,8 @@ public final class DungeonInstance {
         tabs.clear();
         playerBoards.clear();
         deadPlayers.clear();
+        for (org.bukkit.entity.TextDisplay t : hpTags.values()) t.remove();
+        hpTags.clear();
         lastHeadHp.clear();
         returnLocs.clear();
         savedInventories.clear();
@@ -3708,6 +3786,8 @@ public final class DungeonInstance {
     private void clearRoomEntities() {
         for (List<Enemy> es : roomEnemies.values()) for (Enemy e : es) e.despawn();
         roomEnemies.clear();
+        for (org.bukkit.entity.Item heart : eliteHearts) if (heart.isValid()) heart.remove();
+        eliteHearts.clear();
         roomLocked.clear();
         spawnedRooms.clear();
         playerRoom.clear();

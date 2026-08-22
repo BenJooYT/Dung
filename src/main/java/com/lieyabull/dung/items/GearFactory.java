@@ -511,6 +511,33 @@ public final class GearFactory {
         return out;
     }
 
+    /** Rewrite the weapon stat lore lines and the trailing rarity line to match a new
+     *  rarity and freshly rolled stats (used when an item's rarity changes outside of
+     *  the proportional downgradeRarity path). */
+    public static void rewriteWeaponStatLore(ItemStack s, Rarity target, int dmg, int health) {
+        s.editMeta(meta -> {
+            if (!meta.hasLore()) return;
+            List<Component> next = new ArrayList<>();
+            for (Component c : meta.lore()) {
+                String text = LEGACY.serialize(c);
+                if (text.startsWith("§7Damage: §c")) {
+                    text = "§7Damage: §c" + dmg;
+                } else if (text.startsWith("§7Health: §a+")) {
+                    text = "§7Health: §a+" + health;
+                } else {
+                    for (Rarity r : Rarity.values()) {
+                        if (text.equals(r.legacy + r.name())) {
+                            text = target.legacy + target.name();
+                            break;
+                        }
+                    }
+                }
+                next.add(LEGACY.deserialize(text));
+            }
+            meta.lore(next);
+        });
+    }
+
     private static void scaleIntTag(org.bukkit.persistence.PersistentDataContainer pdc, String tag, double scale) {
         var key = org.bukkit.NamespacedKey.minecraft(tag);
         if (!pdc.has(key, org.bukkit.persistence.PersistentDataType.INTEGER)) return;

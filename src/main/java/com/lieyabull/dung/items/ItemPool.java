@@ -165,6 +165,7 @@ public final class ItemPool {
                     meta.setDisplayName(downgrade.legacy + stripped);
                 }
             });
+            GearFactory.rewriteWeaponStatLore(ds, downgrade, newDmg, newHealth);
             s = ds;
         }
         return s;

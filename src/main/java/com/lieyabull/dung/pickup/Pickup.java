@@ -25,10 +25,12 @@ public final class Pickup {
         }
     }
 
-    /** Apply and return true if consumed. */
+    /** Apply and return true if consumed. A heart at full HP is refused (stays on the ground
+     *  so it isn't wasted); coins/keys/bombs are uncapped counters and always consumed. */
     public static boolean apply(Material m, PlayerState st) {
         switch (typeOf(m)) {
             case HEART:
+                if (st.hearts >= st.maxHearts) return false;
                 st.heal(8.0); // meaningful against the 100-HP pool (was a negligible 1 HP)
                 return true;
             case COIN:

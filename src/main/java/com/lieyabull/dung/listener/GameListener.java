@@ -11,8 +11,10 @@ import com.lieyabull.dung.items.GearFactory;
 import com.lieyabull.dung.items.ItemTags;
 import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.ui.ChatUI;
+import com.lieyabull.dung.ui.StashUI;
 import com.lieyabull.dung.dungeon.Floor;
 import com.lieyabull.dung.dungeon.RoomGen;
+import com.lieyabull.dung.plot.PlotManager;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -41,11 +43,18 @@ import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
 /** Wires Paper events to the game. Routes events to the correct dungeon instance per player. */
 public final class GameListener implements Listener {
     /** Dung weapons deal only this fraction of their vanilla damage to hostile mobs outside a run. */
     private static final double OUTSIDE_DAMAGE_MULTIPLIER = 0.25;
     private final Dung plugin;
+    /** Death locations for players who died in the plots world, so respawn can target their nearest
+     *  owned plot. Cleared on respawn/quit. */
+    private final Map<UUID, Location> plotsDeathLocations = new HashMap<>();
 
     public GameListener(Dung plugin) {
         this.plugin = plugin;
@@ -77,7 +86,7 @@ public final class GameListener implements Listener {
                 p.teleport(new org.bukkit.Location(w, prof.lastX, prof.lastY, prof.lastZ, prof.lastYaw, prof.lastPitch));
             }
         }
-        ChatUI.startPrompt(p);
+        ChatUI.startPrompt(p, plugin.game().instanceOf(p) == null);
         // Migrate any persistent items in the player's inventory that lack UUIDs
         plugin.migratePersistentItemUuids();
     }
@@ -143,6 +152,11 @@ public final class GameListener implements Listener {
                     di.onPlayerDeath(p);
                 }
             });
+        } else if (p.getLocation().getWorld() != null
+                && p.getLocation().getWorld().getName().equals(PlotManager.PLOTS_WORLD_NAME)) {
+            // Death in the plots world: remember where so onRespawn can send them to their
+            // nearest owned plot instead of the world spawn.
+            plotsDeathLocations.put(p.getUniqueId(), p.getLocation());
         }
     }
 
@@ -165,6 +179,15 @@ public final class GameListener implements Listener {
             }
             p.setHealth(20);
             p.setWalkSpeed((float) 0.2);
+            return;
+        }
+        // Died in the plots world: respawn at their nearest owned plot instead of the world spawn.
+        Location death = plotsDeathLocations.remove(p.getUniqueId());
+        if (death != null) {
+            Location home = plugin.plotManager().nearestOwnedPlotHome(p.getUniqueId(), death);
+            if (home != null) {
+                e.setRespawnLocation(home);
+            }
         }
     }
 
@@ -197,11 +220,32 @@ public final class GameListener implements Listener {
             e.setCancelled(true);
             return;
         }
+        // Broken armor/shield cannot be equipped. A click that places a broken piece onto an armor
+        // slot is cancelled and the piece is routed to a free inventory slot (or the stash if the
+        // bag is full). A shift-click auto-equip from the main inventory is cancelled, leaving the
+        // piece where it already is (a free slot).
+        if (e.getClickedInventory() instanceof PlayerInventory && e.getSlot() >= 36 && e.getSlot() <= 39) {
+            ItemStack cursor = e.getCursor();
+            if (cursor != null && isBrokenEquippable(cursor)) {
+                e.setCancelled(true);
+                e.setCursor(null);
+                StashUI.placeOrStash(p, cursor);
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cThat armor is broken — repair it at §6/shop§7 before equipping."));
+                return;
+            }
+        }
+        if (e.isShiftClick() && e.getClickedInventory() instanceof PlayerInventory
+                && e.getSlot() < 36 && isBrokenEquippable(e.getCurrentItem())) {
+            e.setCancelled(true);
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cThat armor is broken — repair it at §6/shop§7 before equipping."));
+            return;
+        }
         // Shift-clicking a mana shield equips it into the slot-9 equip slot (only when no shield is
-        // currently equipped there).
+        // currently equipped there, and never while it is broken).
         if (e.isShiftClick() && e.getClickedInventory() instanceof PlayerInventory
                 && GearFactory.isShield(e.getCurrentItem())
-                && !GearFactory.isShield(inv.getItem(DungeonInstance.SHIELD_SLOT))) {
+                && !GearFactory.isShield(inv.getItem(DungeonInstance.SHIELD_SLOT))
+                && !GearFactory.isBroken(e.getCurrentItem())) {
             e.setCancelled(true);
             ItemStack shield = e.getCurrentItem().clone();
             inv.setItem(e.getSlot(), null);
@@ -252,6 +296,14 @@ public final class GameListener implements Listener {
                 || n.endsWith("_LEGGINGS") || n.endsWith("_BOOTS");
     }
 
+    /** True if the item is a broken persistent armor/shield piece that must never be equipped. */
+    private static boolean isBrokenEquippable(ItemStack s) {
+        if (s == null || s.getType() == Material.AIR) return false;
+        if (!GearFactory.isPersistent(s)) return false;
+        if (!GearFactory.isBroken(s)) return false;
+        return isArmorItem(s) || GearFactory.isShield(s);
+    }
+
     @EventHandler(priority = EventPriority.HIGH)
     public void onInventoryDrag(org.bukkit.event.inventory.InventoryDragEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
@@ -260,6 +312,14 @@ public final class GameListener implements Listener {
         if (DungeonInstance.isRunItem(e.getOldCursor()) || DungeonInstance.isRunItem(e.getCursor())
                 || e.getNewItems().values().stream().anyMatch(DungeonInstance::isRunItem)) {
             e.setCancelled(true);
+            return;
+        }
+        // A drag that would place a broken armor/shield piece into an armor slot (raw 36-39) must
+        // not equip it — cancel so the pieces stay in the main inventory.
+        if (e.getNewItems().entrySet().stream().anyMatch(en ->
+                en.getKey() >= 36 && en.getKey() <= 39 && isBrokenEquippable(en.getValue()))) {
+            e.setCancelled(true);
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cThat armor is broken — repair it at §6/shop§7 before equipping."));
             return;
         }
         // The offhand slot is disabled. If a drag targets it (raw slot 45), cancel the drag and route
@@ -310,6 +370,8 @@ public final class GameListener implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
         Player p = e.getPlayer();
+        plotsDeathLocations.remove(p.getUniqueId());
+        plugin.shopUI().onQuit(p);
         // Save the player's current location so onJoin can restore it (e.g. plots world).
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
         org.bukkit.Location loc = p.getLocation();
@@ -491,6 +553,17 @@ public final class GameListener implements Listener {
         // the offhand would attempt the ability a second time (after mana was spent / cooldown
         // started), producing a spurious "Not enough mana or on cooldown" message.
         if (e.getHand() != org.bukkit.inventory.EquipmentSlot.HAND) return;
+        // Broken armor/shield cannot be equipped by right-clicking. Cancel and route the piece
+        // into a free inventory slot (or the stash if the bag is full).
+        ItemStack handItem = p.getInventory().getItemInMainHand();
+        if (isBrokenEquippable(handItem)
+                && (e.getAction() == Action.RIGHT_CLICK_AIR || e.getAction() == Action.RIGHT_CLICK_BLOCK)) {
+            e.setCancelled(true);
+            p.getInventory().setItemInMainHand(null);
+            StashUI.placeOrStash(p, handItem);
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cThat armor is broken — repair it at §6/shop§7 before equipping."));
+            return;
+        }
         ItemStack held = p.getInventory().getItemInMainHand();
         boolean hasAbility = held != null && !held.getType().isAir() && held.getItemMeta() != null
                 && held.getItemMeta().getPersistentDataContainer()
@@ -622,6 +695,9 @@ public final class GameListener implements Listener {
                                     Location pt = src.clone().add(step.clone().multiply(t));
                                     p.getWorld().spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
                                 }
+                                // Burst of particles around the healed player
+                                p.getWorld().spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR,
+                                        dst, 20, 0.4, 0.5, 0.4, 0);
                                 e.setCancelled(true);
                                 return;
                             }
@@ -660,6 +736,16 @@ public final class GameListener implements Listener {
                 if (st != null && Pickup.apply(m, st)) {
                     it.remove();
                     ChatUI.notify(p, pickupMsg(m, st));
+                    if (Pickup.typeOf(m) == com.lieyabull.dung.pickup.Pickup.Type.HEART) {
+                        // Heart pickup feedback: same chime as the Soul Siphon heal + red burst.
+                        p.playSound(p.getLocation(), org.bukkit.Sound.ENTITY_WITCH_DRINK, 0.8f, 1.0f);
+                        p.getWorld().spawnParticle(org.bukkit.Particle.DUST,
+                                p.getLocation().add(0, 1.0, 0), 20, 0.4, 0.5, 0.4,
+                                new org.bukkit.Particle.DustOptions(org.bukkit.Color.RED, 1.3f));
+                    }
+                } else {
+                    // Pickup no-op (e.g. hearts already full): say why instead of silently ignoring.
+                    ChatUI.notify(p, "§7" + pickupName(m) + " is full — left on the ground.");
                 }
             }
         }
@@ -673,5 +759,15 @@ public final class GameListener implements Listener {
             case BOMB: return "§4+1 Bomb §7(" + st.bombs + ")";
         }
         return "";
+    }
+
+    /** Friendly name of a pickup material for the "already full" feedback. */
+    private String pickupName(Material m) {
+        return switch (Pickup.typeOf(m)) {
+            case HEART -> "§cHearts";
+            case COIN -> "§eCoins";
+            case KEY -> "§9Keys";
+            case BOMB -> "§4Bombs";
+        };
     }
 }

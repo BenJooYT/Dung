@@ -88,6 +88,7 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
 
         switch (args[0].toLowerCase()) {
             case "claim": {
+                if (blockIfInRun(p)) return true;
                 if (args.length >= 2) {
                     // /plot claim shards or /plot claim coins
                     String err = pm.claimPlot(p, args[1]);
@@ -137,6 +138,7 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             case "unclaim": {
+                if (blockIfInRun(p)) return true;
                 String err = pm.unclaimPlot(p);
                 if (err != null) {
                     p.sendMessage(err);
@@ -183,7 +185,7 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             default:
-                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Unknown subcommand. Use §f/plot claim§7, §f/plot home§7, §f/plot name§7, §f/plot warp§7, §f/plot settings§7, or §f/plot unclaim§7."));
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Unknown subcommand. Use §f/plot claim§7, §f/plot home§7, §f/plot name§7, §f/plot warp§7, §f/plot settings§7, §f/plot pvp|fire|public on|off§7, §f/plot trust|untrust <name>§7, §f/plot container|uncontainer <name>§7, §f/plot pickup|unpickup <name>§7, or §f/plot unclaim§7."));
                 return true;
         }
     }

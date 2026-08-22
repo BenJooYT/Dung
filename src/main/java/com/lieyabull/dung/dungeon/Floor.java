@@ -74,9 +74,13 @@ public final class Floor {
         public int secretWallDir = -1;
         // world location of the destructible wall center (set during RoomGen.build)
         public Location destructibleWallLoc;
-        // assigned room-template id + runtime template (template floor mode). null = procedural build.
-        public String templateId;
-        public com.lieyabull.dung.room.RoomTemplate template;
+        // assigned structure-library id + runtime (rotated) structure. null = procedural build.
+        public String structureId;
+        public com.lieyabull.dung.structure.StructureDefinition structure;
+        // WorldEdit clipboard to paste for this room (from the structure library).
+        public com.sk89q.worldedit.extent.clipboard.Clipboard clipboard;
+        // Clockwise rotation steps (0..3) applied to both the clipboard and the metadata.
+        public int rotationSteps;
 
         public RoomNode(int x, int z, RoomType type) {
             this.x = x;

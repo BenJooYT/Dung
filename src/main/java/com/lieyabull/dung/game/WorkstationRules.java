@@ -119,6 +119,35 @@ public final class WorkstationRules {
         return Math.max(1, rarityBase * 2 + stat / 10);
     }
 
+    /** Shard value of a concrete item stack: its stored rarity + primary stat through
+     *  {@link #salvageValue(Rarity, int)}. Single source used by commands, shop, workstations. */
+    public static int salvageValueOf(ItemStack s) {
+        if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return 1;
+        Rarity r;
+        try {
+            r = Rarity.valueOf(str(s.getItemMeta().getPersistentDataContainer(), ItemTags.RARITY));
+        } catch (IllegalArgumentException | NullPointerException e) {
+            r = Rarity.COMMON;
+        }
+        return salvageValue(r, primaryStat(s));
+    }
+
+    /**
+     * Bulk (/salvage all) eligibility: a bag piece of Dung armor that is neither favorited,
+     * persistent, nor starter gear. Held /salvage additionally allows persistent pieces.
+     */
+    public static boolean isBulkSalvageable(ItemStack s) {
+        if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return false;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        if (!"armor".equals(str(pdc, ItemTags.KIND))) return false;
+        if (pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.PERSISTENT),
+                org.bukkit.persistence.PersistentDataType.STRING)) return false;
+        if (pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.STARTER),
+                org.bukkit.persistence.PersistentDataType.STRING)) return false;
+        return !pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.FAVORITE),
+                org.bukkit.persistence.PersistentDataType.STRING);
+    }
+
     /**
      * The stat used to size a salvage reward for a given item kind: DEFENSE for armor, SHIELD_MAX for
      * shields, otherwise the higher of DAMAGE or MAGIC_DAMAGE for weapons.

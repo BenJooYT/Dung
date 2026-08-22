@@ -159,7 +159,7 @@ public final class PlayerState {
         int def = upgrades.getOrDefault("defense", 0);
         if (def > 0) defense += def * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.DEFENSE);
         int crit = upgrades.getOrDefault("crit", 0);
-        if (crit > 0) critChance += crit * 0.005;
+        if (crit > 0) critChance += crit * com.lieyabull.dung.meta.Upgrades.CRIT_DELTA_PCT / 100.0;
         int spd = upgrades.getOrDefault("speed", 0);
         if (spd > 0) speedMult += spd * 0.03;
         int manaUp = upgrades.getOrDefault("mana", 0);

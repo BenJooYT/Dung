@@ -2,7 +2,7 @@
 # Dungeon tuning
 floors: 8
 rooms-per-floor: 7
-# Custom room templates (created with /room editor)
+# Custom room structures (drop <id>.schem + <id>.yml into plugins/Dung/structures/; id = schematic name)
 custom-rooms: true
 # Combat
 base-player-damage: 3

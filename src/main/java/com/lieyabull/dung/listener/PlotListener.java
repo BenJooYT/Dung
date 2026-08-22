@@ -8,8 +8,14 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.Chest;
+import org.bukkit.block.data.Ageable;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.block.data.type.Leaves;
 import org.bukkit.entity.Player;
+import org.bukkit.Sound;
+import org.bukkit.SoundCategory;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.event.block.Action;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -33,6 +39,7 @@ import org.bukkit.event.world.StructureGrowEvent;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /** Enforces plot ownership: players may only modify the buildable area of their own plot. */
@@ -108,27 +115,62 @@ public final class PlotListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onInteract(PlayerInteractEvent e) {
         Block clicked = e.getClickedBlock();
-        if (clicked == null || !(clicked.getState() instanceof Chest)) return;
+        if (clicked == null || e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+
         PlotManager pm = plugin.plotManager();
         Location loc = clicked.getLocation();
         PlotManager.PlotCoord coord = pm.plotAt(loc);
         if (coord == null) return;
+
+        // Right-clicking a fully grown crop breaks it like a normal harvest (dropping all its
+        // natural drops on the ground) and immediately plants its seed back in its place.
+        if (CROPS.contains(clicked.getType()) && canModify(e.getPlayer(), loc)) {
+            harvest(e, clicked);
+            return;
+        }
+
+        // Owner, public plot, or someone granted container access may open containers.
+        if (!(clicked.getState() instanceof Chest)) return;
         PlotManager.PlotInfo info = pm.getInfo(coord);
         if (info == null) return;
         UUID uid = e.getPlayer().getUniqueId();
-        // Owner, public plot, or someone granted container access may open containers.
         if (info.owner.equals(uid) || info.isPublic || info.containerTrust.contains(uid)) return;
         e.setCancelled(true);
         e.getPlayer().sendMessage("§cThat chest belongs to someone else!");
     }
 
+    /** Crops that can be harvested by right-click: wheat, carrots, potatoes, beetroot. */
+    private static final Set<Material> CROPS = Set.of(
+            Material.WHEAT, Material.CARROTS, Material.POTATOES, Material.BEETROOTS);
+
+    /** Harvest a fully grown crop by breaking it exactly like a player would (natural drops fall
+     *  on the ground), then immediately plant its seed back so the block becomes a fresh age-0 crop. */
+    private void harvest(PlayerInteractEvent e, Block crop) {
+        BlockData data = crop.getBlockData();
+        if (!(data instanceof Ageable age) || age.getAge() != age.getMaximumAge()) return;
+
+        Player p = e.getPlayer();
+        p.swingMainHand();
+        Material cropMaterial = crop.getType();
+        crop.breakNaturally(e.getItem());
+        // Plant the seed back: the block is now air, so place a fresh age-0 crop in its place.
+        crop.setType(cropMaterial, false);
+        Ageable replanted = (Ageable) crop.getBlockData();
+        replanted.setAge(0);
+        crop.setBlockData(replanted, false);
+        e.setCancelled(true);
+    }
+
     /** Picking up dropped items on a plot is restricted to the owner and any player the owner
-     *  granted pickup access. Public plots allow anyone to pick up items. */
+     *  granted pickup access. Public plots allow anyone to pick up items, and public paths between
+     *  different-owner plots allow pickup for everyone too. */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPickup(PlayerPickupItemEvent e) {
         PlotManager pm = plugin.plotManager();
-        PlotManager.PlotCoord coord = pm.plotAt(e.getItem().getLocation());
+        Location loc = e.getItem().getLocation();
+        PlotManager.PlotCoord coord = pm.plotAt(loc);
         if (coord == null) return;
+        if (pm.isPublicPath(loc)) return; // paths between different owners are open to all
         PlotManager.PlotInfo info = pm.getInfo(coord);
         if (info == null) return;
         UUID uid = e.getPlayer().getUniqueId();
@@ -137,14 +179,17 @@ public final class PlotListener implements Listener {
     }
 
     /** PVP is off by default on plots. A plot with PVP disabled protects anyone standing on it
-     *  from player-vs-player damage. */
+     *  from player-vs-player damage. Public paths between different-owner plots are open to PvP
+     *  for everyone by default. */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPlayerDamage(EntityDamageByEntityEvent e) {
         if (!(e.getEntity() instanceof Player victim)) return;
         if (!(e.getDamager() instanceof Player)) return;
         PlotManager pm = plugin.plotManager();
-        PlotManager.PlotCoord coord = pm.plotAt(victim.getLocation());
+        Location victimLoc = victim.getLocation();
+        PlotManager.PlotCoord coord = pm.plotAt(victimLoc);
         if (coord == null) return;
+        if (pm.isPublicPath(victimLoc)) return; // PvP allowed on public paths
         PlotManager.PlotInfo info = pm.getInfo(coord);
         if (info != null && !info.pvp) {
             e.setCancelled(true);

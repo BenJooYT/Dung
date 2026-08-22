@@ -19,6 +19,9 @@ public final class Upgrades {
 
     public static final List<Track> ALL = List.of(DAMAGE, MAGIC_DAMAGE, HEARTS, DEFENSE, CRIT, SPEED, MANA);
 
+    /** Crit chance gained per level of CRIT, in percent. Applied in PlayerState (0.005/level). */
+    public static final double CRIT_DELTA_PCT = 0.5;
+
     private Upgrades() {}
 
     public static Track byId(String id) {

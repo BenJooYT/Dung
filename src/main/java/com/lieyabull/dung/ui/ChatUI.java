@@ -13,13 +13,20 @@ public final class ChatUI {
     private ChatUI() {}
 
     public static void startPrompt(Player p) {
+        startPrompt(p, true);
+    }
+
+    /** Full prompt, or one without the Start-a-Run button (for players already inside a run). */
+    public static void startPrompt(Player p, boolean includeStartRun) {
         p.sendMessage("");
         p.sendMessage(Component.text("═══════════════════════════", NamedTextColor.DARK_GRAY));
         p.sendMessage(Component.text("    Dung", NamedTextColor.RED, TextDecoration.BOLD)
                 .append(Component.text(" — the dungeon awaits.", NamedTextColor.GRAY)));
-        p.sendMessage(menuButton("[ Start a Run ]", NamedTextColor.GREEN, "/dung start", "Begin a fresh run"));
-        p.sendMessage(menuButton("[ Shop ]", NamedTextColor.GOLD, "/shop", "Open the shop GUI — spend persistent coins on gear"));
-        p.sendMessage(menuButton("[ Upgrades ]", NamedTextColor.AQUA, "/upgrades", "Open the upgrades GUI — spend shards on permanent stat upgrades"));
+        if (includeStartRun) {
+            p.sendMessage(menuButton("[ Start a Run ]", NamedTextColor.GREEN, "/dung start", "Begin a fresh run"));
+        }
+        p.sendMessage(menuButton("[ Shop ]", NamedTextColor.GOLD, "/shop", "Open the shop GUI — spend persistent coins on gear\n§cUnavailable during a run."));
+        p.sendMessage(menuButton("[ Upgrades ]", NamedTextColor.AQUA, "/upgrades", "Open the upgrades GUI — spend shards on permanent stat upgrades\n§cUnavailable during a run."));
         p.sendMessage(menuButton("[ My Stats ]", NamedTextColor.YELLOW, "/dung stats", "View your meta-progression"));
         p.sendMessage(menuButton("[ Help ]", NamedTextColor.GRAY, "/dung help", "List commands"));
         p.sendMessage(Component.text("═══════════════════════════", NamedTextColor.DARK_GRAY));
@@ -52,7 +59,7 @@ public final class ChatUI {
 
     /** Commands the plugin mentions in chat that should be clickable (command + optional argument word). */
     private static final java.util.regex.Pattern COMMAND_PATTERN = java.util.regex.Pattern.compile(
-            "/(?:shop(?:\\s+weapon)?|\\bupgrades|\\bsalvage(?:\\s+favorite)?|\\bplots"
+            "/(?:shop(?:\\s+weapon)?|\\bupgrades|\\bstash|\\bsalvage(?:\\s+favorite)?|\\bplots"
             + "|\\bplot(?:\\s+(?:claim|home|name|warp|unclaim))?"
             + "|\\broom(?:\\s+[a-z]+)?"
             + "|\\bdung(?:\\s+(?:start|leave|descend|stats|help|give|create|invite|accept|decline|kick|disband|info|shieldswitch|favorite))?"
