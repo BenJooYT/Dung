@@ -121,12 +121,15 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                         p.sendMessage("§cOnly the party leader can start a run.");
                         return true;
                     }
-                    gm.startRun(party, System.nanoTime());
+                    if (!gm.startRun(party, System.nanoTime())) return true; // reason already sent
                     party.broadcast("§aRun started! Clear rooms, gear up, defeat the Warden.");
                 } else {
                     // Solo: create a single-player party
                     party = gm.partyManager().createParty(p);
-                    gm.startRun(party, System.nanoTime());
+                    if (!gm.startRun(party, System.nanoTime())) {
+                        gm.partyManager().cleanupAfterLeave(p); // don't leave an empty solo party behind
+                        return true; // reason already sent
+                    }
                     p.sendMessage("§aRun started! Clear rooms, gear up, defeat the Warden.");
                 }
                 return true;

@@ -39,6 +39,9 @@ commands:
   leaderboard:
     description: View leaderboards for various categories
     usage: /leaderboard [category] [page]
+  dummy:
+    description: Manage clickable dummy NPCs
+    usage: /dummy
 permissions:
   dung.admin:
     description: Admin debug commands

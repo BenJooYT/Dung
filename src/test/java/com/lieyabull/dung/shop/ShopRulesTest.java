@@ -11,16 +11,16 @@ public class ShopRulesTest {
 
     @Test
     void runShopCostsUseRunCoins() {
-        assertEquals(8, ShopRules.costFor(ShopType.RUN, Category.WEAPON));
-        assertEquals(6, ShopRules.costFor(ShopType.RUN, Category.ARMOR));
-        assertEquals(6, ShopRules.costFor(ShopType.RUN, Category.MANA_SHIELD));
+        assertEquals(24, ShopRules.costFor(ShopType.RUN, Category.WEAPON));
+        assertEquals(18, ShopRules.costFor(ShopType.RUN, Category.ARMOR));
+        assertEquals(18, ShopRules.costFor(ShopType.RUN, Category.MANA_SHIELD));
     }
 
     @Test
     void persistentShopCostsUsePersistentCoins() {
-        assertEquals(20, ShopRules.costFor(ShopType.PERSISTENT, Category.WEAPON));
-        assertEquals(15, ShopRules.costFor(ShopType.PERSISTENT, Category.ARMOR));
-        assertEquals(15, ShopRules.costFor(ShopType.PERSISTENT, Category.MANA_SHIELD));
+        assertEquals(60, ShopRules.costFor(ShopType.PERSISTENT, Category.WEAPON));
+        assertEquals(45, ShopRules.costFor(ShopType.PERSISTENT, Category.ARMOR));
+        assertEquals(45, ShopRules.costFor(ShopType.PERSISTENT, Category.MANA_SHIELD));
     }
 
     @Test

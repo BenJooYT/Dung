@@ -66,10 +66,19 @@ public final class ShopUI implements Listener {
     private static final String ACTION_MENU_WEAPON = "menu_weapon";
     private static final String ACTION_MENU_ARMOR = "menu_armor";
     private static final String ACTION_MENU_SHIELD = "menu_shield";
+    private static final String ACTION_MENU_SUPPLIES = "menu_supplies";
     private static final String ACTION_ROLL = "roll";
     private static final String ACTION_KEEP = "keep";
     private static final String ACTION_SALVAGE = "salvage";
     private static final String ACTION_BACK = "back";
+
+    // Supplies GUI (in-run shop only): direct purchases for run consumables, no gacha.
+    private static final String ACTION_BUY_KEY = "buy_key";
+    private static final String ACTION_BUY_BOMB = "buy_bomb";
+    private static final String ACTION_BUY_HEART = "buy_heart";
+    private static final String ACTION_BUY_MANA = "buy_mana";
+    private static final String ACTION_BUY_DMG_TONIC = "buy_dmg_tonic";
+    private static final String ACTION_BUY_DEF_TONIC = "buy_def_tonic";
 
     // Persistent shop utility buttons (kept from the legacy persistent shop — not categories).
     private static final String ACTION_REPAIR = "repair";
@@ -84,9 +93,26 @@ public final class ShopUI implements Listener {
     private static final int MENU_WEAPON_SLOT = 10;
     private static final int MENU_ARMOR_SLOT = 12;
     private static final int MENU_SHIELD_SLOT = 14;
+    private static final int MENU_SUPPLIES_SLOT = 16; // run shop only
     private static final int MENU_REPAIR_SLOT = 20;
     private static final int MENU_UPGRADES_SLOT = 22;
     private static final int MENU_REPAIR_ALL_SLOT = 24;
+
+    // Supplies GUI (27 slots) — run consumables bought directly with run coins.
+    private static final int SUPPLY_SIZE = 27;
+    private static final int SUPPLY_KEY_SLOT = 10;
+    private static final int SUPPLY_BOMB_SLOT = 12;
+    private static final int SUPPLY_HEART_SLOT = 14;
+    private static final int SUPPLY_MANA_SLOT = 16;
+    private static final int SUPPLY_DMG_TONIC_SLOT = 20;
+    private static final int SUPPLY_DEF_TONIC_SLOT = 24;
+    private static final int SUPPLY_KEY_COST = 12;
+    private static final int SUPPLY_BOMB_COST = 12;
+    private static final int SUPPLY_HEART_COST = 10;
+    private static final int SUPPLY_MANA_COST = 8;
+    private static final int SUPPLY_TONIC_COST = 25;
+    /** Stat boost granted by each tonic for the rest of the run. */
+    private static final int TONIC_STAT_AMOUNT = 2;
 
     // Roll GUI (54 slots). Kept intentionally sparse: the two roll windows, ROLL and KEEP/SALVAGE —
     // no tabs, rails, info panes, or redundant status/preview items. Balance lives in the title.
@@ -111,6 +137,7 @@ public final class ShopUI implements Listener {
     private final Map<UUID, ShopSession> sessions = new ConcurrentHashMap<>();
     private final Map<Inventory, UUID> openGuis = new ConcurrentHashMap<>();      // roll GUIs
     private final Map<Inventory, UUID> openMenuGuis = new ConcurrentHashMap<>();  // main menus
+    private final Map<Inventory, UUID> openSupplyGuis = new ConcurrentHashMap<>(); // supplies GUIs
     private final Map<Inventory, UUID> openUpgradeGuis = new ConcurrentHashMap<>();
 
     public ShopUI(Dung plugin) {
@@ -189,6 +216,7 @@ public final class ShopUI implements Listener {
 
     /** Recreate the open roll inventory with a fresh title/balance, preserving the session state. */
     private void refresh(Player p, ShopSession s) {
+        if (s.transaction.state() == ShopTransaction.State.IDLE) s.rollNeutralIcon = null;
         Category cat = s.transaction.category();
         if (cat == null || s.transaction.state() == ShopTransaction.State.IDLE) {
             reopen(() -> open(p, s));
@@ -243,7 +271,82 @@ public final class ShopUI implements Listener {
             inv.setItem(MENU_UPGRADES_SLOT, makeButton(Material.NETHER_STAR, "§fPermanent Upgrades",
                     List.of("§7Spend shards on permanent stat boosts"), ACTION_UPGRADES));
             inv.setItem(MENU_REPAIR_ALL_SLOT, makeRepairAllButton(p));
+        } else {
+            inv.setItem(MENU_SUPPLIES_SLOT, makeButton(Material.CHEST, "§fSupplies",
+                    List.of("§7Keys, bombs, heals and run tonics.",
+                            "§7Bought directly with §erun coins§7."),
+                    ACTION_MENU_SUPPLIES));
         }
+    }
+
+    /** Open the in-run supplies GUI (direct purchases with run coins). */
+    private void openSupplies(Player p, ShopSession s) {
+        Inventory inv = Bukkit.createInventory(null, SUPPLY_SIZE,
+                LEGACY.deserialize(title(p, s) + "  §8— §fSupplies"));
+        openSupplyGuis.put(inv, s.player);
+        renderSupplies(p, s, inv);
+        p.openInventory(inv);
+    }
+
+    private void renderSupplies(Player p, ShopSession s, Inventory inv) {
+        DungeonInstance di = s.di != null ? s.di : plugin.game().instanceOf(p);
+        PlayerState st = di == null ? null : di.playerStateOf(p);
+        int coins = st == null ? 0 : st.coins;
+        inv.clear();
+        fillEmpty(inv);
+        inv.setItem(BACK_SLOT, makeButton(Material.ARROW, "§7← Back to Shop",
+                List.of("§7Return to the shop menu"), ACTION_BACK));
+        inv.setItem(SUPPLY_KEY_SLOT, supplyButton(Material.TRIPWIRE_HOOK, "§9§lKey", SUPPLY_KEY_COST, coins,
+                List.of("§7Opens a locked door.", st == null ? "" : "§9You have: §f" + st.keys), ACTION_BUY_KEY));
+        inv.setItem(SUPPLY_BOMB_SLOT, supplyButton(Material.TNT, "§4§lBomb", SUPPLY_BOMB_COST, coins,
+                List.of("§7Blows up cracked walls hiding secret rooms.",
+                        st == null ? "" : "§4You have: §f" + st.bombs), ACTION_BUY_BOMB));
+        inv.setItem(SUPPLY_HEART_SLOT, supplyButton(Material.RED_DYE, "§c§lRed Heart", SUPPLY_HEART_COST, coins,
+                List.of("§7Restores §c8 HP §7instantly."), ACTION_BUY_HEART));
+        inv.setItem(SUPPLY_MANA_SLOT, supplyButton(Material.LAPIS_LAZULI, "§b§lMana Potion", SUPPLY_MANA_COST, coins,
+                List.of("§7Refills your mana to max."), ACTION_BUY_MANA));
+        inv.setItem(SUPPLY_DMG_TONIC_SLOT, supplyButton(Material.BLAZE_POWDER, "§c§lDamage Tonic", SUPPLY_TONIC_COST, coins,
+                List.of("§7+" + TONIC_STAT_AMOUNT + " melee damage §7for the rest of the run."), ACTION_BUY_DMG_TONIC));
+        inv.setItem(SUPPLY_DEF_TONIC_SLOT, supplyButton(Material.IRON_INGOT, "§a§lDefense Tonic", SUPPLY_TONIC_COST, coins,
+                List.of("§7+" + TONIC_STAT_AMOUNT + " defense §7for the rest of the run."), ACTION_BUY_DEF_TONIC));
+    }
+
+    /** A direct-purchase button; grayed out when the balance can't cover it. */
+    private ItemStack supplyButton(Material mat, String name, int cost, int balance, List<String> extraLore, String action) {
+        List<String> lore = new ArrayList<>(extraLore);
+        if (balance >= cost) {
+            lore.add("§e" + cost + " run coins §7— click to buy");
+            return makeButton(mat, name, lore, action);
+        }
+        lore.add("§8" + cost + " run coins");
+        lore.add("§cCan't afford — need " + (cost - balance) + " more.");
+        return makeButton(Material.GRAY_DYE, "§8" + name.replaceFirst("§.", ""), lore, action);
+    }
+
+    /** Handle a supplies purchase (currency checked + charged here). */
+    private void handleSupplyPurchase(Player p, ShopSession s, String action) {
+        DungeonInstance di = s.di != null ? s.di : plugin.game().instanceOf(p);
+        PlayerState st = di == null ? null : di.playerStateOf(p);
+        if (st == null) { p.closeInventory(); return; }
+
+        int cost; Material icon; String label; Runnable effect;
+        switch (action) {
+            case ACTION_BUY_KEY -> { cost = SUPPLY_KEY_COST; icon = Material.TRIPWIRE_HOOK; label = "Key"; effect = () -> st.keys++; }
+            case ACTION_BUY_BOMB -> { cost = SUPPLY_BOMB_COST; icon = Material.TNT; label = "Bomb"; effect = () -> st.bombs++; }
+            case ACTION_BUY_HEART -> { cost = SUPPLY_HEART_COST; icon = Material.RED_DYE; label = "Red Heart"; effect = () -> st.heal(8); }
+            case ACTION_BUY_MANA -> { cost = SUPPLY_MANA_COST; icon = Material.LAPIS_LAZULI; label = "Mana Potion"; effect = () -> st.mana = st.maxMana; }
+            case ACTION_BUY_DMG_TONIC -> { cost = SUPPLY_TONIC_COST; icon = Material.BLAZE_POWDER; label = "Damage Tonic"; effect = () -> st.tonicDamage += TONIC_STAT_AMOUNT; }
+            case ACTION_BUY_DEF_TONIC -> { cost = SUPPLY_TONIC_COST; icon = Material.IRON_INGOT; label = "Defense Tonic"; effect = () -> st.tonicDefense += TONIC_STAT_AMOUNT; }
+            default -> { return; }
+        }
+        if (st.coins < cost) {
+            p.sendMessage("§cYou need §e" + cost + " coins§c for a " + label + ".");
+            return;
+        }
+        st.coins -= cost;
+        effect.run();
+        // Refresh the whole supplies view so balances/counts/affordances update.
+        reopen(() -> openSupplies(p, s));
     }
 
     private void renderIdle(Player p, ShopSession s) {
@@ -343,7 +446,10 @@ public final class ShopUI implements Listener {
         // decoys stay trimless so the rarity isn't leaked before it lands.
         int floor = s.type == ShopType.RUN ? (s.di == null ? 0 : s.di.run().floorIndex) : 1;
         ItemStack item = generateItem(p, cat, floor, s.type);
-        GearFactory.applyRarityTrim(item);
+        // Keep a TRIMLESS neutral copy for the animations: the item window lands on it while the
+        // rarity is still rolling, so the trimmed final item must not be shown until RESULT.
+        s.rollNeutralIcon = neutralIcon(item);
+        GearFactory.finalizeRarityLook(item);
         Rarity rarity = GearFactory.getRarity(item);
         int salvage = ShopRules.salvageValue(rarity, WorkstationRules.primaryStat(item));
         ServerSideRollResult result = new ServerSideRollResult(item, rarity, cat, salvage);
@@ -407,7 +513,8 @@ public final class ShopUI implements Listener {
         int floor = s.type == ShopType.RUN ? (s.di == null ? 0 : s.di.run().floorIndex) : 1;
         List<ItemStack> itemDecoys = new ArrayList<>();
         for (int i = 0; i < 8; i++) itemDecoys.add(generateIcon(cat, floor));
-        ItemStack resultIcon = neutralIcon(s.transaction.pending().item);
+        ItemStack resultIcon = s.rollNeutralIcon != null ? s.rollNeutralIcon
+                : neutralIcon(s.transaction.pending().item);
         s.itemFrames = RollAnimationMath.frames(
                 RollAnimationMath.buildStrip(itemDecoys, resultIcon, ITEM_STEPS));
         Rarity result = s.transaction.pending().rarity;
@@ -430,8 +537,10 @@ public final class ShopUI implements Listener {
     }
 
     private void startRarityAnimation(Player p, ShopSession s) {
-        // Keep the finished item visible in the item row while the rarity rolls beneath it.
-        ItemStack item = s.transaction.pending().item.clone();
+        // Keep the finished item visible in the item row while the rarity rolls beneath it —
+        // as its TRIMLESS neutral icon, since the trim would leak the still-rolling rarity.
+        ItemStack item = s.rollNeutralIcon != null ? s.rollNeutralIcon.clone()
+                : neutralIcon(s.transaction.pending().item);
         for (int i = 0; i < WINDOW_ITEM_SLOTS.length; i++) {
             s.inv.setItem(WINDOW_ITEM_SLOTS[i], i == WINDOW_CENTER ? item : darkPane());
         }
@@ -655,10 +764,25 @@ public final class ShopUI implements Listener {
                 case ACTION_MENU_WEAPON -> reopen(() -> openRoll(p, ms, Category.WEAPON));
                 case ACTION_MENU_ARMOR -> reopen(() -> openRoll(p, ms, Category.ARMOR));
                 case ACTION_MENU_SHIELD -> reopen(() -> openRoll(p, ms, Category.MANA_SHIELD));
+                case ACTION_MENU_SUPPLIES -> reopen(() -> openSupplies(p, ms));
                 case ACTION_REPAIR -> repairHeld(p, ms);
                 case ACTION_REPAIR_ALL -> repairAll(p, ms);
                 case ACTION_REPAIR_BROKEN -> repairBroken(p, ms);
                 case ACTION_UPGRADES -> reopen(() -> openUpgrades(p));
+            }
+            return;
+        }
+        // Supplies GUI (in-run shop): direct purchases.
+        UUID supplyOwner = openSupplyGuis.get(e.getInventory());
+        if (supplyOwner != null) {
+            e.setCancelled(true);
+            ShopSession ss = sessions.get(supplyOwner);
+            if (ss == null) return;
+            String supplyAction = actionOf(e.getCurrentItem());
+            if (supplyAction == null || supplyAction.isEmpty()) return;
+            switch (supplyAction) {
+                case ACTION_BACK -> reopen(() -> open(p, ss));
+                default -> handleSupplyPurchase(p, ss, supplyAction);
             }
             return;
         }
@@ -695,6 +819,7 @@ public final class ShopUI implements Listener {
     public void onDrag(InventoryDragEvent e) {
         if (!(e.getWhoClicked() instanceof Player)) return;
         if (openGuis.containsKey(e.getInventory()) || openMenuGuis.containsKey(e.getInventory())
+                || openSupplyGuis.containsKey(e.getInventory())
                 || openUpgradeGuis.containsKey(e.getInventory())) {
             e.setCancelled(true);
         }
@@ -704,6 +829,7 @@ public final class ShopUI implements Listener {
     public void onClose(InventoryCloseEvent e) {
         openGuis.remove(e.getInventory());
         openMenuGuis.remove(e.getInventory());
+        openSupplyGuis.remove(e.getInventory());
         openUpgradeGuis.remove(e.getInventory());
         // The session is kept in memory so a pending result survives the GUI closing.
     }
@@ -970,6 +1096,8 @@ public final class ShopUI implements Listener {
         // visible until the player chooses KEEP or SALVAGE.
         List<List<ItemStack>> itemFrames;
         List<List<ItemStack>> rarityFrames;
+        /** Trimless neutral copy of the rolled item, safe to show while the rarity is still rolling. */
+        ItemStack rollNeutralIcon;
 
         ShopSession(UUID player, ShopType type) {
             this.player = player;

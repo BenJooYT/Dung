@@ -32,10 +32,13 @@ public final class ChatUI {
         p.sendMessage(Component.text("═══════════════════════════", NamedTextColor.DARK_GRAY));
     }
 
-    /** A colored, bold, clickable menu button with hover help. */
+    /** A colored, bold, clickable menu button with hover help. The hover text may carry legacy
+     *  § codes — parse it through the legacy serializer instead of Component.text(), which would
+     *  embed raw codes and trigger Paper's LegacyFormattingDetected warning. */
     private static Component menuButton(String label, NamedTextColor color, String command, String hover) {
         return Component.text(label, color, TextDecoration.BOLD)
-                .hoverEvent(HoverEvent.showText(Component.text(hover, NamedTextColor.GRAY)))
+                .hoverEvent(HoverEvent.showText(LegacyComponentSerializer.legacySection()
+                        .deserialize(hover).colorIfAbsent(NamedTextColor.GRAY)))
                 .clickEvent(ClickEvent.runCommand(command));
     }
 

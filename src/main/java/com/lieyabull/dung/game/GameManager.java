@@ -57,25 +57,34 @@ public final class GameManager {
     }
 
     /** Start a new dungeon run for a party. Each instance is offset ~1000 blocks from the
-     *  previous one so multiple parties can run parallel dungeons without overlapping. */
-    public void startRun(Party party, long seed) {
-        // Check no party member is already in a run
+     *  previous one so multiple parties can run parallel dungeons without overlapping.
+     *  Returns false (and starts nothing) if any member is genuinely still in an ACTIVE run. */
+    public boolean startRun(Party party, long seed) {
+        // Check no party member is already in an ACTIVE run. Stale mappings from an already-ended
+        // instance (e.g. a member who died and left the party before endRun's cleanup ran) are
+        // purged here instead of blocking every future start for that player.
         for (UUID uid : party.members()) {
-            if (playerInstance.containsKey(uid)) {
+            DungeonInstance existing = playerInstance.get(uid);
+            if (existing == null) continue;
+            if (instances.containsKey(existing.instanceId()) && existing.isRunning()) {
                 Player p = Bukkit.getPlayer(uid);
                 if (p != null) p.sendMessage("§cYou're already in a run.");
-                return;
+                return false;
             }
+            playerInstance.remove(uid);
         }
-        // Compute offset: each instance gets its own 1000-block region
-        int offsetX = instances.size() * 1000;
-        int offsetZ = 0;
-        DungeonInstance di = new DungeonInstance(plugin, party, offsetX, offsetZ);
+        // Each run gets its own dedicated void world, created here and deleted from disk when
+        // the run ends (DungeonInstance.endRun). Offsets stay 0 — the private world needs no
+        // region math to keep parallel parties apart.
+        String runId = "r" + System.nanoTime();
+        org.bukkit.World runWorld = plugin.worldManager().createRunWorld(runId);
+        DungeonInstance di = new DungeonInstance(plugin, party, 0, 0, runWorld);
         instances.put(di.instanceId(), di);
         for (UUID uid : party.members()) {
             playerInstance.put(uid, di);
         }
         di.startRun(seed);
+        return true;
     }
 
     /** End a player's participation in a dungeon run (/dung leave). Removes just that player from

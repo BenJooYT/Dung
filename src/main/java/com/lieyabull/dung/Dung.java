@@ -1,5 +1,6 @@
 package com.lieyabull.dung;
 
+import com.lieyabull.dung.command.DummyCommand;
 import com.lieyabull.dung.command.DungCommand;
 import com.lieyabull.dung.command.PlotCommand;
 import com.lieyabull.dung.game.GameManager;
@@ -9,6 +10,7 @@ import com.lieyabull.dung.listener.PlotListener;
 import com.lieyabull.dung.plot.PlotManager;
 import com.lieyabull.dung.items.GearFactory;
 import com.lieyabull.dung.compost.CompostManager;
+import com.lieyabull.dung.dummy.DummyManager;
 import com.lieyabull.dung.listener.CompostListener;
 import com.lieyabull.dung.structure.StructureManager;
 import com.lieyabull.dung.ui.ShopUI;
@@ -32,7 +34,9 @@ public final class Dung extends JavaPlugin {
     private PlotManager plotManager;
     private StructureManager structureManager;
     private CompostManager compost;
+    private DummyManager dummyManager;
     private World world;
+    private com.lieyabull.dung.world.WorldManager worldManager;
 
     public static Dung instance() {
         return instance;
@@ -51,6 +55,9 @@ public final class Dung extends JavaPlugin {
         plotManager = new PlotManager(this);
         structureManager = new StructureManager(this);
         compost = new CompostManager(this);
+        dummyManager = new DummyManager(this);
+        Bukkit.getPluginManager().registerEvents(dummyManager, this);
+        Bukkit.getPluginManager().registerEvents(new com.lieyabull.dung.listener.LobbyListener(this), this);
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
         Bukkit.getPluginManager().registerEvents(new PlotListener(this), this);
         Bukkit.getPluginManager().registerEvents(new CompostListener(this), this);
@@ -78,6 +85,11 @@ public final class Dung extends JavaPlugin {
         getCommand("plots").setTabCompleter(plotCmd);
         getCommand("plot").setExecutor(plotCmd);
         getCommand("plot").setTabCompleter(plotCmd);
+        DummyCommand dummyCmd = new DummyCommand(this);
+        getCommand("dummy").setExecutor(dummyCmd);
+        getCommand("dummy").setTabCompleter(dummyCmd);
+        // Dummies need loaded worlds to respawn — load + spawn 1 tick after enable.
+        Bukkit.getScheduler().runTask(this, () -> dummyManager.loadAll());
         // Migrate existing persistent items to have UUIDs (for pre-UUID items)
         migratePersistentItemUuids();
         getLogger().info("Dung enabled. World resolved lazily.");
@@ -90,6 +102,7 @@ public final class Dung extends JavaPlugin {
         if (stashUI != null) stashUI.save();
         if (plotManager != null) plotManager.save();
         if (compost != null) compost.save();
+        if (dummyManager != null) dummyManager.shutdown();
         instance = null;
     }
 
@@ -138,6 +151,15 @@ public final class Dung extends JavaPlugin {
 
     public CompostManager compost() {
         return compost;
+    }
+
+    public DummyManager dummyManager() {
+        return dummyManager;
+    }
+
+    public com.lieyabull.dung.world.WorldManager worldManager() {
+        if (worldManager == null) worldManager = new com.lieyabull.dung.world.WorldManager(this);
+        return worldManager;
     }
 
     /** Scan all online players' inventories and assign UUIDs to persistent items

@@ -72,6 +72,22 @@ public final class GameListener implements Listener {
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
         plugin.meta().setName(p.getUniqueId(), p.getName());
+        // First join as an operator/admin: tell them the lobby is theirs to decorate
+        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+        if ((p.isOp() || p.hasPermission("dung.admin")) && !prof.lobbyEditNotified) {
+            prof.lobbyEditNotified = true;
+            plugin.meta().save();
+            p.sendMessage("");
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(
+                    "§6§lYou're an admin! §7The §flobby world §7is editable by operators and players"
+                            + " with the §bdung.admin §7permission — build it up however you like."));
+        }
+        // Send every joining player to the LOBBY spawn (deferred 1 tick so join completes first) —
+        // they must never land back inside a run world, which is deleted when its run ends.
+        org.bukkit.Location lobbySpawn = plugin.worldManager().lobbySpawn().clone();
+        org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
+            if (p.isOnline()) p.teleport(lobbySpawn);
+        });
         if (!p.hasPlayedBefore()) {
             p.teleport(p.getWorld().getSpawnLocation());
             ChatUI.startPrompt(p);
@@ -79,7 +95,6 @@ public final class GameListener implements Listener {
         }
         // Restore the player's last known location (e.g. plots world) instead of always
         // sending them to the main world spawn. The location is saved on quit.
-        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
         if (prof.lastWorld != null) {
             org.bukkit.World w = resolveWorld(prof.lastWorld);
             if (w != null) {
@@ -711,6 +726,11 @@ public final class GameListener implements Listener {
             }
         }
         if (e.getRightClicked() instanceof ItemFrame frame) {
+            // Dead players are spectators during a run — they can look, but never claim loot.
+            if (p.getGameMode() == org.bukkit.GameMode.SPECTATOR) {
+                e.setCancelled(true);
+                return;
+            }
             Location frameLoc = frame.getLocation();
             Location slabLoc = new Location(frameLoc.getWorld(), frameLoc.getBlockX(), frameLoc.getBlockY() - 1, frameLoc.getBlockZ());
             if (di.claimPedestal(p, slabLoc)) {
@@ -743,12 +763,25 @@ public final class GameListener implements Listener {
                                 p.getLocation().add(0, 1.0, 0), 20, 0.4, 0.5, 0.4,
                                 new org.bukkit.Particle.DustOptions(org.bukkit.Color.RED, 1.3f));
                     }
-                } else {
+                } else if (canWarnFull(p)) {
                     // Pickup no-op (e.g. hearts already full): say why instead of silently ignoring.
+                    // Throttled — the pickup event re-fires every tick while standing on the item.
                     ChatUI.notify(p, "§7" + pickupName(m) + " is full — left on the ground.");
                 }
             }
         }
+    }
+
+    /** Throttle for the "X is full" pickup warning (one message per player per 3 seconds). */
+    private final java.util.Map<java.util.UUID, Long> lastFullPickupWarn = new java.util.HashMap<>();
+    private static final long FULL_PICKUP_WARN_COOLDOWN_MS = 3000;
+
+    private boolean canWarnFull(Player p) {
+        long now = System.currentTimeMillis();
+        Long last = lastFullPickupWarn.get(p.getUniqueId());
+        if (last != null && now - last < FULL_PICKUP_WARN_COOLDOWN_MS) return false;
+        lastFullPickupWarn.put(p.getUniqueId(), now);
+        return true;
     }
 
     private String pickupMsg(Material m, PlayerState st) {

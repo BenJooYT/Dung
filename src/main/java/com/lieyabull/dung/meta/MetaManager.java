@@ -58,6 +58,7 @@ public final class MetaManager {
                 data.set(key + ".bestsFloor", prof.bestFloor);
                 data.set(key + ".shards", prof.shards);
                 data.set(key + ".tutorial", prof.hasSeenTutorial);
+                data.set(key + ".lobbyEditNotified", prof.lobbyEditNotified);
                 if (prof.lastWorld != null) {
                     data.set(key + ".lastWorld", prof.lastWorld);
                     data.set(key + ".lastX", prof.lastX);
@@ -99,6 +100,7 @@ public final class MetaManager {
             p.bestFloor = data.getInt(key + ".bestsFloor", 0);
             p.shards = data.getInt(key + ".shards", 0);
             p.hasSeenTutorial = data.getBoolean(key + ".tutorial", false);
+            p.lobbyEditNotified = data.getBoolean(key + ".lobbyEditNotified", false);
             if (data.contains(key + ".lastWorld")) {
                 p.lastWorld = data.getString(key + ".lastWorld");
                 p.lastX = data.getDouble(key + ".lastX", 0);
@@ -154,6 +156,8 @@ public final class MetaManager {
         public int shards;
         public final Map<String, Integer> upgrades = new LinkedHashMap<>();
         public boolean hasSeenTutorial;
+        /** Ops/admins are told once that the lobby is editable by them. */
+        public boolean lobbyEditNotified;
         public int deaths;
         public int clears;
         public String classId = "warrior";

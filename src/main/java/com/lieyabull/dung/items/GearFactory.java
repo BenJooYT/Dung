@@ -509,7 +509,7 @@ public final class GearFactory {
         // Re-cap stored health (Life Drain) to the new rarity's cap, and re-trim armor so the
         // trim matches the new rarity instead of keeping the old tier's material/pattern.
         if (getStoredHealthMax(out) > 0) setStoredHealth(out, getStoredHealth(out));
-        applyRarityTrim(out);
+        finalizeRarityLook(out);
         return out;
     }
 
@@ -822,10 +822,10 @@ public final class GearFactory {
     public static ItemStack[] starter() {
         return new ItemStack[]{
                 markStarter(weapon("frayed_blade", "Frayed Blade", Material.IRON_SWORD, Rarity.COMMON, 5, 0, "Rush", 15)),
-                markStarter(applyRarityTrim(armor("cloth_0", "Cloth", Material.LEATHER_HELMET, Rarity.COMMON, 1, 0))),
-                markStarter(applyRarityTrim(armor("cloth_1", "Cloth", Material.LEATHER_CHESTPLATE, Rarity.COMMON, 1, 0))),
-                markStarter(applyRarityTrim(armor("cloth_2", "Cloth", Material.LEATHER_LEGGINGS, Rarity.COMMON, 1, 0))),
-                markStarter(applyRarityTrim(armor("cloth_3", "Cloth", Material.LEATHER_BOOTS, Rarity.COMMON, 1, 0))),
+                markStarter(finalizeRarityLook(armor("cloth_0", "Cloth", Material.LEATHER_HELMET, Rarity.COMMON, 1, 0))),
+                markStarter(finalizeRarityLook(armor("cloth_1", "Cloth", Material.LEATHER_CHESTPLATE, Rarity.COMMON, 1, 0))),
+                markStarter(finalizeRarityLook(armor("cloth_2", "Cloth", Material.LEATHER_LEGGINGS, Rarity.COMMON, 1, 0))),
+                markStarter(finalizeRarityLook(armor("cloth_3", "Cloth", Material.LEATHER_BOOTS, Rarity.COMMON, 1, 0))),
         };
     }
 
@@ -857,7 +857,7 @@ public final class GearFactory {
                 meta.addEnchant(Enchantment.UNBREAKING, 1, true);
             }
             // NOTE: no armor trim here — trims encode the rarity, so freshly rolled armor must stay
-            // trimless until the item is finalized ({@link #applyRarityTrim}), otherwise the shop's
+            // trimless until the item is finalized ({@link #finalizeRarityLook}), otherwise the shop's
             // rolling decoys would leak the not-yet-revealed rarity.
             var pdc = meta.getPersistentDataContainer();
             pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.GEAR),
@@ -878,13 +878,11 @@ public final class GearFactory {
         return s;
     }
 
-    /** Apply the rarity-themed armor trim to an armor piece (no-op for non-armor items). Call this
-     *  only when an item is FINALIZED — never on shop-roll decoys, whose trim would leak the
-     *  not-yet-revealed rarity. Trims: material + pattern both encode rarity color/theme. */
-    public static ItemStack applyRarityTrim(ItemStack s) {
-        if (s == null || s.getItemMeta() == null || !(s.getItemMeta() instanceof ArmorMeta armorMeta)) {
-            return s;
-        }
+    /** Apply the rarity-themed cosmetics to a finalized gear item: armor trims for armor, banner
+     *  gradient colors for mana shields (no-op otherwise). Call this only when an item is
+     *  FINALIZED — never on shop-roll decoys, whose look would leak the not-yet-revealed rarity. */
+    public static ItemStack finalizeRarityLook(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return s;
         Rarity r;
         try {
             r = Rarity.valueOf(s.getItemMeta().getPersistentDataContainer().get(
@@ -893,22 +891,42 @@ public final class GearFactory {
         } catch (IllegalArgumentException | NullPointerException e) {
             r = Rarity.COMMON;
         }
-        TrimMaterial trimMat = switch (r) {
-            case COMMON -> TrimMaterial.QUARTZ;
-            case UNCOMMON -> TrimMaterial.EMERALD;
-            case RARE -> TrimMaterial.DIAMOND;
-            case EPIC -> TrimMaterial.AMETHYST;
-            case LEGENDARY -> TrimMaterial.GOLD;
-            case MYTHIC -> TrimMaterial.REDSTONE;
-        };
-        TrimPattern trimPattern = switch (r) {
-            case COMMON -> TrimPattern.SENTRY;
-            case UNCOMMON -> TrimPattern.DUNE;
-            case RARE -> TrimPattern.COAST;
-            case EPIC, LEGENDARY, MYTHIC -> TrimPattern.EYE;
-        };
-        armorMeta.setTrim(new ArmorTrim(trimMat, trimPattern));
-        s.setItemMeta(armorMeta);
+        if (s.getItemMeta() instanceof ArmorMeta armorMeta) {
+            TrimMaterial trimMat = switch (r) {
+                case COMMON -> TrimMaterial.QUARTZ;
+                case UNCOMMON -> TrimMaterial.EMERALD;
+                case RARE -> TrimMaterial.DIAMOND;
+                case EPIC -> TrimMaterial.AMETHYST;
+                case LEGENDARY -> TrimMaterial.GOLD;
+                case MYTHIC -> TrimMaterial.REDSTONE;
+            };
+            TrimPattern trimPattern = switch (r) {
+                case COMMON -> TrimPattern.SENTRY;
+                case UNCOMMON -> TrimPattern.DUNE;
+                case RARE -> TrimPattern.COAST;
+                case EPIC, LEGENDARY, MYTHIC -> TrimPattern.EYE;
+            };
+            armorMeta.setTrim(new ArmorTrim(trimMat, trimPattern));
+            s.setItemMeta(armorMeta);
+            return s;
+        }
+        if (s.getType() == Material.SHIELD && s.getItemMeta() instanceof BlockStateMeta blockMeta) {
+            org.bukkit.block.Banner banner = (org.bukkit.block.Banner) blockMeta.getBlockState();
+            banner.setBaseColor(org.bukkit.DyeColor.BROWN);
+            org.bukkit.DyeColor patternColor = switch (r) {
+                case COMMON -> org.bukkit.DyeColor.GRAY;
+                case UNCOMMON -> org.bukkit.DyeColor.GREEN;
+                case RARE -> org.bukkit.DyeColor.LIGHT_BLUE;
+                case EPIC -> org.bukkit.DyeColor.PURPLE;
+                case LEGENDARY -> org.bukkit.DyeColor.ORANGE;
+                case MYTHIC -> org.bukkit.DyeColor.RED;
+            };
+            banner.addPattern(new Pattern(org.bukkit.DyeColor.WHITE, PatternType.FLOW));
+            banner.addPattern(new Pattern(patternColor, PatternType.GRADIENT_UP));
+            banner.addPattern(new Pattern(patternColor, PatternType.GRADIENT));
+            blockMeta.setBlockState(banner);
+            s.setItemMeta(blockMeta);
+        }
         return s;
     }
 
@@ -945,6 +963,9 @@ public final class GearFactory {
             }
             // Apply banner pattern: base color brown, gradient colors match rarity (grey for COMMON),
             // while the Flow pattern is always white on every rarity.
+            // NOTE: NOT applied here — the banner colors encode rarity, so freshly rolled shields
+            // must stay plain until finalized ({@link #finalizeRarityLook}), otherwise shop-roll
+            // decoys would leak the not-yet-revealed rarity.
             if (meta instanceof BlockStateMeta blockMeta) {
                 org.bukkit.block.Banner banner = (org.bukkit.block.Banner) blockMeta.getBlockState();
                 banner.setBaseColor(org.bukkit.DyeColor.BROWN);

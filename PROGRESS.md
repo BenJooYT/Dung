@@ -721,7 +721,7 @@ tab = detailed build/run/progression).
       — left on the ground"); coins/keys/bombs are uncapped and always consumed.
 - [x] **Elite heart burst:** a dying elite now explodes into hearts that scatter randomly around the
       room (inside its bounds): 3 solo, 5/6/7 for party sizes 2/3/4+. Hearts are NOT grabbable for
-      the first 3 seconds (pickup delay), then stay until the next combat/elite room triggers
+      the first 1.75 seconds (pickup delay), then stay until the next combat/elite room triggers
       (`spawnEnemies` clears them; floor change/run teardown also clean up). Picking a heart up
       plays the same witch-drink sound as the Soul Siphon heal and bursts red dust particles around
       the player (hearts at full HP are still refused and remain on the ground). The Soul Siphon
@@ -738,8 +738,76 @@ tab = detailed build/run/progression).
       chests, so barrels, furnaces, hoppers, dispensers/droppers, shulker boxes and brewing stands
       on someone else's plot were openable. It now blocks every `Container` block (ender chests are
       unaffected — they're personal); message generalized to "container".
+- [x] **Scattered floor spawns:** on run start and every descend, party members teleport to random
+      spots inside the starting room (reusing the elite-heart scatter logic) facing the room center,
+      instead of all stacking on the spawn point.
+- [x] **Spectators can't claim pedestal loot:** dead players (spectators during a run) get their
+      pedestal interactions cancelled — they can look but not take.
+- [x] **Full-hearts pickup spam fixed:** the "X is full" warning is throttled to once per 3 seconds
+      per player (the pickup event re-fires every tick while standing on a refused heart).
+- [x] **Mana-shield colors no longer leak during rolls:** the shield's rarity banner gradient
+      (like armor trims) was baked in at creation and visible on rolling decoys. Shields now roll
+      plain; `GearFactory.finalizeRarityLook` (renamed from `applyRarityTrim`) applies the trim OR
+      banner colors only to finalized items — shop results, pedestal drops, starter kit — and is
+      re-applied on rarity downgrade.
+- [x] **Run-shield wear rebalanced:** per-run mana shields now take 1-3 (random) durability per 2
+      damage absorptions; persistent shields keep the gentle 1-per-5 pace.
+- [x] **Second run no longer silently fails to start:** `GameManager.startRun` could bail because a
+      member still held a stale instance mapping (e.g. dead members removed from the party before
+      endRun's cleanup, so the per-member purge missed them) — and the command broadcast "Run
+      started!" anyway without teleporting anyone. startRun now purges mappings whose instance has
+      ended, refuses only genuinely active runs, and returns success; the command only announces the
+      run when it actually started.
+- [x] **Legacy-format hover warning fixed:** the Shop/Upgrades prompt hovers carried raw `§` codes
+      inside a `Component.text()`, spamming Paper's `LegacyFormattingDetected` warning when the
+      client rendered the tooltip. Hover strings are now parsed through the legacy serializer.
+- [x] **Damage knockback:** taking damage in a run now launches the player AWAY from their attacker
+      (nearest living enemy, or the boss), scaled with the damage taken — light hits nudge, heavy
+      hits (boss slams) launch up to ~4.5 blocks. Applies to normal hits and invuln-bypassing
+      explosions alike.
+- [x] **Three-row head HP tag:** the overhead TextDisplay now shows the player name (top), the
+      green/gray HP bar (middle), and the current/max hearts numerically (bottom) on separate lines,
+      translated 0.25 blocks up so it sits just above the head. Tag lifecycle hardened: dying
+      removes it immediately, spectators get none, and removal dismounts the passenger before
+      deleting so no ghost tag survives a run end or floor change.
 - [x] Confirmed as intended, not changed: sneak+Q cancels drop because it is the ability activation;
       pending salvage shards are awarded on each floor's boss defeat.
+
+### Iteration 38 — world separation remaster (lobby / plots / per-run dungeon worlds)
+- [x] **Three world types:** a persistent `dung_lobby` void world (obsidian spawn platform, no mob
+      spawning, keepInventory, frozen noon) that players join into and return to; the existing
+      `dung_plots` world (unchanged); and a **dedicated `dung_run_<id>` void world per run**.
+- [x] **New `WorldManager`:** get-or-create lobby, create sanitized per-run worlds (void generator,
+      no structures/mobs), and delete-on-end (`teleport stragglers → unload → recursive folder
+      delete`, never throws). Dungeon geometry is unchanged — each instance now owns its whole
+      world instead of a 1000-block offset region of the shared one.
+- [x] **Lifecycle:** `GameManager.startRun` creates the run world first and hands it to the
+      instance; `endRun` deletes the world 2 ticks after everyone is out; leaving mid-run never
+      deletes (other members may remain). Run ends always send players to the LOBBY (never back
+      into a deleted world); joining teleports players to the lobby spawn (deferred 1 tick).
+- [x] **Lobby gamerules & persistence:** the lobby world folder persists on disk like any world
+      (only `dung_run_*` worlds are deleted), and operator/regular edits survive restarts — the
+      plugin re-loads the existing folder and re-asserts the rules on every load: no mob/phantom
+      spawning, no raids, keepInventory, frozen noon + clear weather, no fire tick/spread, no
+      random ticks (no grass spread/leaf decay), no advancement spam, PvP off.
+- [x] **Lobby protection:** the lobby world is now read-only for regular players — block
+      break/place, ignite/burn/explosions, buckets, hanging item frames/placement and farmland
+      trampling are cancelled with a "The lobby is protected." note. Bypass via `dung.admin`
+      (ops have it by default), so operators can still decorate the lobby.
+- [x] Supplies tab (in-run shop): direct purchases with run coins — Keys/Bombs (12c), Red Heart
+      heal (10c), Mana refill (8c), Damage/Defense Tonic (+2 for the rest of the run, 25c), with
+      grayed-out unaffordable affordances; tonic bonuses survive gear swaps via PlayerState.
+
+### Iteration 39 — /dummy NPCs + admin lobby onboarding (v1.2.0)
+- [x] **`/dummy` clickable NPC command (op / `dung.admin`):** bare `/dummy` shows help. Ops spawn
+      stationary dummy NPCs (`/dummy create <name[/r line2...]>`) composed of an invisible
+      invulnerable armor stand + Interaction hitbox + billboard TextDisplay name. Each dummy can
+      run a different command per click type as the clicking player: `/dummy setcommand left|right
+      <command>`, cleared with `removecommand`, retitled with `name` (multi-line via `/r`),
+      relocated with `tp`, listed, removed. Persists in `dummies.yml` across restarts; clicks play
+      a button-click sound; dummies are damage-proof.
+- [x] **First-join admin notice:** the first time an operator or `dung.admin` player joins, they're
+      told once that the lobby world is editable by them.
 
 ## Build / run
 ```

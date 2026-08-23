@@ -5,9 +5,9 @@ import org.bukkit.Material;
 /** The three purchasable gear categories shared by the run shop and persistent shop. Each category
  *  selects which existing item pool produces the rolled item, and carries its per-shop roll cost. */
 public enum Category {
-    WEAPON("Weapons", Material.IRON_SWORD, 8, 20),
-    ARMOR("Armor", Material.IRON_CHESTPLATE, 6, 15),
-    MANA_SHIELD("Mana Shields", Material.SHIELD, 6, 15);
+    WEAPON("Weapons", Material.IRON_SWORD, 24, 60),
+    ARMOR("Armor", Material.IRON_CHESTPLATE, 18, 45),
+    MANA_SHIELD("Mana Shields", Material.SHIELD, 18, 45);
 
     private final String label;
     private final Material icon;

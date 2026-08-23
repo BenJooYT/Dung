@@ -49,6 +49,9 @@ public final class PlayerState {
     public boolean magicWeapon = false;
     // class
     public String classId = "warrior";
+    /** Run-long stat bonuses from shop tonics; re-applied by recomputeStats so gear swaps don't wipe them. */
+    public int tonicDamage = 0;
+    public int tonicDefense = 0;
     // permanent (shard-bought) upgrades: track id -> owned level
     public final Map<String, Integer> upgrades = new java.util.HashMap<>();
     // cooldowns (ms remaining) keyed by ability id
@@ -70,7 +73,8 @@ public final class PlayerState {
     public double shield = 0;        // current shield charge
     public double shieldMax = 0;     // max shield capacity (from held item)
     public boolean shieldActive = false; // true when sneaking with mana shield
-    /** Tracks how many times the shield has absorbed damage; every 5 uses damages the shield item. */
+    /** Tracks how many times the shield has absorbed damage; run shields take 1-3 durability
+     *  damage every 2 uses, persistent shields take 1 every 5 uses. */
     public int shieldUseCount = 0;
     /** Sum of health-affix bonuses pending from equipped gear; folded into maxHearts in recomputeStats. */
     private int pendingHealthAffixes = 0;
@@ -131,6 +135,9 @@ public final class PlayerState {
         pendingHealthAffixes = 0;
         applyClassPassives();
         applyUpgrades();
+        // Shop tonics persist across gear swaps: re-applied after every recompute
+        damage += tonicDamage;
+        defense += tonicDefense;
         // Clamp current mana to the final maxMana (after upgrades) so switching weapons
         // doesn't clamp against the temporary base maxMana before upgrades are applied.
         mana = Math.min(maxMana, mana);
@@ -252,19 +259,24 @@ public final class PlayerState {
                 mitigated -= shield;
                 shield = 0;
             }
-            // Track shield uses — every 5 uses damages the shield item. The shield takes durability
-            // damage whether it is held or stored anywhere in the inventory (it is the active source
-            // of the shieldMax the damage is being absorbed against).
+            // Track shield uses. Run shields wear fast (1-3 durability per 2 absorptions);
+            // persistent shields wear slow (1 per 5). The shield takes durability damage whether
+            // it is held or stored anywhere in the inventory (it is the active source of the
+            // shieldMax the damage is being absorbed against).
             shieldUseCount++;
-            if (shieldUseCount >= 5) {
-                shieldUseCount = 0;
-                // Damage the active shield in slot 9 (DungeonInstance.SHIELD_SLOT) — the only shield
-                // that provides capacity and thus the one absorbing the damage.
-                org.bukkit.inventory.PlayerInventory inv = player.getInventory();
-                ItemStack active = inv.getItem(com.lieyabull.dung.game.DungeonInstance.SHIELD_SLOT);
-                if (active != null && !active.getType().isAir()
-                        && com.lieyabull.dung.items.GearFactory.isShield(active)) {
-                    boolean broken = com.lieyabull.dung.items.GearFactory.damageItem(active, 1);
+            org.bukkit.inventory.PlayerInventory inv = player.getInventory();
+            ItemStack active = inv.getItem(com.lieyabull.dung.game.DungeonInstance.SHIELD_SLOT);
+            if (active != null && !active.getType().isAir()
+                    && com.lieyabull.dung.items.GearFactory.isShield(active)) {
+                boolean persistent = com.lieyabull.dung.items.GearFactory.isPersistent(active);
+                int trigger = persistent ? 5 : 2;
+                if (shieldUseCount >= trigger) {
+                    shieldUseCount = 0;
+                    // Damage the active shield in slot 9 (DungeonInstance.SHIELD_SLOT) — the only
+                    // shield that provides capacity and thus the one absorbing the damage.
+                    int wear = persistent ? 1
+                            : java.util.concurrent.ThreadLocalRandom.current().nextInt(1, 4); // 1-3
+                    boolean broken = com.lieyabull.dung.items.GearFactory.damageItem(active, wear);
                     if (broken) {
                         inv.setItem(com.lieyabull.dung.game.DungeonInstance.SHIELD_SLOT, null);
                         player.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour mana shield broke! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));

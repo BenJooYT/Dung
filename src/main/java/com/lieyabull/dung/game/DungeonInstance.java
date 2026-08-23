@@ -64,6 +64,7 @@ public final class DungeonInstance {
     private final Party party;
     private final int offsetX;
     private final int offsetZ;
+    private final World runWorld;
     private Run run;
     private World world;
     private Floor.RoomNode curRoom;
@@ -128,11 +129,18 @@ public final class DungeonInstance {
     }
 
     public DungeonInstance(Dung plugin, Party party, int offsetX, int offsetZ) {
+        this(plugin, party, offsetX, offsetZ, null);
+    }
+
+    /** Full constructor: {@code runWorld} is the dedicated void world for this run (null falls
+     *  back to the legacy shared plugin world). */
+    public DungeonInstance(Dung plugin, Party party, int offsetX, int offsetZ, World runWorld) {
         this.plugin = plugin;
         this.instanceId = UUID.randomUUID();
         this.party = party;
         this.offsetX = offsetX;
         this.offsetZ = offsetZ;
+        this.runWorld = runWorld;
     }
 
     public UUID instanceId() { return instanceId; }
@@ -197,13 +205,16 @@ public final class DungeonInstance {
         barTick = 0;
         tabTickCounter = 0;
         curRoom = null;
-        world = plugin.world();
+        // Use the dedicated run world when one was created for this instance; the legacy shared
+        // plugin world remains the fallback. Offsets stay 0 so all geometry is unchanged.
+        if (runWorld != null) world = runWorld; else world = plugin.world();
         run = new Run(seed);
 
-        // Create PlayerState for each party member; also remember where each member was before the
-        // run so leaving or dying can send them back there instead of the dungeon world spawn.
+        // Create PlayerState for each party member; remember the LOBBY spawn as each member's
+        // return point so leaving or dying always sends them back there (never into this run
+        // world, which gets deleted when the run ends).
         for (Player p : party.onlineMembers()) {
-            returnLocs.put(p.getUniqueId(), p.getLocation().clone());
+            returnLocs.put(p.getUniqueId(), plugin.worldManager().lobbySpawn().clone());
             PlayerState ps = new PlayerState(p);
             ps.classId = plugin.meta().profile(p.getUniqueId()).classId;
             ps.upgrades.putAll(plugin.meta().profile(p.getUniqueId()).upgrades);
@@ -568,10 +579,10 @@ public final class DungeonInstance {
         // Reset HUD lastText arrays so all sidebar rows are re-painted on the new floor
         for (HUD hud : huds.values()) hud.resetLastText();
 
-        // Teleport all party members to the start
-        Location startLoc = roomSpawn(run.floor.start);
+        // Teleport all party members, scattered randomly across the starting room and facing
+        // its center (both on run start and every descend)
         for (Player p : party.onlineMembers()) {
-            p.teleport(startLoc);
+            p.teleport(scatterSpawn(run.floor.start));
             playerRoom.put(p.getUniqueId(), run.floor.start);
         }
         // Equipped persistent armor loses 1-4 durability on descend
@@ -1273,8 +1284,8 @@ public final class DungeonInstance {
     /** Ground hearts dropped by dying elites; picked up freely once their pickup delay expires,
      *  and cleared only when a new combat/elite room triggers (plus floor change/teardown). */
     private final List<org.bukkit.entity.Item> eliteHearts = new ArrayList<>();
-    /** Hearts can't be picked up for the first 3 seconds after landing. */
-    private static final int ELITE_HEART_PICKUP_DELAY_TICKS = 60;
+    /** Hearts can't be picked up for the first 1.75 seconds after landing. */
+    private static final int ELITE_HEART_PICKUP_DELAY_TICKS = 35;
 
     /** An exploding elite bursts into hearts that scatter around the room: 3 solo, then
      *  5/6/7 for party sizes 2/3/4+. They linger until a new combat room is triggered. */
@@ -1306,6 +1317,14 @@ public final class DungeonInstance {
             if (insideRoom(at, rn, 1.0)) return at;
         }
         return fallback.add(0, 0.5, 0);
+    }
+
+    /** Floor-entry spawn: a random spot inside the room, looking toward the room's center. */
+    private Location scatterSpawn(Floor.RoomNode room) {
+        Location center = roomSpawn(room).add(0, 1, 0); // eye height target
+        Location at = randomRoomSpot(center.clone(), center.clone(), room);
+        at.setDirection(center.toVector().subtract(at.toVector()).setY(0));
+        return at;
     }
 
     // ---------- combat tick ----------
@@ -2666,7 +2685,7 @@ public final class DungeonInstance {
      */
     public ItemFrame spawnPedestal(Location loc, ItemStack item) {
         // Finalize armor trims here (world drops are openly displayed — no rarity to hide).
-        GearFactory.applyRarityTrim(item);
+        GearFactory.finalizeRarityLook(item);
         Location blockLoc = new Location(world, loc.getBlockX(), loc.getBlockY(), loc.getBlockZ());
         // Place the slab pedestal
         world.getBlockAt(blockLoc).setType(Material.POLISHED_BLACKSTONE_SLAB);
@@ -3382,6 +3401,7 @@ public final class DungeonInstance {
         if (ps == null) return false;
         if (ps.isInvuln() || ps.dead) return false;
         ps.hurt(dmg);
+        applyDamageKnockback(p, dmg);
         p.playHurtAnimation(0.0f);
         p.playSound(p.getLocation(), org.bukkit.Sound.ENTITY_PLAYER_HURT, 1.0f, 0.9f);
         return true;
@@ -3393,9 +3413,45 @@ public final class DungeonInstance {
         PlayerState ps = run == null ? null : run.playerStateOf(p.getUniqueId());
         if (ps == null || ps.dead) return false;
         ps.hurt(dmg);
+        applyDamageKnockback(p, dmg);
         p.playHurtAnimation(0.0f);
         p.playSound(p.getLocation(), org.bukkit.Sound.ENTITY_PLAYER_HURT, 1.0f, 0.9f);
         return true;
+    }
+
+    /** Knock a hurt player AWAY from their attacker (nearest living enemy or the boss), scaled by
+     *  the damage taken and capped at ~4.5 blocks of travel. */
+    private void applyDamageKnockback(Player p, double dmg) {
+        if (!running || run == null) return;
+        // Direction: away from the nearest threat that could have hit them.
+        org.bukkit.util.Vector away = null;
+        double bestDist = Double.MAX_VALUE;
+        for (List<Enemy> list : roomEnemies.values()) {
+            for (Enemy e : list) {
+                if (!e.alive()) continue;
+                double d = e.entity.getLocation().distanceSquared(p.getLocation());
+                if (d < bestDist && d <= 16 * 16) {
+                    bestDist = d;
+                    away = p.getLocation().toVector().subtract(e.entity.getLocation().toVector());
+                }
+            }
+        }
+        if (away == null && boss != null && boss.location() != null) {
+            away = p.getLocation().toVector().subtract(boss.location().toVector());
+        }
+        if (away == null) return;
+        double y = away.getY();
+        away.setY(0);
+        if (away.lengthSquared() < 0.001) {
+            // Attacked from directly above/below — push along the player's facing instead
+            away = p.getLocation().getDirection().setY(0);
+        }
+        if (away.lengthSquared() < 0.001) return;
+        away.normalize();
+        // Damage → impulse: light hits barely nudge, heavy hits launch up to ~4.5 blocks
+        double strength = Math.min(1.1, 0.18 + dmg * 0.014);
+        away.multiply(strength).setY(Math.max(0.15, Math.min(0.35, y * 0.2 + 0.2)));
+        p.setVelocity(p.getVelocity().add(away));
     }
 
     public void onPlayerDeath(Player p) {
@@ -3443,6 +3499,7 @@ public final class DungeonInstance {
         p.setHealth(20);
         p.setGameMode(org.bukkit.GameMode.SPECTATOR);
         p.setWalkSpeed(0.2f);
+        removeHeadHp(p); // spectators don't carry an HP readout
 
         HUD hud = huds.get(p.getUniqueId());
         TabUI tab = tabs.get(p.getUniqueId());
@@ -3642,6 +3699,11 @@ public final class DungeonInstance {
      *  Implemented as a non-persistent TextDisplay riding the player — Player.setCustomName does
      *  not change a player's overhead nametag, so the classic approach doesn't render. */
     private void updateHeadHp(Player p, PlayerState st) {
+        // Dead players (spectators waiting for revival) get no HP readout
+        if (st.dead || p.getGameMode() == org.bukkit.GameMode.SPECTATOR) {
+            removeHeadHp(p);
+            return;
+        }
         int cur = (int) Math.ceil(st.hearts);
         int max = st.maxHearts;
         int filled = Math.max(0, Math.min(10, (int) Math.round(10.0 * cur / max)));
@@ -3649,7 +3711,8 @@ public final class DungeonInstance {
         for (int i = 0; i < 10; i++) {
             bar.append(i < filled ? "§a█" : "§8█");
         }
-        String text = bar + " §c" + cur + " §7/ §f" + max;
+        // Three rows above the head: player name / HP bar / HP as numbers
+        String text = "§f" + p.getName() + "\n" + bar + "\n§c" + cur + " §7/ §f" + max;
         org.bukkit.entity.TextDisplay tag = hpTags.get(p.getUniqueId());
         if (tag == null || !tag.isValid()) {
             if (tag != null) tag.remove();
@@ -3658,6 +3721,14 @@ public final class DungeonInstance {
                 td.text(legacy(initial));
                 td.setBillboard(org.bukkit.entity.Display.Billboard.CENTER);
                 td.setSeeThrough(false);
+                // Lift the tag clear of the head: a passenger display renders at head height,
+                // so translate it up (~0.75 blocks) via its transformation.
+                td.setTransformation(new org.bukkit.util.Transformation(
+                        new org.joml.Vector3f(0f, 0.25f, 0f), // translation
+                        new org.joml.Quaternionf(),           // left rotation (none)
+                        new org.joml.Vector3f(1f, 1f, 1f),    // scale
+                        new org.joml.Quaternionf()));         // right rotation (none)
+                td.setViewRange(0.6f);
                 td.setPersistent(false);
                 td.setViewRange(0.6f);
             });
@@ -3675,12 +3746,16 @@ public final class DungeonInstance {
         return net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacySection().deserialize(s);
     }
 
-    /** Remove a player's overhead HP bar (and any stale passenger), if present. */
+    /** Remove a player's overhead HP bar (and any stale passenger), if present. Dismounts the
+     *  display explicitly before removing it so the client never keeps rendering a ghost tag. */
     private void removeHeadHp(Player p) {
         org.bukkit.entity.TextDisplay tag = hpTags.remove(p.getUniqueId());
-        if (tag != null) tag.remove();
         lastHeadHp.remove(p.getUniqueId());
-        for (org.bukkit.entity.Entity e : p.getPassengers()) {
+        if (tag != null) {
+            p.removePassenger(tag);
+            tag.remove();
+        }
+        for (org.bukkit.entity.Entity e : List.copyOf(p.getPassengers())) {
             if (e instanceof org.bukkit.entity.TextDisplay) e.remove();
         }
     }
@@ -3783,6 +3858,13 @@ public final class DungeonInstance {
         savedInventories.clear();
         // Remove this instance from the GameManager registry
         GameManager.instance().removeInstance(this);
+        // Delete the dedicated run world from disk once every player is out (deferred a couple of
+        // ticks so pending teleports settle first). Only run worlds are ever deleted.
+        if (runWorld != null
+                && runWorld.getName().startsWith(com.lieyabull.dung.world.WorldManager.RUN_WORLD_PREFIX)) {
+            final World rw = runWorld;
+            Bukkit.getScheduler().runTaskLater(plugin, () -> plugin.worldManager().deleteRunWorld(rw), 2L);
+        }
     }
 
     private void clearRoomEntities() {
