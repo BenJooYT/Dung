@@ -338,9 +338,12 @@ public final class ShopUI implements Listener {
             plugin.meta().save();
         }
 
-        // Server-authoritative result: generated here, before any animation starts.
+        // Server-authoritative result: generated here, before any animation starts. The armor
+        // trim (which encodes rarity) is applied ONLY to this finalized result — the rolling
+        // decoys stay trimless so the rarity isn't leaked before it lands.
         int floor = s.type == ShopType.RUN ? (s.di == null ? 0 : s.di.run().floorIndex) : 1;
         ItemStack item = generateItem(p, cat, floor, s.type);
+        GearFactory.applyRarityTrim(item);
         Rarity rarity = GearFactory.getRarity(item);
         int salvage = ShopRules.salvageValue(rarity, WorkstationRules.primaryStat(item));
         ServerSideRollResult result = new ServerSideRollResult(item, rarity, cat, salvage);

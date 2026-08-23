@@ -2665,6 +2665,8 @@ public final class DungeonInstance {
      * The item frame is invulnerable and cannot be broken by players.
      */
     public ItemFrame spawnPedestal(Location loc, ItemStack item) {
+        // Finalize armor trims here (world drops are openly displayed — no rarity to hide).
+        GearFactory.applyRarityTrim(item);
         Location blockLoc = new Location(world, loc.getBlockX(), loc.getBlockY(), loc.getBlockZ());
         // Place the slab pedestal
         world.getBlockAt(blockLoc).setType(Material.POLISHED_BLACKSTONE_SLAB);

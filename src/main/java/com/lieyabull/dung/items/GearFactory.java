@@ -506,8 +506,10 @@ public final class GearFactory {
                 meta.lore(next);
             }
         });
-        // Re-cap stored health (Life Drain) to the new rarity's cap
+        // Re-cap stored health (Life Drain) to the new rarity's cap, and re-trim armor so the
+        // trim matches the new rarity instead of keeping the old tier's material/pattern.
         if (getStoredHealthMax(out) > 0) setStoredHealth(out, getStoredHealth(out));
+        applyRarityTrim(out);
         return out;
     }
 
@@ -820,10 +822,10 @@ public final class GearFactory {
     public static ItemStack[] starter() {
         return new ItemStack[]{
                 markStarter(weapon("frayed_blade", "Frayed Blade", Material.IRON_SWORD, Rarity.COMMON, 5, 0, "Rush", 15)),
-                markStarter(armor("cloth_0", "Cloth", Material.LEATHER_HELMET, Rarity.COMMON, 1, 0)),
-                markStarter(armor("cloth_1", "Cloth", Material.LEATHER_CHESTPLATE, Rarity.COMMON, 1, 0)),
-                markStarter(armor("cloth_2", "Cloth", Material.LEATHER_LEGGINGS, Rarity.COMMON, 1, 0)),
-                markStarter(armor("cloth_3", "Cloth", Material.LEATHER_BOOTS, Rarity.COMMON, 1, 0)),
+                markStarter(applyRarityTrim(armor("cloth_0", "Cloth", Material.LEATHER_HELMET, Rarity.COMMON, 1, 0))),
+                markStarter(applyRarityTrim(armor("cloth_1", "Cloth", Material.LEATHER_CHESTPLATE, Rarity.COMMON, 1, 0))),
+                markStarter(applyRarityTrim(armor("cloth_2", "Cloth", Material.LEATHER_LEGGINGS, Rarity.COMMON, 1, 0))),
+                markStarter(applyRarityTrim(armor("cloth_3", "Cloth", Material.LEATHER_BOOTS, Rarity.COMMON, 1, 0))),
         };
     }
 
@@ -854,24 +856,9 @@ public final class GearFactory {
             if (r.ordinal() >= Rarity.RARE.ordinal()) {
                 meta.addEnchant(Enchantment.UNBREAKING, 1, true);
             }
-            // Apply armor trim matching the rarity color and theme
-            if (meta instanceof ArmorMeta armorMeta) {
-                TrimMaterial trimMat = switch (r) {
-                    case COMMON -> TrimMaterial.QUARTZ;
-                    case UNCOMMON -> TrimMaterial.EMERALD;
-                    case RARE -> TrimMaterial.DIAMOND;
-                    case EPIC -> TrimMaterial.AMETHYST;
-                    case LEGENDARY -> TrimMaterial.GOLD;
-                    case MYTHIC -> TrimMaterial.REDSTONE;
-                };
-                TrimPattern trimPattern = switch (r) {
-                    case COMMON -> TrimPattern.SENTRY;
-                    case UNCOMMON -> TrimPattern.DUNE;
-                    case RARE -> TrimPattern.COAST;
-                    case EPIC, LEGENDARY, MYTHIC -> TrimPattern.EYE;
-                };
-                armorMeta.setTrim(new ArmorTrim(trimMat, trimPattern));
-            }
+            // NOTE: no armor trim here — trims encode the rarity, so freshly rolled armor must stay
+            // trimless until the item is finalized ({@link #applyRarityTrim}), otherwise the shop's
+            // rolling decoys would leak the not-yet-revealed rarity.
             var pdc = meta.getPersistentDataContainer();
             pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.GEAR),
                     org.bukkit.persistence.PersistentDataType.STRING, "true");
@@ -888,6 +875,40 @@ public final class GearFactory {
                         org.bukkit.persistence.PersistentDataType.INTEGER, health);
             }
         });
+        return s;
+    }
+
+    /** Apply the rarity-themed armor trim to an armor piece (no-op for non-armor items). Call this
+     *  only when an item is FINALIZED — never on shop-roll decoys, whose trim would leak the
+     *  not-yet-revealed rarity. Trims: material + pattern both encode rarity color/theme. */
+    public static ItemStack applyRarityTrim(ItemStack s) {
+        if (s == null || s.getItemMeta() == null || !(s.getItemMeta() instanceof ArmorMeta armorMeta)) {
+            return s;
+        }
+        Rarity r;
+        try {
+            r = Rarity.valueOf(s.getItemMeta().getPersistentDataContainer().get(
+                    org.bukkit.NamespacedKey.minecraft(ItemTags.RARITY),
+                    org.bukkit.persistence.PersistentDataType.STRING));
+        } catch (IllegalArgumentException | NullPointerException e) {
+            r = Rarity.COMMON;
+        }
+        TrimMaterial trimMat = switch (r) {
+            case COMMON -> TrimMaterial.QUARTZ;
+            case UNCOMMON -> TrimMaterial.EMERALD;
+            case RARE -> TrimMaterial.DIAMOND;
+            case EPIC -> TrimMaterial.AMETHYST;
+            case LEGENDARY -> TrimMaterial.GOLD;
+            case MYTHIC -> TrimMaterial.REDSTONE;
+        };
+        TrimPattern trimPattern = switch (r) {
+            case COMMON -> TrimPattern.SENTRY;
+            case UNCOMMON -> TrimPattern.DUNE;
+            case RARE -> TrimPattern.COAST;
+            case EPIC, LEGENDARY, MYTHIC -> TrimPattern.EYE;
+        };
+        armorMeta.setTrim(new ArmorTrim(trimMat, trimPattern));
+        s.setItemMeta(armorMeta);
         return s;
     }
 

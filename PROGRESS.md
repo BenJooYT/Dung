@@ -727,6 +727,17 @@ tab = detailed build/run/progression).
       the player (hearts at full HP are still refused and remain on the ground). The Soul Siphon
       player-to-player heal now also bursts particles around the healed target, not just along the
       beam between caster and target.
+- [x] **Armor-roll rarity leak fixed:** armor trims encode rarity, so the shop's rolling decoys
+      leaked the not-yet-revealed rarity before it landed. Armor is now rolled TRIMLESS
+      (`GearFactory.armor` applies no trim); a new `GearFactory.applyRarityTrim` finalizes the trim
+      only when an item is revealed — on the shop roll's server-decided result, on pedestal/world
+      drops (`spawnPedestal`), and on starter kit pieces.
+- [x] **Trim/rarity stays in sync on downgrade:** `GearFactory.downgradeRarity` now re-applies
+      `applyRarityTrim`, so a downgraded armor piece no longer wears its old rarity's trim.
+- [x] **Plot container protection covers all containers:** the right-click guard checked only
+      chests, so barrels, furnaces, hoppers, dispensers/droppers, shulker boxes and brewing stands
+      on someone else's plot were openable. It now blocks every `Container` block (ender chests are
+      unaffected — they're personal); message generalized to "container".
 - [x] Confirmed as intended, not changed: sneak+Q cancels drop because it is the ability activation;
       pending salvage shards are awarded on each floor's boss defeat.
 

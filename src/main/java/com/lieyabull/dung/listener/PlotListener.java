@@ -7,7 +7,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.block.Chest;
+import org.bukkit.block.Container;
 import org.bukkit.block.data.Ageable;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.block.data.type.Leaves;
@@ -130,13 +130,15 @@ public final class PlotListener implements Listener {
         }
 
         // Owner, public plot, or someone granted container access may open containers.
-        if (!(clicked.getState() instanceof Chest)) return;
+        // Covers ALL container blocks (chests, barrels, furnaces, hoppers, dispensers,
+        // droppers, shulker boxes, brewing stands) — not just chests.
+        if (!(clicked.getState() instanceof org.bukkit.block.Container)) return;
         PlotManager.PlotInfo info = pm.getInfo(coord);
         if (info == null) return;
         UUID uid = e.getPlayer().getUniqueId();
         if (info.owner.equals(uid) || info.isPublic || info.containerTrust.contains(uid)) return;
         e.setCancelled(true);
-        e.getPlayer().sendMessage("§cThat chest belongs to someone else!");
+        e.getPlayer().sendMessage("§cThat container belongs to someone else!");
     }
 
     /** Crops that can be harvested by right-click: wheat, carrots, potatoes, beetroot. */
