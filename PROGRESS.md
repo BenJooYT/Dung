@@ -794,6 +794,10 @@ tab = detailed build/run/progression).
       break/place, ignite/burn/explosions, buckets, hanging item frames/placement and farmland
       trampling are cancelled with a "The lobby is protected." note. Bypass via `dung.admin`
       (ops have it by default), so operators can still decorate the lobby.
+- [x] **`/setlobby` (op / `dung.admin`):** standing in the lobby world, sets the lobby spawn to your
+      current location + facing. Persisted in `lobby.yml` across restarts and used by every
+      lobby-related teleport (join, run end, leave, run-world cleanup) — the default `(0, 64, 0)`
+      spawn is only applied when no custom spawn exists.
 - [x] Supplies tab (in-run shop): direct purchases with run coins — Keys/Bombs (12c), Red Heart
       heal (10c), Mana refill (8c), Damage/Defense Tonic (+2 for the rest of the run, 25c), with
       grayed-out unaffordable affordances; tonic bonuses survive gear swaps via PlayerState.

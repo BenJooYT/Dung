@@ -42,6 +42,9 @@ commands:
   dummy:
     description: Manage clickable dummy NPCs
     usage: /dummy
+  setlobby:
+    description: Set the lobby spawn to your current location (op/dung.admin)
+    usage: /setlobby
 permissions:
   dung.admin:
     description: Admin debug commands

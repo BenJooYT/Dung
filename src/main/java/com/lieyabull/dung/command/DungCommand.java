@@ -216,8 +216,8 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
         com.sk89q.worldedit.math.BlockVector3 min = cb.getMinimumPoint();
         com.sk89q.worldedit.math.BlockVector3 max = cb.getMaximumPoint();
         com.lieyabull.dung.room.RoomBounds total = new com.lieyabull.dung.room.RoomBounds(
-                min.getBlockX(), min.getBlockY(), min.getBlockZ(),
-                max.getBlockX(), max.getBlockY(), max.getBlockZ());
+                min.x(), min.y(), min.z(),
+                max.x(), max.y(), max.z());
 
         com.lieyabull.dung.structure.StructureDefinition def = new com.lieyabull.dung.structure.StructureDefinition();
         def.id = args[2].toLowerCase();

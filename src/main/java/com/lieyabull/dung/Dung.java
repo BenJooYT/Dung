@@ -88,6 +88,7 @@ public final class Dung extends JavaPlugin {
         DummyCommand dummyCmd = new DummyCommand(this);
         getCommand("dummy").setExecutor(dummyCmd);
         getCommand("dummy").setTabCompleter(dummyCmd);
+        getCommand("setlobby").setExecutor(new com.lieyabull.dung.command.SetLobbyCommand(this));
         // Dummies need loaded worlds to respawn — load + spawn 1 tick after enable.
         Bukkit.getScheduler().runTask(this, () -> dummyManager.loadAll());
         // Migrate existing persistent items to have UUIDs (for pre-UUID items)
