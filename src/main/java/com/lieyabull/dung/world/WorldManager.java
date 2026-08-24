@@ -25,6 +25,10 @@ public final class WorldManager {
     private World lobby;
     /** Custom lobby spawn set via /setlobby; null = default (0, 64, 0). Persisted to lobby.yml. */
     private Location customLobbySpawn;
+    /** Whether we've already retried loading the saved spawn after the lobby world was created.
+     *  The first load happens in the constructor when NO worlds exist yet, so it always misses
+     *  for a lazy-created world like dung_lobby and must be retried once from getLobby(). */
+    private boolean spawnLoadRetried;
 
     public WorldManager(Dung plugin) {
         this.plugin = plugin;
@@ -95,8 +99,7 @@ public final class WorldManager {
     public World getLobby() {
         if (lobby != null) return lobby;
         World w = Bukkit.getWorld(LOBBY_WORLD_NAME);
-        boolean fresh = w == null;
-        if (fresh) {
+        if (w == null) {
             WorldCreator wc = new WorldCreator(LOBBY_WORLD_NAME);
             wc.generator(new VoidChunkGenerator());
             wc.generateStructures(false);
@@ -114,19 +117,27 @@ public final class WorldManager {
             w.setStorm(false);
             w.setThundering(false);
             w.setWeatherDuration(0);
-            // Vanilla split doFireTick into these two rules; the typed GameRule constant for
-            // allowFireTicksAwayFromPlayer is deprecated in this API version, so set it by command.
-            Bukkit.dispatchCommand(Bukkit.getConsoleSender(),
-                    "gamerule allowFireTicksAwayFromPlayer false");            // fire can't burn builds
+            // Fire can't burn builds. This Paper build still has vanilla doFireTick (the Java
+            // constant is merely deprecated — there is NO allowFireTicksAwayFromPlayer rule on
+            // this version, and dispatching that gamerule throws), so use the typed constant
+            // with a targeted suppression.
+            @SuppressWarnings("removal")
+            org.bukkit.GameRule<Boolean> doFireTick = org.bukkit.GameRule.DO_FIRE_TICK;
+            w.setGameRule(doFireTick, false);
             w.setGameRule(GameRules.FIRE_SPREAD_RADIUS_AROUND_PLAYER, 0);      // and can't spread either
             w.setGameRule(GameRules.SHOW_ADVANCEMENT_MESSAGES, false);       // no advancement spam in lobby chat
             w.setGameRule(GameRules.RANDOM_TICK_SPEED, 0);                   // no grass spread / leaf decay / random ticks
             w.setPVP(false);                                                 // no PvP at spawn
             // Default spawn is only applied when no /setlobby spawn has been saved
             if (customLobbySpawn == null) w.setSpawnLocation(0, 64, 0);
-            if (fresh) buildSpawnPlatform(w);
         }
         lobby = w;
+        // The constructor-time loadCustomSpawn() always missed (no worlds exist that early), so
+        // retry once now that the lobby world exists — this is what makes /setlobby persist.
+        if (!spawnLoadRetried) {
+            spawnLoadRetried = true;
+            loadCustomSpawn();
+        }
         return w;
     }
 
@@ -167,17 +178,6 @@ public final class WorldManager {
             return customLobbySpawn.clone();
         }
         return getLobby().getSpawnLocation();
-    }
-
-    /** Build a small obsidian platform under the lobby spawn so players don't fall into the void. */
-    private void buildSpawnPlatform(World w) {
-        Bukkit.getScheduler().runTask(plugin, () -> {
-            for (int x = -4; x <= 4; x++) {
-                for (int z = -4; z <= 4; z++) {
-                    w.getBlockAt(x, 63, z).setType(Material.OBSIDIAN);
-                }
-            }
-        });
     }
 
     private static void deleteRecursively(File f) {

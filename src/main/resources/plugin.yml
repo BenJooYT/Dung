@@ -5,6 +5,7 @@ api-version: 1.21
 authors: [lieyabull]
 description: Room-based dungeon roguelite with MMORPG-style combat and progression.
 depend: [WorldEdit]
+softdepend: [ProtocolLib]
 commands:
   dung:
     description: Dung game commands
@@ -45,6 +46,15 @@ commands:
   setlobby:
     description: Set the lobby spawn to your current location (op/dung.admin)
     usage: /setlobby
+  lobby:
+    description: Teleport to the lobby spawn
+    usage: /lobby
+  convert:
+    description: Toggle whether transformation potions can affect player-placed blocks on your plot
+    usage: /convert
+  flyspeed:
+    description: Set your creative fly speed (1-10, admin)
+    usage: /flyspeed [1-10|reset]
 permissions:
   dung.admin:
     description: Admin debug commands

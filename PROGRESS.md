@@ -350,6 +350,25 @@ tab = detailed build/run/progression).
 - [x] **Loot wiring:** Storm Rod, Blaze Staff, Soul Siphon added to `ItemPool.WEAPONS`. Shields added via `ItemPool.randomShield()` with 25% weight in `roomReward` gear rolls (40% weapon, 35% armor, 25% shield). Shields available in both in-run and persistent shops.
 - [x] **Persistent item star marker:** `GearFactory.markPersistent()` now prepends a ★ star emoji to the display name of persistent items, making them visually distinct in inventories.
 
+### Iteration 46 — Transformation potions for the plots world
+- [x] **Transformation potion system:** New potion system for the plots world — splash potions that transform blocks using a BFS wave propagation engine.
+- [x] **Forest Transmutation Elixir:** Transforms logs and leaves into random tree varieties (family-preserving: log→log, leaves→leaves) with 16 wood types equally weighted.
+- [x] **Stone Transmutation Elixir:** Transforms stone/cobble/deep variants into stone variants and rare ores with weighted probabilities (diamond/emerald very rare).
+- [x] **Propagation engine:** BFS outward from impact point through eligible blocks, grouped into waves by Manhattan distance, with configurable max range (12/10), max blocks (64/48), and spread probability (0.65/0.55).
+- [x] **Wave animation:** Visual transformation in waves with per-wave particles and sounds via scheduled Bukkit tasks.
+- [x] **Plot ownership enforcement:** Potions only work on the thrower's own plot.
+- [x] **`/convert` toggle:** Per-player toggle controlling whether potions affect player-placed blocks (off by default — only natural blocks).
+- [x] **ProvenanceManager:** Tracks which blocks are player-placed vs natural via BlockPlaceEvent/BlockBreakEvent.
+- [x] **Shop integration:** Forest & Stone Transmutation Elixirs (55 coins each, slots 18/26) in the persistent shop. Elixir potion color matches the type (forest = green, stone = gray).
+- [x] **Unit tests:** `PotionDefinitionTest` (9 tests: targets, weighted rolls, equality, empty pool), `PropagationEngineTest` (7 tests: family-preserving forest, weighted stone pool, custom definitions, PropagationResult).
+
+### Iteration 47 — Plots world bedrock layer + thicker stone
+- [x] **Bedrock layer at y=0:** `PlotChunkGenerator` now places bedrock at y=0 (was stone) for all new chunks.
+- [x] **Stone layer increased to 30 blocks:** y=1..30 filled with stone (was dirt at y=1..50; previously cobblestone, now stone).
+- [x] **Dirt layer reduced to 20 blocks:** y=31..50 filled with dirt (was y=1..50).
+- [x] **Retroactive fill command:** `/plot filllayers` (op-only) fills bedrock+stone in all generated chunks within a 15-chunk radius, without touching builds above y=30. Only modifies y=0..30, well below the surface at y=52.
+- [x] **Constants added:** `STONE_TOP_Y=30`, `STONE_BOTTOM_Y=1` in `PlotManager` for clarity.
+
 ### Iteration 26 — Mulliboom explosion buff, magic damage separation, magic damage upgrade
 - [x] **Mulliboom explosion damage tripled:** `damage * 1.5` → `damage * 4.5` so the death explosion is a meaningful threat instead of a minor nuisance.
 - [x] **Magic weapons deal 1 melee damage:** Storm Rod, Blaze Staff, and Soul Siphon now have a separate `dung.magic_damage` PDC tag. Their melee damage is set to 1 (negligible basic attacks), while their ability damage uses the magic damage value. `dispatchAbility` and `dispatchClassAbility` (Mage's Arcane Nova) check for `st.magicDamage` and use it for magic-based abilities (Arcane Bolt, Chain Lightning, Fireball, Life Drain).
@@ -770,6 +789,27 @@ tab = detailed build/run/progression).
       translated 0.25 blocks up so it sits just above the head. Tag lifecycle hardened: dying
       removes it immediately, spectators get none, and removal dismounts the passenger before
       deleting so no ghost tag survives a run end or floor change.
+- [x] **Equip/swap/GUI fixes:** right-click equipping armor over a starter piece now removes the
+      displaced starter (the cleanup previously only ran for inventory clicks, not right-click
+      equips); shift-clicking a mana shield while another is equipped now SWAPS — the unequipped
+      shield goes into the first free bag slot (never the slot the new one came from, dropped if
+      the bag is full); WorkstationUI's `busy` guard no longer bricks the open GUI when an
+      operation is rejected (it was set once and never cleared — after one failed CONFIRM every
+      further click on any item was silently ignored).
+- [x] **`/dung lobbykit` (op-only):** hands the caller the full lobby-building palette (~50 items —
+      blackstone core, gold/lantern accents, crimson/spruce wood, amethyst/purpur + quartz themes,
+      moss/greenery softening) packed into named pre-filled shulker boxes (`Lobby Kit (1..n)`,
+      as many as needed), added straight to the inventory. Unknown/renamed materials are skipped
+      with a notice instead of aborting (`CHAIN` → `IRON_CHAIN` in 1.21.x with copper chains).
+- [x] **`/dummy setavatar <playerName>`:** turns the nearest dummy into a player-looking figure —
+      the stand becomes visible with arms and wears the named player's skin (a `PLAYER_HEAD`
+      helmet skinned via a Paper `PlayerProfile`, resolved from Mojang async so no main-thread
+      network stall). Online players resolve instantly; offline names fetch their skin. The
+      avatar persists in `dummies.yml` and is re-applied on respawn/restart; tab completion
+      suggests online players.
+- [x] **Dummy name screen-bomb fix:** dummy display names are now capped at **48 characters per
+      line** and **4 lines maximum** (excess truncated with `…`). Previously an arbitrarily long
+      name filled the player's entire viewport through the TextDisplay billboard.
 - [x] Confirmed as intended, not changed: sneak+Q cancels drop because it is the ability activation;
       pending salvage shards are awarded on each floor's boss defeat.
 
@@ -798,9 +838,19 @@ tab = detailed build/run/progression).
       current location + facing. Persisted in `lobby.yml` across restarts and used by every
       lobby-related teleport (join, run end, leave, run-world cleanup) — the default `(0, 64, 0)`
       spawn is only applied when no custom spawn exists.
+- [x] **Join always routes to the lobby:** the old "restore last known location" on join fought the
+      lobby model (it could drop players back into a deleted run world or anywhere else); joining
+      now deterministically sends everyone to the lobby spawn (deferred 2 ticks, skipped only if
+      they're somehow already there). New **`/lobby`** command teleports back to the lobby spawn
+      from anywhere — blocked mid-run ("use /dung leave first") and redundant inside the lobby.
+      ROOT CAUSE of both failing at once: the lobby gamerule block dispatched
+      `gamerule allowFireTicksAwayFromPlayer` — a rule that doesn't exist on this server version,
+      whose CommandSyntaxException escaped `getLobby()` and killed every `lobbySpawn()` call
+      (join teleport + `/lobby`). Replaced with the typed (deprecated-but-functional)
+      `GameRule.DO_FIRE_TICK` constant under a targeted `@SuppressWarnings("removal")`.
 - [x] Supplies tab (in-run shop): direct purchases with run coins — Keys/Bombs (12c), Red Heart
       heal (10c), Mana refill (8c), Damage/Defense Tonic (+2 for the rest of the run, 25c), with
-      grayed-out unaffordable affordances; tonic bonuses survive gear swaps via PlayerState.
+      grayed-out unaffordable affordances; tonic bonuses survive gear swaps   via PlayerState.
 
 ### Iteration 39 — /dummy NPCs + admin lobby onboarding (v1.2.0)
 - [x] **`/dummy` clickable NPC command (op / `dung.admin`):** bare `/dummy` shows help. Ops spawn
@@ -813,9 +863,217 @@ tab = detailed build/run/progression).
 - [x] **First-join admin notice:** the first time an operator or `dung.admin` player joins, they're
       told once that the lobby world is editable by them.
 
+### Iteration 40 — exploit-hunt fixes
+- [x] **Stale shop session closed:** leaving a run or the run ending now force-closes any open
+      shop/supplies GUI and drops the session; all shop handlers additionally require the session's
+      instance to still be the player's active one — no more buying supplies against a dead run's
+      state or KEEPing paid rolls into post-run inventories.
+- [x] **Respawn safety:** deaths inside `dung_run_*` worlds route their respawn to the lobby spawn
+      when the instance is already gone, instead of respawning into a world deleted 2 ticks later.
+- [x] **Tonics reset per descend** (design change): Damage/Defense tonics now last for the current
+      FLOOR — `enterFloor` zeroes them (and recomputes stats) on every descend; lore updated.
+- [x] **`/stash` gated mid-run**, matching `/shop` and `/upgrades`.
+- [x] **Dead-quit double durability penalty removed:** dead players who quit no longer take the
+      leave penalty on top of the death penalty (mirrors endRun's guard).
+- [x] **Compost feeding consumes the held item:** feeding uses the main-hand stack directly
+      (type + amount verified, deducted in place) instead of cancel-then-deferred-remove of "the
+      first matching item found" — no more identity desyncs with full inventories.
+
+### Iteration 41 — chat color codes, lobby platform removal & ProtocolLib avatar fix
+- [x] **No obsidian spawn platform in the lobby:** removed `buildSpawnPlatform` (and its call)
+      from `WorldManager.getLobby()` — the void world generates bare. Note: a lobby folder created
+      by an older build still has the 9×9 obsidian square at y=63 around (0,0) saved on disk;
+      delete it manually or remove the `dung_lobby` world folder to regenerate.
+- [x] **Ampersand color codes in chat + commands:** players can type `&a`-style codes anywhere —
+      new `ChatFormatListener` translates them to real `§` codes at LOWEST priority:
+      `AsyncChatEvent` rewrites the message through `TextUtil.translateAmp`, and
+      `PlayerCommandPreprocessEvent` translates only the arguments (after the first space), so
+      e.g. `/plot name &aHome` stores a colored name without touching the command itself.
+      Colors `&0-&f`, formats `&k-&o`, `&r` and hex marker `&x` are translated; bare `&`
+      ("fish & chips") is left alone. Applies to all players (no permission gate).
+- [x] **Dummy-avatar PLAYER_INFO crash root-caused:** `WrappedGameProfile.GET_PROPERTIES` is a
+      static reflection accessor ProtocolLib resolves against Mojang's authlib; 1.21.9+ rewrote
+      authlib's GameProfile so the accessor stayed null and every fake-player packet NPE'd.
+      First replacement jar (a "5.4.0" build) STILL failed — the fix (`a11b403`) and 1.21.11
+      support (`#3578`) only exist in the **5.5.0-SNAPSHOT dev builds**, now published on
+      GitHub's `dev-build` release (the dmulloy2 Maven repo is stale at 5.4.0-SNAPSHOT).
+      Deployed `ProtocolLib 5.5.0-SNAPSHOT-fec45cf` to `run/plugins/ProtocolLib.jar` (Java 17
+      bytecode, fine on the Java 21 server); old jar kept as `.bak-5.4.0`. Compile target
+      stays `5.4.0-SNAPSHOT` — identical API surface for what Dung uses.
+- [x] **Broken ProtocolLib degrades gracefully:** `FakePlayerRenderer` latches a `broken` flag on
+      the first fatal packet send — warns ONCE (with an "update ProtocolLib" hint) instead of
+      spamming per-dummy warnings, clears viewer state, and disables further packet rendering.
+      `show()` now returns whether any viewer got the fake player; `DummyManager` only hides the
+      armor stand when that succeeded, otherwise falls back to the visible skinned-head stand
+      (never an invisible dummy).
+- [x] **New `TextUtilTest`:** color/format/hex code translation, non-code ampersands untouched,
+      null/no-op passthrough.
+
+### Iteration 42 — dummy name-tag lift + full persistence
+- [x] **SPAWN_ENTITY replaces NAMED_ENTITY_SPAWN:** the player spawn packet was removed in
+      1.20.2 — players now spawn via the generic SPAWN_ENTITY packet with entity type PLAYER
+      (ints `[entityId, data]`, bytes `[xa, ya, za, yRot, xRot, yHeadRot]` → body yaw at byte
+      index 3). Head orientation still comes from ENTITY_HEAD_ROTATION.
+- [x] **PLAYER_INFO write-index fixed (avatars now actually render):** with a working ProtocolLib
+      the next failure surfaced in OUR code — `getPlayerInfoDataLists().write(1, …)` is out of
+      bounds on the modern PLAYER_INFO packet, which has exactly ONE list-typed field (`entries`).
+      Both the ADD_PLAYER and REMOVE_PLAYER writes now use index 0. This was never hit before
+      because the old build died earlier at `profile.getProperties()`.
+- [x] **Name tag raised 0.15 blocks:** the riding TextDisplay now carries a Transformation with a
+      `+0.15` Y translation (`NAME_TAG_LIFT`) on top of its mount point.
+- [x] **Dummies survive chunk unloads / world switches / late world loads:** the entity
+      composition is deliberately non-persistent, so an unloaded chunk silently deleted it and
+      nothing respawned it. New self-heal in `DummyManager`: `ensureSpawned()` respawns any dummy
+      whose stand/interaction/display is invalid (only when its world AND chunk are loaded, never
+      force-loading terrain), driven by `ChunkLoadEvent`, `WorldLoadEvent`, and
+      `PlayerChangedWorldEvent`; the world-switch handler also re-sends the player's avatar
+      packets via `renderer.resendTo` (switching worlds clears all client-side entities).
+      Restart persistence was already handled by `dummies.yml` + deferred `loadAll()`.
+
+### Iteration 43 — /flyspeed
+- [x] **`/flyspeed [1-10|reset]`:** sets the caller's creative fly speed (`level × 0.1`,
+      vanilla default = 1). Bare command shows the current level. Gated to `dung.admin`
+      (ops) and blocked mid-run so it can't be used as a combat cheat.
+
+### Iteration 44 — command handler split
+- [x] **Non-dung commands moved to `MetaCommand`:** `/shop`, `/upgrades`, `/salvage`, `/stash`,
+      `/party`, `/balance` and `/leaderboard` (plus their tab completion and the party-invite
+      cooldown) now live in their own handler file. `DungCommand` keeps only `/dung` + `/dungeon`
+      (run lifecycle, admin subcommands, room/tutorial/lobbykit) and delegates the moved
+      subcommands so `/dung party|shop|upgrades|salvage|balance` still work.
+
+### Iteration 45 — dummy armor-stand hands
+- [x] **Dummies have arms + giveable hands:** the dummy base stands now spawn with arms enabled.
+      Because the Interaction hitbox eats all clicks, **sneak + right-click** with an item in hand
+      (admin) swaps that itemcontinue into the stand's main hand and returns whatever was held — instead
+      of running the right-click command. The equipped item is persisted in `dummies.yml`
+      (`hand-item`) and re-applied on respawn, so it survives restarts, chunk reloads and world
+      switches. Skipped while a packet-based avatar model is visible (the invisible base stand
+      isn't shown then). Regular player-placed vanilla armor stands already support hands natively.
+- [x] **Hand-placed vanilla armor stands get arms:** vanilla spawns them with arms disabled, so
+      they can't hold anything. `EntityPlaceEvent` now enables arms on every player-placed
+      armor stand (deferred 1 tick), making them item-giveable like the dummies.
+- [x] **Skin-layer metadata modernized:** the ENTITY_METADATA packet was built with the legacy
+      `WrappedDataWatcher`, whose objects throw `DataItem → DataValue ClassCastException` when
+      serialized on 1.21.x. Replaced with a `WrappedDataValue` list via
+      `getDataValueCollectionModifier()` — the last broken packet in the fake-player chain.
+- [x] **Avatar packets no longer kick clients:** with the packets finally sending, both online
+      players disconnected ~1s after `setavatar` (and re-joiners after the deferred resend).
+      Fixes, per known-good 1.21.11 recipes: SPAWN_ENTITY now calls `getModifier()
+      .writeDefaults()` (unset fields stayed null → malformed packet → client disconnect); the
+      info entry uses the modern `PlayerInfoData(uuid, latency, listed=true, …)` ctor plus
+      `UPDATE_LISTED` in the actions (unlisted entries can't back a spawned player entity);
+      rotation bytes moved to indices 0/2 (1.21.x dropped velocity bytes); and fake entity ids
+      come from a counter starting at 1.5B instead of a hash that could collide with real
+      client-side entity ids.
+- [x] **Skin-layer index resolved from the server:** the skin-overlay byte's data-watcher index
+      is no longer hardcoded to 17 — the player metadata layout shifts between versions and a
+      byte at the wrong index (where the client expects another type) disconnects them with a
+      protocol error. `FakePlayerRenderer` now reflects
+      `Player.DATA_PLAYER_MODE_CUSTOMISATION`'s accessor id from the running Mojang-mapped
+      server (fallback: 17), so the ENTITY_METADATA packet always targets the correct field.
+- [x] **Avatar model no longer shows its own name:** the fake profile registers under a blank
+      name, and the tab entry is dropped 30 ticks after spawn via `PLAYER_INFO_REMOVE` (the
+      entity + cached skin keep rendering); `hide()` uses the same dedicated packet. The dummy's
+      configured multi-line TextDisplay is now the only visible name.
+- [x] **Name tag floats above the avatar model:** when a packet-based avatar renders, the riding
+      TextDisplay's translation lifts to +1.45 (`AVATAR_TAG_LIFT`) so it sits above the ~1.9-block
+      player model instead of inside its chest; the fallback head-stand keeps the +0.15 lift.
+- [x] **`/dummy pos`:** moves the nearest dummy to your position AND look direction (rebuilds its
+      live composition and persists). `Dummy`'s position fields are now mutable to support it.
+- [x] **Dummies staring into the sky fixed:** on 1.21.x the SPAWN_ENTITY rotation bytes are
+      `[xRot, yRot, yHeadRot]` — yaw was being written into the pitch slot (xRot), so a
+      180°-facing dummy got pitch −180° and gazed straight up. Pitch/yaw/head now go to their
+      proper slots.
+- [x] **Removing a dummy now despawns its player model:** `hide()` sent the tab-removal and the
+      entity-destroy in ONE try block — if `PLAYER_INFO_REMOVE` construction threw (silently
+      swallowed), `ENTITY_DESTROY` never went out and the client kept a ghost model. The two
+      packets are sent independently (destroy first) with a legacy REMOVE_PLAYER fallback, so
+      `/dummy remove` always despawns the fake player.
+- [x] **Blank tab entry removed:** the delayed tab-drop via `PLAYER_INFO_REMOVE` wasn't taking
+      effect, so a nameless row lingered. The un-listing now reuses the proven multi-action
+      PLAYER_INFO packet — `UPDATE_LISTED` with `listed=false` 30 ticks after spawn — which
+      clears the tab row while keeping the skin registration (and the rendered model) intact.
+- [x] **Dummies now actually survive restarts:** `loadAll()` ran 1 tick after enable — before
+      anything lazy-created the lobby world — so every dummy in `dung_lobby` was skipped as an
+      "unloaded world" on each boot. `onEnable` now resolves the lobby world eagerly and loads
+      dummies 5 ticks later; the ChunkLoad/WorldLoad self-heal covers any remaining races.
+- [x] **Avatar skins load after boot:** avatars resolved once at spawn-time — with no one online
+      at boot, `show()` had zero viewers and the dummy settled into the fallback head-stand
+      forever (joins never retried). Avatars in fallback look are now automatically upgraded to
+      true player models when a viewer arrives (`PlayerJoinEvent` deferred 10 ticks, and on
+      world switches), detected via the visible-stand fallback marker. Resolved profiles are
+      cached per name so retries never re-hit Mojang.
+- [x] **Duplicate name inside the model fixed:** two hardening changes — (1) `resolveAndApplyAvatar`
+      is now guarded against concurrent double-invocation, so overlapping async resolves can't
+      send duplicate packet bursts for the same dummy; (2) every dummy spawn sweeps orphaned
+      manager-style entities near its position (invulnerable + non-persistent
+      ArmorStand/TextDisplay/Interaction not owned by a live ref) — leftovers from earlier buggy
+      builds that rendered a second name tag at body height. Vanilla player-placed stands are
+      persistent and are never touched. If a duplicate still shows, check `/dummy list` for two
+      dummies stacked at the same coordinates and `/dummy remove` the extra.
+- [x] **`/convert` fixed:** the bare command dispatched through `args[0]`, so it fell into the
+      no-args help screen and never reached its case (only an undocumented `/plot convert`
+      would have worked). The label is now handled directly, sharing one `convertCmd()` with
+      the `/plot convert` subcommand.
+- [x] **Potions can reach buried fill-layer stone:** a splash on a non-target surface (grass over
+      the filled stone layer) now drills straight down (≤64 blocks) to the first target block and
+      propagates from there. Splash failures are also diagnosed precisely — "no stone/ores found
+      here", "placed by a player — enable /convert", or "plot infrastructure" — instead of one
+      generic no-targets message, so the actual blocker is always visible.
+- [x] **Forest potion can transform sapling-grown trees:** planting a sapling marks its spot as
+      player-placed, and growth never cleared that mark — so the trunk base of every home-grown
+      tree stayed flagged and the potion rejected it (natural trees were unaffected). Structure
+      growth and bone-meal fertilization now un-mark the origin plus all grown blocks in the
+      provenance store, keeping grown wood transmutable without /convert. Existing stuck marks
+      clear on the next growth; one-off cleanup for already-grown trees: toggle /convert once.
+- [x] **Splash target acquisition rewritten:** a potion thrown at a tree splashes into the AIR
+      beside/above it — the old down-only scan never saw wood that grows upward, so forest
+      potions "found no logs or leaves" even on direct hits. `drillToTarget` now checks the
+      impact block, then a 5×5 horizontal × +3/−2 vertical neighborhood (catches adjacent trunks
+      and canopies), and only then drills straight down through cover for buried stone.
+- [x] **Shield-switch prompt warning fixed:** `promptShieldSwitch` built its prefix with raw `§`
+      codes inside `Component.text()` (the same `LegacyFormattingDetected` pattern fixed earlier
+      in TabUI/ChatUI/ShopUI), spamming a stacktrace every 8s while a better shield sat in the
+      inventory. The prefix is now parsed through the legacy section serializer before appending
+      the clickable Switch button.
+- [x] **Workstation UI selection fixed:** clicking a gear item did nothing — the SELECT button
+      writes its slot index under the plugin-owned PDC key (`dung:dung_ws_slot`), but the click
+      handler still read it from the reserved `minecraft:dung_ws_slot` (a leftover from the
+      Iteration 36 namespace migration that was only half-applied). The read returned null and
+      the handler bailed silently. Both sides now use `slotKey`.
+- [x] **`/setlobby` now survives restarts:** the saved spawn was loaded in the `WorldManager`
+      constructor — before any world exists, and `dung_lobby` is lazy-created by `getLobby()` —
+      so `Bukkit.getWorld("dung_lobby")` always returned null and the saved position was
+      silently discarded every boot (join TP fell back to `(0, 64, 0)`). The load is now
+      retried once from `getLobby()` after the lobby world exists.
+
+### Iteration 46 — transformation potions (plots QoL)
+- [x] **Forest Potion:** throwable splash potion that transforms wood blocks (logs + leaves) into
+      random tree varieties via a weighted pool. Family-preserving: logs→logs, leaves→leaves.
+      BFS propagation up to 12 blocks, 64 blocks max, 65% spread probability.
+- [x] **Stone Potion:** transforms stone/stone-type blocks into random stone variants and ores
+      (rare). Weights heavily favor common stone (15:1 vs diamond ore). Range 10, max 48 blocks,
+      55% spread probability.
+- [x] **Propagation engine:** BFS-based wave propagation through 6-directional neighbors, grouped
+      by Manhattan distance for wave-animation. Respects plot ownership (potion only works on the
+      thrower's own plot), max range, max transformed blocks, and spread probability.
+- [x] **Player-placed block tracking (`ProvenanceManager`):** monitors `BlockPlaceEvent`/`BlockBreakEvent`
+      in the plots world, persisted to `provenance.yml`. `/convert` toggle controls whether
+      potions can transform player-placed blocks (default: off).
+- [x] **Wave animation:** transforms blocks in wave layers (3 ticks apart), spawning particles
+      (forest: `HAPPY_VILLAGER`, stone: `ASH`) and playing sounds per wave.
+- [x] **Persistent shop integration:** Forest Potion (50 persistent coins) and Stone Potion (35 persistent
+      coins) purchasable from the main persistent shop menu (slots 18 and 26).
+- [x] **Potion returned to stash:** if no valid targets are found (wrong plot, no eligible blocks),
+      the potion cost is refunded to the player's stash.
+- [x] **Unit tests:** 18 tests verifying `PotionDefinition` (targets, weighted rolls, equality) and
+      `PropagationEngine.resolveTransformation` (family-preserving forest, weighted stone, custom
+      definitions). All tests passing.
+
 ## Build / run
 ```
 gradlew build            # compiles + jars
 gradlew runServer        # boots a Paper 1.21.11 server with the plugin
 ```
-Commands: `/dung start|descend|leave|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop` (opens GUI) `/upgrades` (opens GUI) `/salvage [all|favorite]` `/leaderboard [category] [page]` `/plots [warp <name>]` `/plot claim|home|name|warp|settings|pvp|fire|public|trust|untrust|container|uncontainer|pickup|unpickup|unclaim`
+Commands: `/dung start|descend|leave|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop` (opens GUI) `/upgrades` (opens GUI) `/salvage [all|favorite]` `/leaderboard [category] [page]` `/plots [warp <name>]` `/plot claim|home|name|warp|settings|pvp|fire|public|trust|untrust|container|uncontainer|pickup|unpickup|unclaim` `/convert`

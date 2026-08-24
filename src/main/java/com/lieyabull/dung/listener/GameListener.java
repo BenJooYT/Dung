@@ -44,7 +44,9 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /** Wires Paper events to the game. Routes events to the correct dungeon instance per player. */
@@ -55,6 +57,9 @@ public final class GameListener implements Listener {
     /** Death locations for players who died in the plots world, so respawn can target their nearest
      *  owned plot. Cleared on respawn/quit. */
     private final Map<UUID, Location> plotsDeathLocations = new HashMap<>();
+    /** Players who died in a run world without an active instance — respawned to the lobby so they
+     *  never land in a world scheduled for deletion. Cleared when consumed on respawn. */
+    private final Set<UUID> runWorldDeaths = new HashSet<>();
 
     public GameListener(Dung plugin) {
         this.plugin = plugin;
@@ -66,6 +71,19 @@ public final class GameListener implements Listener {
 
     private DungeonInstance instanceOf(Player p) {
         return plugin.game().instanceOf(p);
+    }
+
+    /**
+     * Vanilla spawns hand-placed armor stands with arms disabled, so they can't hold items.
+     * Every armor stand a player places gets arms enabled (deferred 1 tick — the entity isn't
+     * fully initialized during EntityPlaceEvent), so they can be given held/armor items.
+     */
+    @EventHandler(ignoreCancelled = true)
+    public void onEntityPlace(org.bukkit.event.entity.EntityPlaceEvent e) {
+        if (!(e.getEntity() instanceof org.bukkit.entity.ArmorStand stand)) return;
+        org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
+            if (stand.isValid() && !stand.hasArms()) stand.setArms(true);
+        });
     }
 
     @EventHandler
@@ -82,26 +100,21 @@ public final class GameListener implements Listener {
                     "§6§lYou're an admin! §7The §flobby world §7is editable by operators and players"
                             + " with the §bdung.admin §7permission — build it up however you like."));
         }
-        // Send every joining player to the LOBBY spawn (deferred 1 tick so join completes first) —
-        // they must never land back inside a run world, which is deleted when its run ends.
-        org.bukkit.Location lobbySpawn = plugin.worldManager().lobbySpawn().clone();
-        org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
-            if (p.isOnline()) p.teleport(lobbySpawn);
-        });
-        if (!p.hasPlayedBefore()) {
-            p.teleport(p.getWorld().getSpawnLocation());
-            ChatUI.startPrompt(p);
-            return;
-        }
-        // Restore the player's last known location (e.g. plots world) instead of always
-        // sending them to the main world spawn. The location is saved on quit.
-        if (prof.lastWorld != null) {
-            org.bukkit.World w = resolveWorld(prof.lastWorld);
-            if (w != null) {
-                p.teleport(new org.bukkit.Location(w, prof.lastX, prof.lastY, prof.lastZ, prof.lastYaw, prof.lastPitch));
+        // Send every joining player to the LOBBY spawn — always, regardless of where they logged
+        // out. Deferred 2 ticks so the join fully completes first (and any vanilla respawn logic
+        // has settled); they must never land inside a run world, which is deleted when its run ends.
+        final org.bukkit.Location lobbySpawn = plugin.worldManager().lobbySpawn().clone();
+        org.bukkit.Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (p.isOnline() && !p.getWorld().getName()
+                    .equals(com.lieyabull.dung.world.WorldManager.LOBBY_WORLD_NAME)) {
+                p.teleport(lobbySpawn);
             }
+        }, 2L);
+        if (!p.hasPlayedBefore()) {
+            ChatUI.startPrompt(p);
+        } else {
+            ChatUI.startPrompt(p, plugin.game().instanceOf(p) == null);
         }
-        ChatUI.startPrompt(p, plugin.game().instanceOf(p) == null);
         // Migrate any persistent items in the player's inventory that lack UUIDs
         plugin.migratePersistentItemUuids();
     }
@@ -116,6 +129,51 @@ public final class GameListener implements Listener {
             return plugin.plotManager().getPlotsWorld();
         }
         return null;
+    }
+
+    // (resolveWorld kept for potential rejoin-location use; join now always routes to the lobby.)
+
+    /** Last vine-contact timestamp per player, for the post-vine fall-damage grace window. */
+    private final java.util.Map<UUID, Long> lastVineContact = new java.util.HashMap<>();
+
+    /**
+     * Floating-vine climbing: vanilla only lets you climb a vine when it's attached to something
+     * (and the client's own logic often refuses detached strands). This makes ANY vine climbable
+     * wherever you touch it: look up to climb, sneak to hold position, otherwise slide down slowly.
+     * Fall damage within 1.5s of leaving a vine is cancelled so the drop doesn't punish the climb.
+     */
+    @EventHandler(ignoreCancelled = true)
+    public void onVineClimb(PlayerMoveEvent e) {
+        Player p = e.getPlayer();
+        if (p.getGameMode() == org.bukkit.GameMode.SPECTATOR || p.isFlying()) return;
+        if (p.getLocation().getBlock().getType() != Material.VINE) return;
+        lastVineContact.put(p.getUniqueId(), System.currentTimeMillis());
+        org.bukkit.util.Vector v = p.getVelocity();
+        if (p.isSneaking()) {
+            // Hold position
+            if (v.getY() < -0.05) {
+                p.setVelocity(new org.bukkit.util.Vector(v.getX(), 0, v.getZ()));
+            }
+        } else if (p.getLocation().getPitch() < -25f) {
+            // Looking up: climb
+            if (v.getY() < 0.18) {
+                p.setVelocity(new org.bukkit.util.Vector(v.getX(), 0.18, v.getZ()));
+            }
+        } else if (v.getY() < -0.12) {
+            // Otherwise: slow, controlled descent instead of a plummet
+            p.setVelocity(new org.bukkit.util.Vector(v.getX(), -0.12, v.getZ()));
+        }
+    }
+
+    /** No fall damage right after climbing vines (the whole point of a vine). */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onVineFallDamage(org.bukkit.event.entity.EntityDamageEvent e) {
+        if (e.getCause() != org.bukkit.event.entity.EntityDamageEvent.DamageCause.FALL) return;
+        if (!(e.getEntity() instanceof Player p)) return;
+        Long last = lastVineContact.get(p.getUniqueId());
+        if (last != null && System.currentTimeMillis() - last < 1500) {
+            e.setCancelled(true);
+        }
     }
 
     /** Stop natural/world mob spawning, but ONLY inside the run's world while a run is active.
@@ -168,6 +226,12 @@ public final class GameListener implements Listener {
                 }
             });
         } else if (p.getLocation().getWorld() != null
+                && p.getLocation().getWorld().getName().startsWith(
+                        com.lieyabull.dung.world.WorldManager.RUN_WORLD_PREFIX)) {
+            // Died in a run world without an active instance (e.g. the run just ended): remember so
+            // onRespawn can send them to the lobby instead of a world scheduled for deletion.
+            runWorldDeaths.add(p.getUniqueId());
+        } else if (p.getLocation().getWorld() != null
                 && p.getLocation().getWorld().getName().equals(PlotManager.PLOTS_WORLD_NAME)) {
             // Death in the plots world: remember where so onRespawn can send them to their
             // nearest owned plot instead of the world spawn.
@@ -194,6 +258,17 @@ public final class GameListener implements Listener {
             }
             p.setHealth(20);
             p.setWalkSpeed((float) 0.2);
+            return;
+        }
+        // Died in a run world without an active instance, or respawned inside a run world whose
+        // run is gone: send them to the lobby (deferred a tick) so they never strand in a
+        // world scheduled for deletion.
+        boolean staleRunWorld = runWorldDeaths.remove(p.getUniqueId())
+                || (p.getWorld().getName().startsWith(com.lieyabull.dung.world.WorldManager.RUN_WORLD_PREFIX)
+                    && plugin.game().instanceOf(p) == null);
+        if (staleRunWorld) {
+            final org.bukkit.Location lobbySpawn = plugin.worldManager().lobbySpawn();
+            org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> p.teleport(lobbySpawn));
             return;
         }
         // Died in the plots world: respawn at their nearest owned plot instead of the world spawn.
@@ -255,16 +330,30 @@ public final class GameListener implements Listener {
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cThat armor is broken — repair it at §6/shop§7 before equipping."));
             return;
         }
-        // Shift-clicking a mana shield equips it into the slot-9 equip slot (only when no shield is
-        // currently equipped there, and never while it is broken).
+        // Shift-clicking a mana shield equips it into the slot-9 equip slot. If another shield is
+        // already equipped there, they SWAP: the previously equipped shield moves into the first
+        // free bag slot (never back into the slot the new one came from). Never while broken.
         if (e.isShiftClick() && e.getClickedInventory() instanceof PlayerInventory
                 && GearFactory.isShield(e.getCurrentItem())
-                && !GearFactory.isShield(inv.getItem(DungeonInstance.SHIELD_SLOT))
-                && !GearFactory.isBroken(e.getCurrentItem())) {
+                && !GearFactory.isBroken(e.getCurrentItem())
+                && e.getSlot() != DungeonInstance.SHIELD_SLOT) {
             e.setCancelled(true);
-            ItemStack shield = e.getCurrentItem().clone();
-            inv.setItem(e.getSlot(), null);
-            inv.setItem(DungeonInstance.SHIELD_SLOT, shield);
+            int clickedSlot = e.getSlot();
+            ItemStack newShield = e.getCurrentItem().clone();
+            inv.setItem(clickedSlot, null);
+            ItemStack old = inv.getItem(DungeonInstance.SHIELD_SLOT);
+            inv.setItem(DungeonInstance.SHIELD_SLOT, newShield);
+            if (old != null && !old.getType().isAir()) {
+                for (int i = 0; i < 36; i++) {
+                    if (i == DungeonInstance.SHIELD_SLOT || i == clickedSlot) continue;
+                    ItemStack s = inv.getItem(i);
+                    if (s == null || s.getType().isAir()) {
+                        inv.setItem(i, old);
+                        return;
+                    }
+                }
+                p.getWorld().dropItemNaturally(p.getLocation(), old); // bag full — don't lose it
+            }
             return;
         }
         // The offhand slot is disabled. Any attempt to place an item there (or retrieve one from it)
@@ -580,6 +669,13 @@ public final class GameListener implements Listener {
             return;
         }
         ItemStack held = p.getInventory().getItemInMainHand();
+        // Right-click equipping an armor piece: vanilla swaps it with whatever was in that armor
+        // slot. If a STARTER piece gets swapped out into the hand/bag, remove it (deferred one
+        // tick so the vanilla swap has taken effect before scanning).
+        if (isArmorItem(held)
+                && (e.getAction() == Action.RIGHT_CLICK_AIR || e.getAction() == Action.RIGHT_CLICK_BLOCK)) {
+            org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> di.removeDisplacedStarterArmor(p));
+        }
         boolean hasAbility = held != null && !held.getType().isAir() && held.getItemMeta() != null
                 && held.getItemMeta().getPersistentDataContainer()
                         .has(org.bukkit.NamespacedKey.minecraft(ItemTags.ABILITY),

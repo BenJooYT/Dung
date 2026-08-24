@@ -95,6 +95,18 @@ public final class DummyCommand implements CommandExecutor, TabCompleter {
                 p.sendMessage("§aDummy " + args[1].toLowerCase() + "-click command set to §f" + cmd + "§a.");
                 return true;
             }
+            case "setavatar": {
+                Dummy d = nearestOrMessage(p);
+                if (d == null) return true;
+                if (args.length != 2) {
+                    p.sendMessage("§cUsage: §f/dummy setavatar <playerName>§c.");
+                    return true;
+                }
+                plugin.dummyManager().setAvatar(d, args[1]);
+                p.sendMessage("§aDummy avatar set to §f" + args[1]
+                        + "§a. §7(Skin resolves from Mojang — it may take a moment to appear.)");
+                return true;
+            }
             case "removecommand": {
                 Dummy d = nearestOrMessage(p);
                 if (d == null) return true;
@@ -125,6 +137,13 @@ public final class DummyCommand implements CommandExecutor, TabCompleter {
                 }
                 return true;
             }
+            case "pos": {
+                Dummy d = nearestOrMessage(p);
+                if (d == null) return true;
+                plugin.dummyManager().relocate(d, p.getLocation());
+                p.sendMessage("§aDummy moved to your position and facing.");
+                return true;
+            }
             case "tp": {
                 Dummy d = nearestOrMessage(p);
                 if (d == null) return true;
@@ -151,6 +170,7 @@ public final class DummyCommand implements CommandExecutor, TabCompleter {
         p.sendMessage("  §f/dummy setcommand left|right <command> §7— Set a click command (runs as the clicker)");
         p.sendMessage("  §f/dummy removecommand left|right §7— Clear a click command");
         p.sendMessage("  §f/dummy list §7— List all dummies");
+        p.sendMessage("  §f/dummy pos §7— Move the nearest dummy to your position + look direction");
         p.sendMessage("  §f/dummy tp §7— Teleport to the nearest dummy");
     }
 
@@ -169,13 +189,18 @@ public final class DummyCommand implements CommandExecutor, TabCompleter {
         if (!(sender instanceof Player)) return List.of();
         if (args.length == 1) {
             List<String> subs = new ArrayList<>(List.of("create", "remove", "name", "setcommand",
-                    "removecommand", "list", "tp", "help"));
+                    "removecommand", "setavatar", "list", "pos", "tp", "help"));
             return subs.stream().filter(s -> s.startsWith(args[0].toLowerCase())).toList();
         }
         if (args.length == 2 && (args[0].equalsIgnoreCase("setcommand")
                 || args[0].equalsIgnoreCase("removecommand"))) {
             return List.of("left", "right").stream()
                     .filter(s -> s.startsWith(args[1].toLowerCase())).toList();
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("setavatar")) {
+            // Suggest online players for convenience; any offline name is still accepted.
+            return Bukkit.getOnlinePlayers().stream().map(Player::getName)
+                    .filter(n -> n.toLowerCase().startsWith(args[1].toLowerCase())).toList();
         }
         return List.of();
     }

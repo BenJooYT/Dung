@@ -12,6 +12,8 @@ import com.lieyabull.dung.items.GearFactory;
 import com.lieyabull.dung.compost.CompostManager;
 import com.lieyabull.dung.dummy.DummyManager;
 import com.lieyabull.dung.listener.CompostListener;
+import com.lieyabull.dung.listener.PotionListener;
+import com.lieyabull.dung.plot.ProvenanceManager;
 import com.lieyabull.dung.structure.StructureManager;
 import com.lieyabull.dung.ui.ShopUI;
 import com.lieyabull.dung.ui.StashUI;
@@ -34,6 +36,8 @@ public final class Dung extends JavaPlugin {
     private PlotManager plotManager;
     private StructureManager structureManager;
     private CompostManager compost;
+    private ProvenanceManager provenanceManager;
+    private PotionListener potionListener;
     private DummyManager dummyManager;
     private World world;
     private com.lieyabull.dung.world.WorldManager worldManager;
@@ -55,30 +59,31 @@ public final class Dung extends JavaPlugin {
         plotManager = new PlotManager(this);
         structureManager = new StructureManager(this);
         compost = new CompostManager(this);
+        provenanceManager = new ProvenanceManager(this);
+        potionListener = new PotionListener(this);
         dummyManager = new DummyManager(this);
         Bukkit.getPluginManager().registerEvents(dummyManager, this);
         Bukkit.getPluginManager().registerEvents(new com.lieyabull.dung.listener.LobbyListener(this), this);
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
         Bukkit.getPluginManager().registerEvents(new PlotListener(this), this);
         Bukkit.getPluginManager().registerEvents(new CompostListener(this), this);
+        Bukkit.getPluginManager().registerEvents(provenanceManager, this);
+        Bukkit.getPluginManager().registerEvents(potionListener, this);
+        Bukkit.getPluginManager().registerEvents(new com.lieyabull.dung.listener.ChatFormatListener(), this);
         Bukkit.getPluginManager().registerEvents(shopUI, this);
         Bukkit.getPluginManager().registerEvents(stashUI, this);
         Bukkit.getPluginManager().registerEvents(workstationUI, this);
-        getCommand("dung").setExecutor(new DungCommand(this));
-        getCommand("dungeon").setExecutor(new DungCommand(this));
-        getCommand("shop").setExecutor(new DungCommand(this));
-        getCommand("upgrades").setExecutor(new DungCommand(this));
-        getCommand("salvage").setExecutor(new DungCommand(this));
-        getCommand("stash").setExecutor(new DungCommand(this));
-        getCommand("party").setExecutor(new DungCommand(this));
-        getCommand("balance").setExecutor(new DungCommand(this));
-        getCommand("leaderboard").setExecutor(new DungCommand(this));
-        // Autofill for all DungCommand-backed commands (dung, dungeon, shop, upgrades, salvage,
-        // party, balance, leaderboard) so players can see the available arguments.
-        DungCommand dungCmd = new DungCommand(this);
-        for (String name : new String[]{"dung", "dungeon", "shop", "upgrades", "salvage", "stash", "party", "balance", "leaderboard"}) {
-            getCommand(name).setExecutor(dungCmd);
-            getCommand(name).setTabCompleter(dungCmd);
+        com.lieyabull.dung.command.MetaCommand metaCmd = new com.lieyabull.dung.command.MetaCommand(this);
+        DungCommand dungCmd = new DungCommand(this, metaCmd);
+        // Core run commands
+        getCommand("dung").setExecutor(dungCmd);
+        getCommand("dungeon").setExecutor(dungCmd);
+        getCommand("dung").setTabCompleter(dungCmd);
+        getCommand("dungeon").setTabCompleter(dungCmd);
+        // Non-dung commands (shop/upgrades/salvage/stash/party/balance/leaderboard)
+        for (String name : new String[]{"shop", "upgrades", "salvage", "stash", "party", "balance", "leaderboard"}) {
+            getCommand(name).setExecutor(metaCmd);
+            getCommand(name).setTabCompleter(metaCmd);
         }
         PlotCommand plotCmd = new PlotCommand(this);
         getCommand("plots").setExecutor(plotCmd);
@@ -89,8 +94,14 @@ public final class Dung extends JavaPlugin {
         getCommand("dummy").setExecutor(dummyCmd);
         getCommand("dummy").setTabCompleter(dummyCmd);
         getCommand("setlobby").setExecutor(new com.lieyabull.dung.command.SetLobbyCommand(this));
-        // Dummies need loaded worlds to respawn — load + spawn 1 tick after enable.
-        Bukkit.getScheduler().runTask(this, () -> dummyManager.loadAll());
+        getCommand("lobby").setExecutor(new com.lieyabull.dung.command.LobbyCommand(this));
+        getCommand("convert").setExecutor(plotCmd);
+        getCommand("flyspeed").setExecutor(new com.lieyabull.dung.command.FlySpeedCommand(this));
+        // The lobby world is lazy-created — resolve it NOW so dummies living there exist when
+        // loadAll runs (previously every restart silently skipped them as "unloaded world").
+        worldManager().getLobby();
+        // Dummies need loaded worlds to respawn — give the world a few ticks to finish init.
+        Bukkit.getScheduler().runTaskLater(this, () -> dummyManager.loadAll(), 5L);
         // Migrate existing persistent items to have UUIDs (for pre-UUID items)
         migratePersistentItemUuids();
         getLogger().info("Dung enabled. World resolved lazily.");
@@ -152,6 +163,14 @@ public final class Dung extends JavaPlugin {
 
     public CompostManager compost() {
         return compost;
+    }
+
+    public ProvenanceManager provenanceManager() {
+        return provenanceManager;
+    }
+
+    public PotionListener potionListener() {
+        return potionListener;
     }
 
     public DummyManager dummyManager() {

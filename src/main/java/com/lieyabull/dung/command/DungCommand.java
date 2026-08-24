@@ -31,11 +31,12 @@ import java.util.UUID;
 
 public final class DungCommand implements CommandExecutor, TabCompleter {
     private final Dung plugin;
-    private final Map<UUID, Long> lastPartyInvite = new HashMap<>();
-    private static final long PARTY_INVITE_COOLDOWN_MS = 5000;
+    /** Non-run commands (/shop, /party, /leaderboard, …) live here; /dung <sub> delegates to it. */
+    private final MetaCommand meta;
 
-    public DungCommand(Dung plugin) {
+    public DungCommand(Dung plugin, MetaCommand meta) {
         this.plugin = plugin;
+        this.meta = meta;
     }
 
     @Override
@@ -50,13 +51,13 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         switch (label.toLowerCase()) {
-            case "shop": return shopCmd(p, args);
-            case "upgrades": return upgradesCmd(p, args);
-            case "stash": return stashCmd(p, args);
-            case "salvage": return salvageCmd(p, args);
-            case "party": return partyCmd(p, args);
-            case "balance": balance(p, args); return true;
-            case "leaderboard": leaderboard(p, args); return true;
+            case "shop": return meta.shopCmd(p, args);
+            case "upgrades": return meta.upgradesCmd(p, args);
+            case "stash": return meta.stashCmd(p, args);
+            case "salvage": return meta.salvageCmd(p, args);
+            case "party": return meta.partyCmd(p, args);
+            case "balance": meta.balance(p, args); return true;
+            case "leaderboard": meta.leaderboard(p, args); return true;
             default: return dungCmd(p, args);
         }
     }
@@ -155,16 +156,20 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                 }
                 return true;
             }
-            case "party": return partyCmd(p, args);
-            case "shop": return shopCmd(p, args);
-            case "upgrades": return upgradesCmd(p, args);
-            case "salvage": return salvageCmd(p, args);
-            case "balance": balance(p, args); return true;
+            case "party": return meta.partyCmd(p, args);
+            case "shop": return meta.shopCmd(p, args);
+            case "upgrades": return meta.upgradesCmd(p, args);
+            case "salvage": return meta.salvageCmd(p, args);
+            case "balance": meta.balance(p, args); return true;
             case "stats": stats(p); return true;
             case "class": classCmd(p, args); return true;
             case "give":
                 if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
                 give(p, args);
+                return true;
+            case "lobbykit":
+                if (!p.isOp()) { p.sendMessage("§cNo permission."); return true; }
+                lobbyKit(p);
                 return true;
             case "stop":
                 if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
@@ -500,319 +505,75 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
         return out.toArray(new String[0]);
     }
 
-    // ---------- /party ----------
+    // ---------- /dung lobbykit ----------
 
-    private boolean partyCmd(Player p, String[] args) {
-        PartyManager pm = plugin.game().partyManager();
-        GameManager gm = plugin.game();
-        if (args.length == 0) {
-            Party party = pm.partyOf(p);
-            if (party == null) {
-                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7You are not in a party. Use §f/party create§7 to start one."));
-                p.sendMessage("§7Commands: §fcreate, invite <player>, accept, decline, leave, kick <player>, disband, info");
-                return true;
+    /** The lobby-builder palette: dark stone core, gold accents, warm wood, upgrade-room purples,
+     *  treasure-room quartz, and softening greenery for the void lobby world. */
+    private static final String[][] LOBBY_KIT = {
+            {"polished_blackstone", "64"}, {"polished_blackstone_bricks", "64"},
+            {"chiseled_polished_blackstone", "64"}, {"blackstone_slab", "64"},
+            {"blackstone_wall", "64"}, {"polished_blackstone_brick_wall", "64"},
+            {"gilded_blackstone", "16"}, {"gold_block", "16"},
+            {"lantern", "32"}, {"soul_lantern", "32"}, {"iron_chain", "32"}, {"end_rod", "32"},
+            {"crimson_planks", "64"}, {"crimson_slab", "64"}, {"spruce_planks", "64"},
+            {"spruce_stairs", "64"}, {"dark_oak_door", "16"}, {"crimson_fence", "32"},
+            {"amethyst_block", "32"}, {"purpur_block", "32"}, {"purpur_pillar", "16"},
+            {"quartz_block", "32"}, {"quartz_pillar", "16"}, {"emerald_block", "8"},
+            {"moss_block", "64"}, {"moss_carpet", "64"},
+            {"azalea", "16"}, {"flowering_azalea", "16"}, {"spore_blossom", "16"},
+            {"glow_berries", "16"}, {"hanging_roots", "32"},
+            {"big_dripleaf", "16"}, {"small_dripleaf", "16"},
+            {"lilac", "16"}, {"peony", "16"}, {"rose_bush", "16"},
+            {"grass_block", "64"}, {"coarse_dirt", "64"}, {"gravel", "64"},
+            {"andesite", "64"}, {"polished_andesite", "64"},
+            {"stone_brick_stairs", "64"}, {"mossy_stone_bricks", "64"}, {"cracked_stone_bricks", "16"},
+            {"sea_lantern", "16"}, {"shroomlight", "32"}, {"ochre_froglight", "32"},
+            {"item_frame", "16"}, {"armor_stand", "8"}, {"name_tag", "4"},
+            {"oak_sign", "16"}, {"flower_pot", "16"},
+    };
+
+    /** /dung lobbykit (op-only): hands the caller the full lobby-building palette packed into
+     *  pre-filled shulker boxes (as many as needed), added straight to their inventory. */
+    private void lobbyKit(Player p) {
+        java.util.List<org.bukkit.inventory.ItemStack> entries = new java.util.ArrayList<>();
+        int skipped = 0;
+        for (String[] e : LOBBY_KIT) {
+            org.bukkit.Material mat = org.bukkit.Material.matchMaterial(e[0].toUpperCase());
+            if (mat == null) {
+                // Skip rather than abort — a single renamed material shouldn't kill the kit
+                p.sendMessage("§7Skipping unknown kit material: §f" + e[0]);
+                skipped++;
+                continue;
             }
-            p.sendMessage("§6--- Party ---");
-            p.sendMessage("§7Leader: §f" + Bukkit.getOfflinePlayer(party.leader()).getName());
-            p.sendMessage("§7Members (" + party.size() + "/" + Party.MAX_SIZE + "):");
-            for (java.util.UUID uid : party.members()) {
-                String name = Bukkit.getOfflinePlayer(uid).getName();
-                String tag = uid.equals(party.leader()) ? " §6(Leader)" : "";
-                p.sendMessage("  §7- §f" + name + tag);
-            }
-            return true;
+            org.bukkit.inventory.ItemStack s = new org.bukkit.inventory.ItemStack(mat);
+            s.setAmount(Integer.parseInt(e[1]));
+            entries.add(s);
         }
-        switch (args[0].toLowerCase()) {
-            case "create": {
-                if (pm.partyOf(p) != null) {
-                    p.sendMessage("§cYou're already in a party. Leave first.");
-                    return true;
-                }
-                pm.createParty(p);
-                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§aParty created! Invite players with §f/party invite <player>"));
-                return true;
-            }
-            case "invite": {
-                if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: /party invite <player>")); return true; }
-                long now = System.currentTimeMillis();
-                Long last = lastPartyInvite.get(p.getUniqueId());
-                if (last != null && now - last < PARTY_INVITE_COOLDOWN_MS) {
-                    p.sendMessage("§cYou can't invite yet. Wait " + (int) Math.ceil((PARTY_INVITE_COOLDOWN_MS - (now - last)) / 1000.0) + "s.");
-                    return true;
-                }
-                Player target = Bukkit.getPlayer(args[1]);
-                if (target == null) { p.sendMessage("§cPlayer not found."); return true; }
-                if (target.equals(p)) { p.sendMessage("§cYou can't invite yourself."); return true; }
-                if (gm.isInInstance(p)) {
-                    p.sendMessage("§cYou can't invite while your party is in a run.");
-                    return true;
-                }
-                if (pm.invite(p, target)) {
-                    lastPartyInvite.put(p.getUniqueId(), now);
-                    p.sendMessage("§aInvited " + target.getName() + " to the party.");
-                    target.sendMessage(
-                            com.lieyabull.dung.ui.ChatUI.command("§a[Accept]", "/party accept", "Join the party")
-                                    .append(Component.text("  "))
-                                    .append(com.lieyabull.dung.ui.ChatUI.command("§c[Decline]", "/party decline", "Decline the invite"))
-                                    .hoverEvent(null) // remove hover from the container
-                    );
-                    target.sendMessage("§a" + p.getName() + " invited you to a party!");
-                } else {
-                    p.sendMessage("§cCould not invite. They may already be in a party, or the party is full.");
-                }
-                return true;
-            }
-            case "accept": {
-                if (gm.isInInstance(p)) {
-                    p.sendMessage("§cYou can't join a party while you're in a run.");
-                    return true;
-                }
-                UUID inviterId = pm.getInviter(p);
-                Player inviter = inviterId != null ? Bukkit.getPlayer(inviterId) : null;
-                if (inviter != null && gm.isInInstance(inviter)) {
-                    p.sendMessage("§cThat party has already started a run.");
-                    return true;
-                }
-                if (pm.acceptInvite(p)) {
-                    p.sendMessage("§aYou joined the party!");
-                } else {
-                    p.sendMessage("§cNo pending invite or party is full.");
-                }
-                return true;
-            }
-            case "decline": {
-                pm.declineInvite(p);
-                p.sendMessage("§7Invite declined.");
-                return true;
-            }
-            case "leave": {
-                pm.leaveParty(p);
-                DungeonInstance leaveDi = gm.instanceOf(p);
-                if (leaveDi != null) leaveDi.removePlayer(p);
-                p.sendMessage("§7You left the party.");
-                return true;
-            }
-            case "kick": {
-                if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: /party kick <player>")); return true; }
-                Player target = Bukkit.getPlayer(args[1]);
-                if (target == null) { p.sendMessage("§cPlayer not found."); return true; }
-                if (pm.kick(p, target)) {
-                    DungeonInstance kickDi = gm.instanceOf(target);
-                    if (kickDi != null) kickDi.removePlayer(target);
-                    p.sendMessage("§aKicked " + target.getName() + " from the party.");
-                } else {
-                    p.sendMessage("§cCould not kick. You may not be the leader.");
-                }
-                return true;
-            }
-            case "disband": {
-                DungeonInstance disbandDi = gm.instanceOf(p);
-                if (pm.disband(p)) {
-                    if (disbandDi != null) disbandDi.endRun();
-                    p.sendMessage("§cParty disbanded.");
-                } else {
-                    p.sendMessage("§cYou are not the party leader.");
-                }
-                return true;
-            }
-            default:
-                p.sendMessage("§7Party commands: §fcreate, invite <player>, accept, decline, leave, kick <player>, disband, info");
-                return true;
+        // Pack entries into shulker boxes (27 slots each), named per box.
+        java.util.List<org.bukkit.inventory.ItemStack> shulkers = new java.util.ArrayList<>();
+        int boxNum = 1;
+        for (int i = 0; i < entries.size(); i += 27) {
+            org.bukkit.inventory.ItemStack boxItem = new org.bukkit.inventory.ItemStack(org.bukkit.Material.BLACK_SHULKER_BOX);
+            org.bukkit.block.ShulkerBox box = ((org.bukkit.inventory.meta.BlockStateMeta) boxItem.getItemMeta())
+                    .getBlockState() instanceof org.bukkit.block.ShulkerBox sb ? sb : null;
+            if (box == null) { p.sendMessage("§cFailed to create shulker box state."); return; }
+            for (int j = i; j < Math.min(i + 27, entries.size()); j++) box.getInventory().addItem(entries.get(j));
+            var bsm = (org.bukkit.inventory.meta.BlockStateMeta) boxItem.getItemMeta();
+            bsm.setBlockState(box);
+            bsm.displayName(net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
+                    .legacySection().deserialize("§8Lobby Kit §7(" + boxNum + ")"));
+            boxItem.setItemMeta(bsm);
+            shulkers.add(boxItem);
+            boxNum++;
+        }
+        var leftover = p.getInventory().addItem(shulkers.toArray(new org.bukkit.inventory.ItemStack[0]));
+        leftover.values().forEach(drop -> p.getWorld().dropItemNaturally(p.getLocation(), drop));
+        p.sendMessage("§aGave you §f" + shulkers.size() + "§a Lobby Kit shulker"
+                + (shulkers.size() == 1 ? "" : "s") + "§a — happy building!");
+        if (skipped > 0) {
+            p.sendMessage("§7(§f" + skipped + "§7 kit material(s) skipped — renamed in this Minecraft version.)");
         }
     }
-
-    // ---------- /shop ----------
-
-    private boolean shopCmd(Player p, String[] args) {
-        if (plugin.game().isInInstance(p)) {
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYou can't use /shop while inside a dungeon run. Leave with /dung leave first."));
-            return true;
-        }
-        plugin.shopUI().openPersistentShop(p);
-        return true;
-    }
-
-    // ---------- /upgrades ----------
-
-    private boolean upgradesCmd(Player p, String[] args) {
-        if (plugin.game().isInInstance(p)) {
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYou can't use /upgrades while inside a dungeon run. Leave with /dung leave first."));
-            return true;
-        }
-        plugin.shopUI().openUpgrades(p);
-        return true;
-    }
-
-    // ---------- /stash ----------
-
-    private boolean stashCmd(Player p, String[] args) {
-        plugin.stashUI().open(p);
-        return true;
-    }
-
-    // ---------- /salvage ----------
-
-    private boolean salvageCmd(Player p, String[] args) {
-        if (args.length > 0 && args[0].equalsIgnoreCase("all")) return salvageAll(p);
-        if (args.length > 0 && (args[0].equalsIgnoreCase("fav") || args[0].equalsIgnoreCase("favorite"))) {
-            return toggleFavorite(p);
-        }
-        return salvageHeld(p);
-    }
-
-    /** Break the held Dung armor piece into salvage shards. Shards are permanent: during a run they're
-     *  added to a per-floor counter that becomes persistent shards when the floor boss is defeated;
-     *  outside a run they go straight into your persistent shard balance. */
-    private boolean salvageHeld(Player p) {
-        ItemStack held = p.getInventory().getItemInMainHand();
-        String kind = tag(held, ItemTags.KIND);
-        if (!"armor".equals(kind)) {
-            p.sendMessage("§cHold a Dung armor piece in your main hand to salvage it.");
-            return true;
-        }
-        if (GearFactory.isFavorite(held)) {
-            p.sendMessage(ChatUI.clickableCommands("§8That armor is §bfavorited§8. Run §f/salvage favorite§8 to un-favorite it first."));
-            return true;
-        }
-        if (GearFactory.isStarter(held)) {
-            p.sendMessage("§8That's your free starter kit — it can't be salvaged.");
-            return true;
-        }
-        // Persistent gear IS salvable when held, so a player can consciously turn a permanent piece
-        // into shards. Favorite it (via /salvage favorite) if you want it protected from accidental
-        // salvage. Bulk salvage (/salvage all) still skips persistent gear.
-        String name = held.getItemMeta() == null ? held.getType().name() : held.getItemMeta().getDisplayName();
-        int value = salvageValue(held);
-        int amount = held.getAmount() - 1;
-        if (amount <= 0) p.getInventory().setItemInMainHand(null);
-        else held.setAmount(amount);
-        UUID pid = p.getUniqueId();
-        DungeonInstance di = plugin.game().instanceOf(p);
-        if (di == null) {
-            addShards(p, value);
-            p.sendMessage("§bSalvaged " + rarityColor(held) + name
-                    + "§b → §b+" + value + " shards§7 (balance §b" + plugin.meta().profile(pid).shards + "§7).");
-        } else {
-            Run run = di.run();
-            run.salvageShards.merge(pid, value, Integer::sum);
-            int total = run.salvageShards.getOrDefault(pid, 0);
-            p.sendMessage("§bSalvaged " + rarityColor(held) + name
-                    + "§b → §b+" + value + " shards§7 (floor total §b" + total + "§7).");
-        }
-        return true;
-    }
-
-    /** Toggle the favorite flag on the held armor piece (works anywhere, protects from salvage). */
-    private boolean toggleFavorite(Player p) {
-        ItemStack held = p.getInventory().getItemInMainHand();
-        if (!"armor".equals(tag(held, ItemTags.KIND))) {
-            p.sendMessage("§cHold a Dung armor piece to favorite/un-favorite it.");
-            return true;
-        }
-        boolean now = com.lieyabull.dung.items.GearFactory.toggleFavorite(held);
-        p.sendMessage(now
-                ? "§bFavorited — §f/salvage§b and §f/salvage all§b will skip this piece."
-                : "§7Un-favorited — this piece can be salvaged again.");
-        return true;
-    }
-
-    /** Salvage every salvable armor piece in the main inventory OUTSIDE the hotbar, armor slots,
-     *  and offhand. Favorited pieces are always skipped. Shards go to the persistent balance outside
-     *  a run, or to the per-floor counter during a run. */
-    private boolean salvageAll(Player p) {
-        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
-        int pieces = 0, totalValue = 0;
-        // main storage only (0-35); slots 36+ are armor/offhand which getSize() ALSO includes,
-        // and those are armed/equipped, not "in the bag".
-        for (int slot = 9; slot < 36; slot++) {
-            org.bukkit.inventory.ItemStack s = inv.getItem(slot);
-            if (!isSalvableArmor(s)) continue;
-            pieces++;
-            totalValue += salvageValue(s);
-            inv.setItem(slot, null);
-        }
-        if (pieces == 0) {
-            p.sendMessage("§7Nothing to salvage — no Dung armor in your bag that isn't favorited, hotbar, or equipped.");
-            return true;
-        }
-        UUID pid = p.getUniqueId();
-        DungeonInstance di = plugin.game().instanceOf(p);
-        if (di == null) {
-            addShards(p, totalValue);
-            p.sendMessage("§bSalvaged §f" + pieces + "§b armor pieces §b→ §b+" + totalValue
-                    + " shards§7 (balance §b" + plugin.meta().profile(pid).shards + "§7).");
-        } else {
-            Run run = di.run();
-            run.salvageShards.merge(pid, totalValue, Integer::sum);
-            int total = run.salvageShards.getOrDefault(pid, 0);
-            p.sendMessage("§bSalvaged §f" + pieces + "§b armor pieces §b→ §b+" + totalValue
-                    + " shards§7 (floor total §b" + total + "§7).");
-        }
-        return true;
-    }
-
-    /** Bulk-salvage eligibility — single source of truth in {@link WorkstationRules}. */
-    private static boolean isSalvableArmor(org.bukkit.inventory.ItemStack s) {
-        return com.lieyabull.dung.game.WorkstationRules.isBulkSalvageable(s);
-    }
-
-    /** Shard value of one piece — single source of truth in {@link WorkstationRules}. */
-    private static int salvageValue(org.bukkit.inventory.ItemStack s) {
-        return com.lieyabull.dung.game.WorkstationRules.salvageValueOf(s);
-    }
-
-    private static String pdcString(org.bukkit.inventory.ItemStack s, String key) {
-        if (s == null || s.getItemMeta() == null) return null;
-        return s.getItemMeta().getPersistentDataContainer().get(
-                org.bukkit.NamespacedKey.minecraft(key), org.bukkit.persistence.PersistentDataType.STRING);
-    }
-
-    private static int pdcInt(org.bukkit.inventory.ItemStack s, String key) {
-        if (s == null || s.getItemMeta() == null) return 0;
-        Integer v = s.getItemMeta().getPersistentDataContainer().get(
-                org.bukkit.NamespacedKey.minecraft(key), org.bukkit.persistence.PersistentDataType.INTEGER);
-        return v == null ? 0 : v;
-    }
-
-    private void addShards(Player p, int amount) {
-        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
-        prof.shards += amount;
-        plugin.meta().save();
-    }
-
-    private String rarityColor(org.bukkit.inventory.ItemStack s) {
-        String rs = pdcString(s, ItemTags.RARITY);
-        if (rs == null) return "";
-        try {
-            return Rarity.valueOf(rs).legacy;
-        } catch (IllegalArgumentException e) {
-            return "";
-        }
-    }
-
-    // ---------- balance ----------
-
-    private void balance(Player p, String[] args) {
-        if (args.length > 1) {
-            // Check another player's balance
-            Player target = Bukkit.getPlayerExact(args[1]);
-            if (target == null) {
-                p.sendMessage("§cPlayer not found.");
-                return;
-            }
-            MetaManager.MetaProfile prof = plugin.meta().profile(target.getUniqueId());
-            p.sendMessage("§6--- " + target.getName() + "'s Balance ---");
-            p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins);
-            p.sendMessage("§7Shards: §b" + prof.shards);
-        } else {
-            MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
-            p.sendMessage("§6--- " + p.getName() + "'s Balance ---");
-            p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins);
-            p.sendMessage("§7Shards: §b" + prof.shards);
-        }
-    }
-
-    // ---------- leaderboard ----------
 
     private static final String[] DUNG_SUBS = {
             "start", "leave", "descend", "stats", "class", "give", "shieldswitch",
@@ -823,8 +584,6 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
     private static final String[] PARTY_SUBS = {"create", "invite", "accept", "decline", "leave", "kick", "disband", "info"};
     private static final String[] CLASSES = {"warrior", "mage", "ranger"};
     private static final String[] GIVE_TYPES = {"rareweapon", "heal", "coins"};
-    private static final String[] SALVAGE_SUBS = {"all", "favorite", "fav"};
-
     @Override
     public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
         if (!(sender instanceof Player p)) return List.of();
@@ -845,23 +604,6 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                 String sub = args[1].toLowerCase();
                 if (sub.equals("invite") || sub.equals("kick")) return playerNames(args[2]);
             }
-            return List.of();
-        }
-        if (label.equals("party")) {
-            if (args.length == 1) return filter(PARTY_SUBS, args[0]);
-            if (args.length == 2) {
-                String sub = args[0].toLowerCase();
-                if (sub.equals("invite") || sub.equals("kick")) return playerNames(args[1]);
-            }
-            return List.of();
-        }
-        if (label.equals("salvage")) {
-            if (args.length == 1) return filter(SALVAGE_SUBS, args[0]);
-            return List.of();
-        }
-        if (label.equals("leaderboard")) {
-            if (args.length == 1) return filter(LB_CATEGORIES, args[0]);
-            if (args.length == 2) return filter(new String[]{"1", "2", "3", "4", "5"}, args[1]);
             return List.of();
         }
         // shop, upgrades, balance: no arguments
@@ -886,151 +628,6 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
             if (pl.getName().toLowerCase().startsWith(q)) out.add(pl.getName());
         }
         return out;
-    }
-
-    private static final String[] LB_CATEGORIES = {
-            "persistent_coins", "shards", "kills", "clears", "max_floor"
-    };
-    private static final String[] LB_LABELS = {
-            "§6Persistent Coins", "§bShards", "§cKills", "§aFloors Cleared", "§5Max Floor"
-    };
-    private static final int LB_PER_PAGE = 5;
-
-    private void leaderboard(Player p, String[] args) {
-        int catIdx = 0; // default: persistent_coins
-        int page = 1;
-
-        // args layout: /leaderboard <category> <page> (args[0] = category, args[1] = page)
-        if (args.length > 0) {
-            boolean found = false;
-            for (int i = 0; i < LB_CATEGORIES.length; i++) {
-                if (LB_CATEGORIES[i].equalsIgnoreCase(args[0])) {
-                    catIdx = i;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                p.sendMessage("§cUnknown leaderboard category: §f" + args[0]
-                        + "§c. Valid: §f" + String.join(", ", LB_CATEGORIES));
-                return;
-            }
-        }
-        if (args.length > 1) {
-            try {
-                page = Math.max(1, Integer.parseInt(args[1]));
-            } catch (NumberFormatException ignored) {}
-        }
-
-        // Collect all saved profiles (including offline players) from the save file.
-        var meta = plugin.meta();
-        java.util.List<java.util.Map.Entry<java.util.UUID, MetaManager.MetaProfile>> sorted =
-                new java.util.ArrayList<>(meta.allProfiles().entrySet());
-
-        // Sort by the selected category descending
-        java.util.Comparator<java.util.Map.Entry<java.util.UUID, MetaManager.MetaProfile>> comp;
-        switch (catIdx) {
-            case 0: comp = java.util.Map.Entry.comparingByValue(
-                    java.util.Comparator.comparingInt(prof -> prof.persistentCoins)); break;
-            case 1: comp = java.util.Map.Entry.comparingByValue(
-                    java.util.Comparator.comparingInt(prof -> prof.shards)); break;
-            case 2: comp = java.util.Map.Entry.comparingByValue(
-                    java.util.Comparator.comparingInt(prof -> prof.kills)); break;
-            case 3: comp = java.util.Map.Entry.comparingByValue(
-                    java.util.Comparator.comparingInt(prof -> prof.clears)); break;
-            case 4: comp = java.util.Map.Entry.comparingByValue(
-                    java.util.Comparator.comparingInt(prof -> prof.bestFloor)); break;
-            default: comp = java.util.Map.Entry.comparingByValue(
-                    java.util.Comparator.comparingInt(prof -> prof.persistentCoins));
-        }
-        sorted.sort(comp.reversed());
-
-        int totalPages = Math.max(1, (int) Math.ceil((double) sorted.size() / LB_PER_PAGE));
-        if (page > totalPages) page = totalPages;
-        int start = (page - 1) * LB_PER_PAGE;
-        int end = Math.min(start + LB_PER_PAGE, sorted.size());
-
-        // Build header
-        p.sendMessage("");
-        p.sendMessage("§6§l--- " + LB_LABELS[catIdx] + " §6§lLeaderboard ---");
-        p.sendMessage("");
-
-        if (sorted.isEmpty()) {
-            p.sendMessage("§7No data yet.");
-        } else {
-            for (int i = start; i < end; i++) {
-                var entry = sorted.get(i);
-                // Prefer the persisted profile name (so offline players are shown too); fall back to
-                // Bukkit's offline lookup, then a placeholder.
-                String name = entry.getValue().name;
-                if (name == null) name = org.bukkit.Bukkit.getOfflinePlayer(entry.getKey()).getName();
-                if (name == null) name = "§7Unknown";
-                boolean online = org.bukkit.Bukkit.getPlayer(entry.getKey()) != null;
-                String suffix = online ? "" : " §8(offline)";
-                int rank = i + 1;
-                String rankStr = rank <= 3 ? getRankColor(rank) + "#" + rank : "§7#" + rank;
-                int value = switch (catIdx) {
-                    case 0 -> entry.getValue().persistentCoins;
-                    case 1 -> entry.getValue().shards;
-                    case 2 -> entry.getValue().kills;
-                    case 3 -> entry.getValue().clears;
-                    case 4 -> entry.getValue().bestFloor;
-                    default -> 0;
-                };
-                p.sendMessage(rankStr + " §f" + name + suffix + " §7- §e" + value);
-            }
-        }
-
-        p.sendMessage("");
-        // Page navigation
-        var line = net.kyori.adventure.text.Component.empty();
-        if (page > 1) {
-            line = line.append(ChatUI.command("§7[§f◀ Prev§7]", "/leaderboard " + LB_CATEGORIES[catIdx] + " " + (page - 1), "Previous page"));
-        } else {
-            line = line.append(LegacyComponentSerializer.legacySection().deserialize("§8◀ Prev"));
-        }
-        line = line.append(LegacyComponentSerializer.legacySection().deserialize(" §7Page " + page + "/" + totalPages + " "));
-        if (page < totalPages) {
-            line = line.append(ChatUI.command("§7[§fNext ▶§7]", "/leaderboard " + LB_CATEGORIES[catIdx] + " " + (page + 1), "Next page"));
-        } else {
-            line = line.append(LegacyComponentSerializer.legacySection().deserialize("§8Next ▶"));
-        }
-        p.sendMessage(line);
-
-        // Category switcher buttons
-        var catLine = LegacyComponentSerializer.legacySection().deserialize("§7Categories: ");
-        for (int i = 0; i < LB_CATEGORIES.length; i++) {
-            if (i == catIdx) {
-                catLine = catLine.append(LegacyComponentSerializer.legacySection().deserialize("§a§l" + getShortLabel(i) + "§7"));
-            } else {
-                catLine = catLine.append(ChatUI.command("§7" + getShortLabel(i), "/leaderboard " + LB_CATEGORIES[i] + " 1", LB_LABELS[i]));
-            }
-            if (i < LB_CATEGORIES.length - 1) {
-                catLine = catLine.append(LegacyComponentSerializer.legacySection().deserialize(" §8| "));
-            }
-        }
-        p.sendMessage(catLine);
-        p.sendMessage("");
-    }
-
-    private static String getRankColor(int rank) {
-        return switch (rank) {
-            case 1 -> "§b"; // aqua
-            case 2 -> "§9"; // blue
-            case 3 -> "§1"; // dark blue
-            default -> "§7";
-        };
-    }
-
-    private static String getShortLabel(int idx) {
-        return switch (idx) {
-            case 0 -> "Coins";
-            case 1 -> "Shards";
-            case 2 -> "Kills";
-            case 3 -> "Clears";
-            case 4 -> "MaxFloor";
-            default -> "?";
-        };
     }
 
     // ---------- existing: stats / class / give ----------

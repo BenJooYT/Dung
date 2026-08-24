@@ -37,6 +37,20 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
         return false;
     }
 
+    /** /convert (and /plot convert): toggle whether potions may transform player-placed blocks. */
+    private boolean convertCmd(Player p) {
+        if (p.getLocation().getWorld() == null
+                || !p.getLocation().getWorld().getName().equals("dung_plots")) {
+            p.sendMessage("§cYou can only use /convert in the plots world.");
+            return true;
+        }
+        boolean enabled = plugin.potionListener().toggleConvert(p.getUniqueId());
+        p.sendMessage(enabled
+                ? "§aConvert mode: §eON§a — potions can now transform player-placed blocks on your plot."
+                : "§7Convert mode: §cOFF§7 — potions will only transform natural blocks.");
+        return true;
+    }
+
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof Player p)) {
@@ -47,7 +61,12 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
         PlotManager pm = plugin.plotManager();
 
         if (label.equalsIgnoreCase("plots")) {
-            if (args.length == 0) {
+        // /convert is a bare top-level command (no args) — handled by label, not args[0].
+        if (label.equalsIgnoreCase("convert")) {
+            return convertCmd(p);
+        }
+
+        if (args.length == 0) {
                 // /plots — teleport to the plots world
                 if (blockIfInRun(p)) return true;
                 pm.teleportToPlots(p);
@@ -83,6 +102,8 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot container|uncontainer <name> §7— Grant/revoke container access"));
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot pickup|unpickup <name> §7— Grant/revoke item pickup access"));
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot unclaim §7— Unclaim the plot you're standing on"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/convert §7— Toggle whether potions can transform player-placed blocks"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot filllayers §7— Fill bedrock & stone layers (op)"));
             return true;
         }
 
@@ -135,6 +156,19 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
                 } else {
                     p.sendMessage("§aWarped to your plot.");
                 }
+                return true;
+            }
+            case "convert": {
+                return convertCmd(p);
+            }
+            case "filllayers": {
+                if (!p.isOp()) {
+                    p.sendMessage("§cOnly operators can use /plot filllayers.");
+                    return true;
+                }
+                p.sendMessage("§7Filling bedrock and stone layers in the plots world...");
+                int count = plugin.plotManager().fillPlotLayers();
+                p.sendMessage("§aFilled bottom layers in §f" + count + " §achunks. (bedrock @ y=0, stone @ y=1-30)");
                 return true;
             }
             case "unclaim": {
@@ -208,7 +242,7 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
         if (args.length == 1) {
             List<String> subs = new ArrayList<>(List.of("claim", "home", "name", "warp", "unclaim",
                     "settings", "pvp", "fire", "public", "trust", "untrust", "container", "uncontainer",
-                    "pickup", "unpickup"));
+                    "pickup", "unpickup", "convert", "filllayers"));
             return subs.stream().filter(s -> s.startsWith(args[0].toLowerCase())).toList();
         }
         if (args.length == 2) {

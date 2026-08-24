@@ -600,6 +600,15 @@ public final class DungeonInstance {
                 }
             }
         }
+        // Tonics are a per-floor boost: reset them on every descend and recompute stats so the
+        // reset applies immediately.
+        for (Player p : party.onlineMembers()) {
+            PlayerState st = playerStateOf(p);
+            if (st == null) continue;
+            st.tonicDamage = 0;
+            st.tonicDefense = 0;
+            st.recomputeStats();
+        }
         refreshUI();
     }
 
@@ -3253,9 +3262,10 @@ public final class DungeonInstance {
         lastShieldSwitchPrompt.put(p.getUniqueId(), now);
         String curName = itemDisplayName(current);
         String betterName = itemDisplayName(better);
-        net.kyori.adventure.text.Component msg = net.kyori.adventure.text.Component.text(
-                "§7A better shield (§b" + betterName + "§7) is in your inventory. Your §e" + curName
-                        + "§7 is persistent — keep it or switch? ")
+        net.kyori.adventure.text.Component msg = net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
+                .legacySection().deserialize(
+                        "§7A better shield (§b" + betterName + "§7) is in your inventory. Your §e" + curName
+                                + "§7 is persistent — keep it or switch? ")
                 .append(com.lieyabull.dung.ui.ChatUI.command("§a[Switch]", "/dung shieldswitch",
                         "Swap in the better shield"));
         p.sendMessage(msg);
@@ -3550,6 +3560,9 @@ public final class DungeonInstance {
     public void removePlayer(Player p) {
         if (run == null) return;
         UUID pid = p.getUniqueId();
+        // Drop any open shop/supplies GUI + session BEFORE restoring the inventory so a stale
+        // session can never survive the player leaving the instance.
+        plugin.shopUI().forceClose(p);
         if (boss != null) boss.removeViewer(p);
         HUD hud = huds.remove(pid);
         TabUI tab = tabs.remove(pid);
@@ -3568,8 +3581,12 @@ public final class DungeonInstance {
         // Leaving a run early damages persistent gear at half the rate of dying (5% of max
         // instead of 10%). Applied after restoreSavedInventory so the damage hits the final
         // inventory state — otherwise the undamaged pre-run snapshot would be restored.
-        damagePersistentGear(p, LEAVE_DURABILITY_DIVISOR);
-        p.sendMessage("§7  Left the run early: persistent gear durability reduced by 5%");
+        // Dead players were already charged this penalty in onPlayerDeath, so skip them here
+        // to avoid a double loss when they leave while dead.
+        if (!deadPlayers.contains(pid)) {
+            damagePersistentGear(p, LEAVE_DURABILITY_DIVISOR);
+            p.sendMessage("§7  Left the run early: persistent gear durability reduced by 5%");
+        }
         p.setWalkSpeed(0.2f);
         p.setFoodLevel(20);
         teleportOut(p);
@@ -3828,6 +3845,9 @@ public final class DungeonInstance {
             org.bukkit.scoreboard.Scoreboard sb = playerBoards.get(p.getUniqueId());
             if (hud != null && sb != null) hud.reset(p, sb);
             if (tab != null && sb != null) tab.reset(sb);
+            // Drop any open shop/supplies GUI + session BEFORE restoring the inventory so a
+            // stale session can never survive the run ending.
+            plugin.shopUI().forceClose(p);
             stripRunGear(p);
             restoreSavedInventory(p);
             deliverPendingPersists(p);

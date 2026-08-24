@@ -9,6 +9,9 @@ import com.lieyabull.dung.items.ItemPool;
 import com.lieyabull.dung.items.Rarity;
 import com.lieyabull.dung.meta.MetaManager;
 import com.lieyabull.dung.meta.Upgrades;
+import com.lieyabull.dung.plot.potion.PotionDefinition;
+import com.lieyabull.dung.plot.potion.PotionFactory;
+import com.lieyabull.dung.ui.StashUI;
 import com.lieyabull.dung.shop.Category;
 import com.lieyabull.dung.shop.RollAnimationMath;
 import com.lieyabull.dung.shop.ServerSideRollResult;
@@ -80,6 +83,12 @@ public final class ShopUI implements Listener {
     private static final String ACTION_BUY_DMG_TONIC = "buy_dmg_tonic";
     private static final String ACTION_BUY_DEF_TONIC = "buy_def_tonic";
 
+    // Potion purchase actions
+    private static final String ACTION_BUY_FOREST_POTION = "buy_forest_potion";
+    private static final String ACTION_BUY_STONE_POTION = "buy_stone_potion";
+    private static final int POTION_FOREST_COST = 55;  // persistent coins
+    private static final int POTION_STONE_COST = 55;
+
     // Persistent shop utility buttons (kept from the legacy persistent shop — not categories).
     private static final String ACTION_REPAIR = "repair";
     private static final String ACTION_REPAIR_ALL = "repair_all";
@@ -94,9 +103,11 @@ public final class ShopUI implements Listener {
     private static final int MENU_ARMOR_SLOT = 12;
     private static final int MENU_SHIELD_SLOT = 14;
     private static final int MENU_SUPPLIES_SLOT = 16; // run shop only
+    private static final int MENU_POTION_FOREST_SLOT = 18; // persistent shop only
     private static final int MENU_REPAIR_SLOT = 20;
     private static final int MENU_UPGRADES_SLOT = 22;
     private static final int MENU_REPAIR_ALL_SLOT = 24;
+    private static final int MENU_POTION_STONE_SLOT = 26; // persistent shop only
 
     // Supplies GUI (27 slots) — run consumables bought directly with run coins.
     private static final int SUPPLY_SIZE = 27;
@@ -189,6 +200,18 @@ public final class ShopUI implements Listener {
         if (s != null && s.animationTask != null) s.animationTask.cancel();
     }
 
+    /** Force-close any open shop/supplies GUI and drop the session like {@link #onQuit} — used when
+     *  a player leaves or ends a run so a stale session can never outlive its instance. */
+    public void forceClose(Player p) {
+        Inventory top = p.getOpenInventory().getTopInventory();
+        if (top != null && (openGuis.containsKey(top) || openMenuGuis.containsKey(top)
+                || openSupplyGuis.containsKey(top))) {
+            p.closeInventory();
+        }
+        ShopSession s = sessions.remove(p.getUniqueId());
+        if (s != null && s.animationTask != null) s.animationTask.cancel();
+    }
+
     private void open(Player p, ShopSession s) {
         // A pending (paid-for) result always reopens its roll GUI so it can be resolved.
         if (s.transaction.state() != ShopTransaction.State.IDLE && s.transaction.category() != null) {
@@ -271,6 +294,15 @@ public final class ShopUI implements Listener {
             inv.setItem(MENU_UPGRADES_SLOT, makeButton(Material.NETHER_STAR, "§fPermanent Upgrades",
                     List.of("§7Spend shards on permanent stat boosts"), ACTION_UPGRADES));
             inv.setItem(MENU_REPAIR_ALL_SLOT, makeRepairAllButton(p));
+            // Potion buttons
+            inv.setItem(MENU_POTION_FOREST_SLOT, makePotionBuyButton(Material.SPLASH_POTION,
+                    "§aForest Transmutation Elixir", POTION_FOREST_COST, p,
+                    List.of("§7Transforms wood blocks into new", "§7tree varieties on your plot."),
+                    ACTION_BUY_FOREST_POTION));
+            inv.setItem(MENU_POTION_STONE_SLOT, makePotionBuyButton(Material.SPLASH_POTION,
+                    "§7Stone Transmutation Elixir", POTION_STONE_COST, p,
+                    List.of("§7Transforms stone blocks into new", "§7stone and ore variants on your plot."),
+                    ACTION_BUY_STONE_POTION));
         } else {
             inv.setItem(MENU_SUPPLIES_SLOT, makeButton(Material.CHEST, "§fSupplies",
                     List.of("§7Keys, bombs, heals and run tonics.",
@@ -306,9 +338,24 @@ public final class ShopUI implements Listener {
         inv.setItem(SUPPLY_MANA_SLOT, supplyButton(Material.LAPIS_LAZULI, "§b§lMana Potion", SUPPLY_MANA_COST, coins,
                 List.of("§7Refills your mana to max."), ACTION_BUY_MANA));
         inv.setItem(SUPPLY_DMG_TONIC_SLOT, supplyButton(Material.BLAZE_POWDER, "§c§lDamage Tonic", SUPPLY_TONIC_COST, coins,
-                List.of("§7+" + TONIC_STAT_AMOUNT + " melee damage §7for the rest of the run."), ACTION_BUY_DMG_TONIC));
+                List.of("§7+" + TONIC_STAT_AMOUNT + " melee damage §7for the rest of the FLOOR."), ACTION_BUY_DMG_TONIC));
         inv.setItem(SUPPLY_DEF_TONIC_SLOT, supplyButton(Material.IRON_INGOT, "§a§lDefense Tonic", SUPPLY_TONIC_COST, coins,
-                List.of("§7+" + TONIC_STAT_AMOUNT + " defense §7for the rest of the run."), ACTION_BUY_DEF_TONIC));
+                List.of("§7+" + TONIC_STAT_AMOUNT + " defense §7for the rest of the FLOOR."), ACTION_BUY_DEF_TONIC));
+    }
+
+    /** A persistent-coins direct-purchase button for potions and other items. */
+    private ItemStack makePotionBuyButton(Material mat, String name, int cost, Player p,
+                                           List<String> extraLore, String action) {
+        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+        int balance = prof.persistentCoins;
+        List<String> lore = new ArrayList<>(extraLore);
+        if (balance >= cost) {
+            lore.add("§6" + cost + " persistent coins §7— click to buy");
+            return makeButton(mat, name, lore, action);
+        }
+        lore.add("§8" + cost + " persistent coins");
+        lore.add("§cCan't afford — need " + (cost - balance) + " more.");
+        return makeButton(Material.GRAY_DYE, "§8" + name.replaceFirst("§.", ""), lore, action);
     }
 
     /** A direct-purchase button; grayed out when the balance can't cover it. */
@@ -328,6 +375,11 @@ public final class ShopUI implements Listener {
         DungeonInstance di = s.di != null ? s.di : plugin.game().instanceOf(p);
         PlayerState st = di == null ? null : di.playerStateOf(p);
         if (st == null) { p.closeInventory(); return; }
+        // Stale-session guard: a run session is only valid while its own instance is still live.
+        if (s.type == ShopType.RUN) {
+            DungeonInstance live = plugin.game().instanceOf(p);
+            if (live == null || live != s.di) { p.closeInventory(); return; }
+        }
 
         int cost; Material icon; String label; Runnable effect;
         switch (action) {
@@ -407,6 +459,11 @@ public final class ShopUI implements Listener {
         if (!s.transaction.canRoll()) return; // never roll while an animation is active
         Category cat = s.transaction.category();
         if (cat == null) return;
+        // Stale-session guard: a run session is only valid while its own instance is still live.
+        if (s.type == ShopType.RUN) {
+            DungeonInstance live = plugin.game().instanceOf(p);
+            if (live == null || live != s.di) { p.closeInventory(); return; }
+        }
         if (!s.transaction.startRoll(cat)) return; // guarded state machine: start roll before charging
         int cost = ShopRules.costFor(s.type, cat);
 
@@ -467,6 +524,11 @@ public final class ShopUI implements Listener {
         if (!s.transaction.canChoose()) return; // cannot KEEP twice, or in an invalid state
         ServerSideRollResult r = s.transaction.pending();
         if (r == null) return;
+        // Stale-session guard: a run session is only valid while its own instance is still live.
+        if (s.type == ShopType.RUN) {
+            DungeonInstance live = plugin.game().instanceOf(p);
+            if (live == null || live != s.di) { p.closeInventory(); return; }
+        }
         Map<Integer, ItemStack> leftover = p.getInventory().addItem(r.item.clone());
         if (!leftover.isEmpty()) {
             // Full inventory: the item is never lost. Keep it pending and let the player retry
@@ -486,6 +548,11 @@ public final class ShopUI implements Listener {
         if (!s.transaction.canChoose()) return; // cannot SALVAGE twice, or in an invalid state
         ServerSideRollResult r = s.transaction.pending();
         if (r == null) return;
+        // Stale-session guard: a run session is only valid while its own instance is still live.
+        if (s.type == ShopType.RUN) {
+            DungeonInstance live = plugin.game().instanceOf(p);
+            if (live == null || live != s.di) { p.closeInventory(); return; }
+        }
         DungeonInstance di = s.type == ShopType.RUN ? s.di : null;
         if (di == null) di = plugin.game().instanceOf(p);
         if (s.type == ShopType.RUN && di != null) {
@@ -769,6 +836,8 @@ public final class ShopUI implements Listener {
                 case ACTION_REPAIR_ALL -> repairAll(p, ms);
                 case ACTION_REPAIR_BROKEN -> repairBroken(p, ms);
                 case ACTION_UPGRADES -> reopen(() -> openUpgrades(p));
+                case ACTION_BUY_FOREST_POTION -> handlePotionPurchase(p, ms, PotionDefinition.FOREST, POTION_FOREST_COST);
+                case ACTION_BUY_STONE_POTION -> handlePotionPurchase(p, ms, PotionDefinition.STONE, POTION_STONE_COST);
             }
             return;
         }
@@ -1017,6 +1086,25 @@ public final class ShopUI implements Listener {
         plugin.meta().save();
         p.sendMessage("§aRepaired broken item! §7(-§6" + REPAIR_BROKEN_COINS + " coins§7, §3-"
                 + REPAIR_BROKEN_SHARDS + " shards§7) §7(+10 durability)");
+        refresh(p, s);
+    }
+
+    /** Handle a potion purchase from the persistent shop. */
+    private void handlePotionPurchase(Player p, ShopSession s, PotionDefinition def, int cost) {
+        if (s.type != ShopType.PERSISTENT) {
+            p.closeInventory();
+            return;
+        }
+        MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
+        if (prof.persistentCoins < cost) {
+            p.sendMessage("§cYou need §6" + cost + " persistent coins§c for a " + def.displayName() + "§c.");
+            return;
+        }
+        prof.persistentCoins -= cost;
+        plugin.meta().save();
+        ItemStack potion = PotionFactory.createPotion(def);
+        StashUI.placeOrStash(p, potion);
+        p.sendMessage("§aPurchased a " + def.displayName() + "§a! §7(-§6" + cost + " coins§7)");
         refresh(p, s);
     }
 

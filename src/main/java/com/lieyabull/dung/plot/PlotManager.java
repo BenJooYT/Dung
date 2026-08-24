@@ -42,9 +42,14 @@ public final class PlotManager {
     private static final int CELL_SIZE = PLOT_SIZE + BORDER_WIDTH * 2 + PATH_WIDTH;
     // CELL_SIZE = 16 + 2 + 2 = 20
 
-    // Surface Y level of the flat world (grass at y=51, dirt at y=1-50, stone at y=0)
-    // Layers are specified top-to-bottom: grass_block(1) + dirt(50) + stone(1) = 52 blocks (y=0..51)
+    // Surface Y level of the flat world (grass at y=51, dirt at y=31-50,
+    // stone at y=1-30, bedrock at y=0).
+    // Layers: grass_block(1) + dirt(20) + stone(30) + bedrock(1) = 52 blocks (y=0..51)
     private static final int SURFACE_Y = 51;
+    /** The highest Y of the stone layer (inclusive). */
+    private static final int STONE_TOP_Y = 30;
+    /** The lowest Y of the stone layer (inclusive). */
+    private static final int STONE_BOTTOM_Y = 1;
 
     // Plot origin: plots start at x=0, z=0. Plot (0,0) occupies x=[0..19], z=[0..19]
     // Buildable area: x=[0..17], z=[0..17] (includes the oak slab border)
@@ -586,6 +591,12 @@ public final class PlotManager {
         return info != null && info.owner.equals(p.getUniqueId());
     }
 
+    /** Check if a plot is owned by the given player UUID. */
+    public boolean ownsPlotByOwner(PlotCoord coord, UUID owner) {
+        PlotInfo info = plots.get(coord);
+        return info != null && owner != null && info.owner.equals(owner);
+    }
+
     /** Check if a player owns any plot. */
     public boolean hasPlot(Player p) {
         return !ownedPlots(p.getUniqueId()).isEmpty();
@@ -876,6 +887,65 @@ public final class PlotManager {
     /** Set a block with physics disabled. */
     private void setBlock(World w, int x, int y, int z, Material mat) {
         w.getBlockAt(x, y, z).setType(mat, false);
+    }
+
+    // ==================== RETROACTIVE LAYER FILL ====================
+
+    /**
+     * Fill the bottom layers of every chunk in the plots world:
+     * bedrock at y=0, stone at y=1..{@link #STONE_TOP_Y}.
+     * <p>
+     * Only touches y=0..{@link #STONE_TOP_Y}, which is below all builds
+     * (surface is at y={@link #SURFACE_Y}+1). Existing builds above are untouched.
+     * New chunks will already have correct layers from {@link PlotChunkGenerator}.
+     * <p>
+     * Iterates a generous radius from spawn to cover all explored areas. Loads
+     * each chunk before filling so ungenerated areas receive the layers too.
+     */
+    public int fillPlotLayers() {
+        World w = getPlotsWorld();
+        if (w == null) return 0;
+
+        int chunksFilled = 0;
+        int radius = 15; // chunks in each direction from spawn (covers ±300 blocks)
+
+        for (int cx = -radius; cx <= radius; cx++) {
+            for (int cz = -radius; cz <= radius; cz++) {
+                // isChunkGenerated may return false for non-existent chunks
+                if (!w.isChunkGenerated(cx, cz)) continue;
+                org.bukkit.Chunk chunk = w.getChunkAt(cx, cz);
+                fillChunkLayers(chunk);
+                chunksFilled++;
+            }
+        }
+
+        return chunksFilled;
+    }
+
+    /**
+     * Fill the bottom layers of a single chunk with bedrock (y=0) and
+     * stone (y=1..{@link #STONE_TOP_Y}). Only touches y &le;
+     * {@link #STONE_TOP_Y}, well below the surface.
+     */
+    private void fillChunkLayers(org.bukkit.Chunk chunk) {
+        int cx = chunk.getX() << 4; // chunk block X origin
+        int cz = chunk.getZ() << 4;
+        World w = chunk.getWorld();
+
+        for (int dx = 0; dx < 16; dx++) {
+            for (int dz = 0; dz < 16; dz++) {
+                int wx = cx + dx;
+                int wz = cz + dz;
+
+                // Bedrock at y=0
+                w.getBlockAt(wx, 0, wz).setType(Material.BEDROCK, false);
+
+                // Stone at y=1..STONE_TOP_Y
+                for (int y = STONE_BOTTOM_Y; y <= STONE_TOP_Y; y++) {
+                    w.getBlockAt(wx, y, wz).setType(Material.STONE, false);
+                }
+            }
+        }
     }
 
     // ==================== PERSISTENCE ====================

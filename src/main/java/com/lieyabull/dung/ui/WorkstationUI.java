@@ -211,7 +211,7 @@ public final class WorkstationUI implements Listener {
             return;
         }
         if (ACTION_SELECT.equals(action)) {
-            Integer guiIndex = pdc.get(org.bukkit.NamespacedKey.minecraft(GUI_KEY + "_slot"),
+            Integer guiIndex = pdc.get(slotKey,
                     org.bukkit.persistence.PersistentDataType.INTEGER);
             if (guiIndex == null || guiIndex < 0 || guiIndex >= state.guiToPlayer.length) return;
             state.selected = state.guiToPlayer[guiIndex];
@@ -352,20 +352,26 @@ public final class WorkstationUI implements Listener {
         if (state.selected < 0) return;
         if (state.busy) return;
         state.busy = true;
-        int playerSlot = state.selected;
-        // Re-validate that the same item the player picked is still in the slot before applying. This
-        // prevents a rearranged inventory from upgrading/salvaging a *different* item than was shown.
-        ItemStack now = currentItem(p, state, playerSlot);
-        if (now == null || !fingerprint(now).equals(state.selectedFp)) {
-            p.sendMessage("§cThe selected item changed; please reselect it.");
-            return;
-        }
-        switch (state.type) {
-            case UPGRADE -> state.di.tryUpgrade(p, playerSlot);
-            case REFORGE -> state.di.tryReforge(p, playerSlot);
-            case PRESERVE -> state.di.tryPreserve(p, playerSlot);
-            case SALVAGE -> state.di.trySalvage(p, playerSlot);
-            case STORAGE -> { /* read-only; nothing to execute */ }
+        try {
+            int playerSlot = state.selected;
+            // Re-validate that the same item the player picked is still in the slot before applying. This
+            // prevents a rearranged inventory from upgrading/salvaging a *different* item than was shown.
+            ItemStack now = currentItem(p, state, playerSlot);
+            if (now == null || !fingerprint(now).equals(state.selectedFp)) {
+                p.sendMessage("§cThe selected item changed; please reselect it.");
+                return;
+            }
+            switch (state.type) {
+                case UPGRADE -> state.di.tryUpgrade(p, playerSlot);
+                case REFORGE -> state.di.tryReforge(p, playerSlot);
+                case PRESERVE -> state.di.tryPreserve(p, playerSlot);
+                case SALVAGE -> state.di.trySalvage(p, playerSlot);
+                case STORAGE -> { /* read-only; nothing to execute */ }
+            }
+        } finally {
+            // Always clear the guard — a rejected operation must never brick the open GUI
+            // (busy is only meant to swallow double-clicks within the same tick).
+            state.busy = false;
         }
     }
 

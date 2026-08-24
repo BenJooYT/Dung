@@ -250,13 +250,16 @@ public final class PlotListener implements Listener {
 
     /** Saplings growing into trees can push trunk/leaves beyond the plot's buildable area (onto
      *  the border slabs or the paths/neighbouring plots). Prune every grown block that protrudes
-     *  out of bounds so a tree can't extend past the player's manipulatable bounds. */
+     *  out of bounds so a tree can't extend past the player's manipulatable bounds. Also clears
+     *  the player-placed provenance of the sapling spot (and any grown blocks) — the resulting
+     *  tree is server-grown and must stay transmutable by potions without /convert. */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onStructureGrow(StructureGrowEvent e) {
         PlotManager pm = plugin.plotManager();
         PlotManager.PlotCoord coord = pm.plotAt(e.getLocation());
         if (coord == null) return;
         e.getBlocks().removeIf(bs -> !withinPlot(pm, coord, bs.getLocation()));
+        clearGrowthProvenance(e.getLocation().getBlock(), e.getBlocks());
     }
 
     /** Bone meal can force a sapling into a tree or spread tall growth (bamboo, etc.). Same pruning
@@ -267,6 +270,17 @@ public final class PlotListener implements Listener {
         PlotManager.PlotCoord coord = pm.plotAt(e.getBlock().getLocation());
         if (coord == null) return;
         e.getBlocks().removeIf(bs -> !withinPlot(pm, coord, bs.getLocation()));
+        clearGrowthProvenance(e.getBlock(), e.getBlocks());
+    }
+
+    /** Un-mark the growth origin (e.g. a placed sapling) and all grown blocks as player-placed,
+     *  so grown wood stays eligible for transformation potions. */
+    private void clearGrowthProvenance(org.bukkit.block.Block origin,
+                                       java.util.List<org.bukkit.block.BlockState> grown) {
+        var prov = plugin.provenanceManager();
+        prov.unmark(origin);
+        for (var bs : grown) prov.unmark(bs.getBlock());
+        prov.save();
     }
 
     /** Pumpkins/melons grow into an adjacent block; sugar cane/bamboo grow upward. If the grown

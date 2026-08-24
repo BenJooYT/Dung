@@ -26,8 +26,8 @@ public final class CompostListener implements Listener {
         this.plugin = plugin;
     }
 
-    /** Look at a composter and drop (Q) a compostable item to feed it. The dropped amount is consumed
-     *  from the player's inventory and goes into the composter's buffer. */
+    /** Look at a composter and drop (Q) a compostable item to feed it. The fed amount is consumed
+     *  from the player's currently held item (main hand) and goes into the composter's buffer. */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onDrop(PlayerDropItemEvent e) {
         Player p = e.getPlayer();
@@ -35,12 +35,14 @@ public final class CompostListener implements Listener {
         if (dropped == null || !plugin.compost().isCompostable(dropped)) return;
         Block composter = p.getTargetBlockExact(4);
         if (composter == null || composter.getType() != Material.COMPOSTER) return;
-        e.setCancelled(true); // stop the physical drop (the drop already left the inventory)
+        // Consume from the held item instead of scanning the inventory: if the main hand can't
+        // cover the dropped amount, neither cancel nor feed.
+        ItemStack held = p.getInventory().getItemInMainHand();
+        int amount = dropped.getAmount();
+        if (held == null || held.getType() != dropped.getType() || held.getAmount() < amount) return;
+        held.setAmount(held.getAmount() - amount);
+        e.setCancelled(true); // stop the physical drop only after deducting from the hand
         plugin.compost().addAndFill(composter, dropped);
-        // Cancelling makes the server put the dropped stack back into the player's inventory, so
-        // consume it for real — deferred a tick so that re-add has already happened.
-        final ItemStack fed = dropped.clone();
-        Bukkit.getScheduler().runTask(plugin, () -> p.getInventory().removeItemAnySlot(fed));
     }
 
     /** Right-click a full composter to collect its bone meal. */

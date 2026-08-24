@@ -8,18 +8,22 @@ import java.util.List;
  * this class only carries the persisted state.
  */
 public final class Dummy {
-    public final String worldName;
-    public final double x;
-    public final double y;
-    public final double z;
-    public final float yaw;
-    public final float pitch;
+    public String worldName;
+    public double x;
+    public double y;
+    public double z;
+    public float yaw;
+    public float pitch;
     /** Display name lines (legacy § codes allowed), rendered on the riding TextDisplay. */
     public List<String> nameLines;
     /** Command executed (as the clicking player) on left click; nullable/empty = nothing. */
     public String leftCommand;
     /** Command executed (as the clicking player) on right click; nullable/empty = nothing. */
     public String rightCommand;
+    /** Player name whose skin the dummy wears (nullable = plain invisible-stand look). */
+    public String avatar;
+    /** Item shown in the dummy's main hand (nullable = empty hand); persisted. */
+    public org.bukkit.inventory.ItemStack handItem;
 
     public Dummy(String worldName, double x, double y, double z, float yaw, float pitch,
                  List<String> nameLines, String leftCommand, String rightCommand) {
