@@ -360,20 +360,23 @@ public final class GearFactory {
         });
     }
 
-    /** Check if an item is broken (durability <= 0). */
+    /** Check if an item is broken (durability floored at 1; 0 would break the item in vanilla). */
     public static boolean isBroken(ItemStack s) {
         int dur = getDurability(s);
-        return dur == 0;
+        return dur == 1;
     }
 
-    /** Reduce durability by the given amount. Returns true if the item is now broken (durability <= 0). */
+    /** Reduce durability by the given amount. Returns true if the item is now broken.
+     *  Brokenness floors at 1 remaining durability — never 0, because a vanilla item with
+     *  0 custom durability left breaks/vanishes in vanilla. So a "broken" dung item still
+     *  carries 1 durability so it doesn't despawn client-side. */
     public static boolean damageItem(ItemStack s, int amount) {
         int dur = getDurability(s);
         if (dur < 0) return false; // not a durability item
-        dur = Math.max(0, dur - amount);
-        setDurability(s, dur);
+        int newDur = Math.max(1, dur - amount);
+        setDurability(s, newDur);
         addDurabilityLore(s);
-        return dur <= 0;
+        return newDur <= 1;
     }
 
     /** Restore durability by the given amount (capped at max). */
@@ -502,12 +505,16 @@ public final class GearFactory {
             if (name != null) {
                 boolean star = name.startsWith("★ ");
                 String body = star ? name.substring(2) : name;
-                boolean hasPerfection = body.contains("§e✦") && body.endsWith(" of Perfection");
+                String enSuffix = Lang.get(Language.ENGLISH, "gear.perfection");
+                String huSuffix = Lang.get(Language.MAGYAR, "gear.perfection");
+                boolean hasPerfection = body.contains("§e✦")
+                        && (body.endsWith(" " + enSuffix) || body.endsWith(" " + huSuffix));
+                String perSuffix = hasPerfection && body.endsWith(" " + enSuffix) ? enSuffix : huSuffix;
                 // Strip perfection parts before recolor
                 String cleanBody = body;
                 if (hasPerfection) {
-                    if (cleanBody.endsWith(" of Perfection"))
-                        cleanBody = cleanBody.substring(0, cleanBody.length() - " of Perfection".length());
+                    if (cleanBody.endsWith(" " + perSuffix))
+                        cleanBody = cleanBody.substring(0, cleanBody.length() - (" " + perSuffix).length());
                     if (cleanBody.startsWith("§e✦ "))
                         cleanBody = cleanBody.substring(4);
                 }
@@ -516,7 +523,7 @@ public final class GearFactory {
                 }
                 // Re-add perfection parts
                 if (hasPerfection) {
-                    cleanBody = "§e✦ " + cleanBody + " of Perfection";
+                    cleanBody = "§e✦ " + cleanBody + " " + perSuffix;
                 }
                 meta.setDisplayName((star ? "★ " : "") + cleanBody);
             }
@@ -785,26 +792,30 @@ public final class GearFactory {
      */
     private static void applyPerfectionName(ItemStack s, int upLevel) {
         if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return;
+        String enSuffix = Lang.get(Language.ENGLISH, "gear.perfection");
+        String huSuffix = Lang.get(Language.MAGYAR, "gear.perfection");
         s.editMeta(meta -> {
             String name = meta.getDisplayName();
             if (name == null || name.isEmpty()) return;
             boolean isMaxed = upLevel >= com.lieyabull.dung.game.WorkstationRules.UPGRADE_MAX;
-            // Check if the name already has the perfection star and suffix
-            boolean hasPerfection = name.contains("§e✦") && name.endsWith(" of Perfection");
+            // Detect the perfection star + suffix regardless of the item's current language.
+            boolean hasPerfection = name.contains("§e✦")
+                    && (name.endsWith(" " + enSuffix) || name.endsWith(" " + huSuffix));
 
             if (isMaxed && !hasPerfection) {
                 // Insert yellow star after any persist star (★)
                 if (name.startsWith("★ ")) {
-                    meta.setDisplayName("★ §e✦ " + name.substring(2) + " of Perfection");
+                    meta.setDisplayName("★ §e✦ " + name.substring(2) + " " + enSuffix);
                 } else {
-                    meta.setDisplayName("§e✦ " + name + " of Perfection");
+                    meta.setDisplayName("§e✦ " + name + " " + enSuffix);
                 }
             } else if (!isMaxed && hasPerfection) {
                 // Strip perfection star and suffix
                 String cleaned = name;
-                // Remove " of Perfection" suffix
-                if (cleaned.endsWith(" of Perfection")) {
-                    cleaned = cleaned.substring(0, cleaned.length() - " of Perfection".length());
+                if (cleaned.endsWith(" " + enSuffix)) {
+                    cleaned = cleaned.substring(0, cleaned.length() - (" " + enSuffix).length());
+                } else if (cleaned.endsWith(" " + huSuffix)) {
+                    cleaned = cleaned.substring(0, cleaned.length() - (" " + huSuffix).length());
                 }
                 // Remove the yellow star (with or without persist star prefix)
                 if (cleaned.startsWith("★ §e✦ ")) {
@@ -1057,6 +1068,7 @@ public final class GearFactory {
             case "Chain Lightning": return "strike a target, chaining to nearby enemies";
             case "Fireball": return "launch an explosive fireball";
             case "Life Drain": return "drain life from enemies, right-click ally to heal";
+            case "Lightning": return "call a bolt of lightning down on your target";
             default: return "trigger a burst of damage";
         }
     }
@@ -1151,6 +1163,7 @@ public final class GearFactory {
             case "Chain Lightning": return "gear.use.chainLightning";
             case "Fireball": return "gear.use.fireball";
             case "Life Drain": return "gear.use.lifeDrain";
+            case "Lightning": return "gear.use.lightning";
             default: return "gear.use.default";
         }
     }
@@ -1183,7 +1196,9 @@ public final class GearFactory {
         return bar.toString();
     }
 
-    /** Swap any perfection star + suffix on the display name to the given language. */
+    /** Swap any perfection star + suffix on the display name to the given language, and translate
+     *  the base item name (e.g. "Frayed Blade" → "Kopott Penge") so the whole display name matches
+     *  the item's lore language. Persist star (★), rarity color and perfection star are preserved. */
     private static void localizePerfectionName(ItemStack s, int upLevel, Language lang) {
         boolean isMaxed = upLevel >= com.lieyabull.dung.game.WorkstationRules.UPGRADE_MAX;
         String enSuffix = Lang.get(Language.ENGLISH, "gear.perfection");
@@ -1197,6 +1212,15 @@ public final class GearFactory {
             else if (base.endsWith(" " + huSuffix)) base = base.substring(0, base.length() - (" " + huSuffix).length());
             if (base.startsWith("★ §e✦ ")) base = "★ " + base.substring(5);
             else if (base.startsWith("§e✦ ")) base = base.substring(4);
+            // Translate the base item name into the target language (keep persist star + rarity color).
+            String localized = itemBaseName(s, lang);
+            if (localized != null) {
+                String star = base.startsWith("★ ") ? "★ " : "";
+                String body = star.isEmpty() ? base : base.substring(2);
+                Rarity r = getRarity(s);
+                if (r != null && body.startsWith(r.legacy)) body = body.substring(r.legacy.length());
+                base = star + (r != null ? r.legacy : "") + localized;
+            }
             if (isMaxed) {
                 String val = base.startsWith("★ ") ? "★ §e✦ " + base.substring(2) : "§e✦ " + base;
                 meta.setDisplayName(val + " " + want);
@@ -1204,5 +1228,18 @@ public final class GearFactory {
                 meta.setDisplayName(base);
             }
         });
+    }
+
+    /** The localized display name for a gear item's base (from its BASE tag), in the given language.
+     *  Returns null if the item has no base tag. Armor base ids carry a {@code _slot} suffix which is
+     *  stripped before lookup (cloth_0..3 all map to "item.cloth"). */
+    static String itemBaseName(ItemStack s, Language lang) {
+        String kind = kindOf(s);
+        String base = strTagOf(s, ItemTags.BASE);
+        if (base == null) return null;
+        if ("armor".equals(kind)) {
+            base = base.replaceAll("_[0-3]$", "");
+        }
+        return Lang.get(lang, "item." + base);
     }
 }

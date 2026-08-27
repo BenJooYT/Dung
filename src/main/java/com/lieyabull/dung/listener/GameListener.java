@@ -43,6 +43,8 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.util.RayTraceResult;
+import org.bukkit.util.Vector;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -136,6 +138,11 @@ public final class GameListener implements Listener {
 
     /** Last vine-contact timestamp per player, for the post-vine fall-damage grace window. */
     private final java.util.Map<UUID, Long> lastVineContact = new java.util.HashMap<>();
+
+    /** Minimum gap (ms) between Soul Siphon heal activations to suppress duplicate event firings. */
+    private static final long SOUL_SIPHON_HEAL_DUPLICATE_WINDOW_MS = 100;
+    /** Last Soul Siphon heal timestamp per player, for duplicate-event suppression. */
+    private final java.util.Map<UUID, Long> lastSoulSiphonHeal = new java.util.HashMap<>();
 
     /**
      * Floating-vine climbing: vanilla only lets you climb a vine when it's attached to something
@@ -256,11 +263,15 @@ public final class GameListener implements Listener {
                 p.setInvisible(true);
                 p.setInvulnerable(true);
                 p.getInventory().setHelmet(di.createPlayerHead(p));
+                // Dead players are spectators moving at double speed.
+                p.setWalkSpeed(0.4f);
+                p.setFlySpeed(0.10f);
             } else {
                 p.setGameMode(GameMode.SURVIVAL);
+                p.setWalkSpeed(0.2f);
+                p.setFlySpeed(0.05f);
             }
             p.setHealth(20);
-            p.setWalkSpeed((float) 0.2);
             return;
         }
         // Died in a run world without an active instance, or respawned inside a run world whose
@@ -307,7 +318,28 @@ public final class GameListener implements Listener {
     public void onInventoryClick(org.bukkit.event.inventory.InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
         DungeonInstance di = instanceOf(p);
-        if (di == null) return;
+        if (di == null) {
+            // Outside a run (lobby/plots): the player may only equip Dung armor. Block placing any
+            // non-Dung armor into an armor slot (raw 36-39), and cancel shift-click auto-equipping it.
+            if (e.getClickedInventory() instanceof PlayerInventory && e.getSlot() >= 36 && e.getSlot() <= 39) {
+                ItemStack cursor = e.getCursor();
+                if (cursor != null && isArmorItem(cursor) && !isDungArmor(cursor)) {
+                    e.setCancelled(true);
+                    p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(
+                            com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.noNonDungEquip")));
+                    return;
+                }
+            }
+            if (e.isShiftClick() && e.getClickedInventory() instanceof PlayerInventory
+                    && e.getSlot() < 36 && isArmorItem(e.getCurrentItem())
+                    && !isDungArmor(e.getCurrentItem())) {
+                e.setCancelled(true);
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(
+                        com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.noNonDungEquip")));
+                return;
+            }
+            return;
+        }
         PlayerInventory inv = p.getInventory();
         if (DungeonInstance.isRunItem(e.getCurrentItem()) || DungeonInstance.isRunItem(e.getCursor())) {
             e.setCancelled(true);
@@ -403,6 +435,11 @@ public final class GameListener implements Listener {
                 || n.endsWith("_LEGGINGS") || n.endsWith("_BOOTS");
     }
 
+    /** True if the item is Dung armor (a recognized Dung gear piece used as armor). */
+    private static boolean isDungArmor(ItemStack s) {
+        return isArmorItem(s) && GearFactory.isGear(s);
+    }
+
     /** True if the item is a broken persistent armor/shield piece that must never be equipped. */
     private static boolean isBrokenEquippable(ItemStack s) {
         if (s == null || s.getType() == Material.AIR) return false;
@@ -415,7 +452,19 @@ public final class GameListener implements Listener {
     public void onInventoryDrag(org.bukkit.event.inventory.InventoryDragEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
         DungeonInstance di = instanceOf(p);
-        if (di == null) return;
+        if (di == null) {
+            // Outside a run: a drag that would place non-Dung armor into an armor slot (raw 36-39)
+            // is cancelled so vanilla armor can't be equipped.
+            if (e.getNewItems().entrySet().stream().anyMatch(en ->
+                    en.getKey() >= 36 && en.getKey() <= 39
+                            && isArmorItem(en.getValue()) && !isDungArmor(en.getValue()))) {
+                e.setCancelled(true);
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(
+                        com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.noNonDungEquip")));
+                return;
+            }
+            return;
+        }
         if (DungeonInstance.isRunItem(e.getOldCursor()) || DungeonInstance.isRunItem(e.getCursor())
                 || e.getNewItems().values().stream().anyMatch(DungeonInstance::isRunItem)) {
             e.setCancelled(true);
@@ -654,7 +703,29 @@ public final class GameListener implements Listener {
     public void onInteract(PlayerInteractEvent e) {
         Player p = e.getPlayer();
         DungeonInstance di = instanceOf(p);
-        if (di == null) return;
+        if (di == null) {
+            // Outside a run (lobby/plots): right-clicking an armor piece in hand auto-equips it in
+            // vanilla. Block that so only Dung armor can ever be worn.
+            ItemStack inMainHand = p.getInventory().getItemInMainHand();
+            if (isArmorItem(inMainHand) && !isDungArmor(inMainHand)
+                    && (e.getAction() == Action.RIGHT_CLICK_AIR
+                            || e.getAction() == Action.RIGHT_CLICK_BLOCK)
+                    && e.getHand() == org.bukkit.inventory.EquipmentSlot.HAND) {
+                e.setCancelled(true);
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(
+                        com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.noNonDungEquip")));
+            }
+            // Never let a Dung loot item that is also a placeable block (e.g. the Storm Rod's
+            // LIGHTNING_ROD material) be placed outside a run — it's gear, not a building block.
+            ItemStack heldGeo = p.getInventory().getItemInMainHand();
+            if (e.getAction() == Action.RIGHT_CLICK_BLOCK
+                    && e.getHand() == org.bukkit.inventory.EquipmentSlot.HAND
+                    && com.lieyabull.dung.items.GearFactory.isGear(heldGeo)
+                    && heldGeo.getType().isBlock()) {
+                e.setCancelled(true);
+            }
+            return;
+        }
         // ability: sneak + right-click casts the held weapon's stored ability.
         // Only process the main hand — the event fires separately for each hand, and processing
         // the offhand would attempt the ability a second time (after mana was spent / cooldown
@@ -691,7 +762,8 @@ public final class GameListener implements Listener {
             di.tryCastAbility(p, held);
             return;
         }
-        // Life Drain: shift + left-click heals the user with the weapon's stored health
+        // Life Drain: shift + left-click heals the user with the weapon's stored health.
+        // If looking at another player within 100 blocks, heal them instead (infinite-range).
         if (hasAbility && (e.getAction() == Action.LEFT_CLICK_AIR || e.getAction() == Action.LEFT_CLICK_BLOCK)
                 && p.isSneaking()) {
             String ability = held.getItemMeta().getPersistentDataContainer()
@@ -699,8 +771,44 @@ public final class GameListener implements Listener {
                          org.bukkit.persistence.PersistentDataType.STRING);
             if ("Life Drain".equals(ability)) {
                 e.setCancelled(true);
+                // Suppress duplicate event: a single click can fire LEFT_CLICK_AIR + LEFT_CLICK_BLOCK.
+                Long last = lastSoulSiphonHeal.get(p.getUniqueId());
+                long now = System.currentTimeMillis();
+                if (last != null && now - last < SOUL_SIPHON_HEAL_DUPLICATE_WINDOW_MS) {
+                    return;
+                }
+                lastSoulSiphonHeal.put(p.getUniqueId(), now);
                 int stored = GearFactory.getStoredHealth(held);
                 if (stored > 0) {
+                    // Check if looking at another player within 100 blocks (infinite-range heal)
+                    Player target = targetedPlayer(p, 100.0);
+                    if (target != null) {
+                        DungeonInstance targetDi = instanceOf(target);
+                        if (targetDi == di) {
+                            PlayerState targetSt = di.run().playerStateOf(target.getUniqueId());
+                            if (targetSt != null && !targetSt.dead) {
+                                targetSt.heal(stored);
+                                GearFactory.setStoredHealth(held, 0);
+                                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.other", target.getName(), stored));
+                                target.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(target, "heal.otherTarget", p.getName(), stored));
+                                // Play the heal sound for both players
+                                org.bukkit.Sound healSound = org.bukkit.Sound.ENTITY_WITCH_DRINK;
+                                p.getWorld().playSound(p.getLocation(), healSound, 0.8f, 1.0f);
+                                p.getWorld().playSound(target.getLocation(), healSound, 0.8f, 1.0f);
+                                // Spawn damage_indicator particles from sender to receiver
+                                Location src = p.getLocation().add(0, 1, 0);
+                                Location dst = target.getLocation().add(0, 1, 0);
+                                org.bukkit.util.Vector step = dst.toVector().subtract(src.toVector()).multiply(0.1);
+                                for (int t = 0; t < 10; t++) {
+                                    Location pt = src.clone().add(step.clone().multiply(t));
+                                    p.getWorld().spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
+                                }
+                                p.getWorld().spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, dst, 20, 0.4, 0.5, 0.4, 0);
+                                return;
+                            }
+                        }
+                    }
+                    // Fallback: heal self if no valid player target in sight
                     PlayerState st = di.run().playerStateOf(p.getUniqueId());
                     if (st != null && !st.dead) {
                         st.heal(stored);
@@ -847,6 +955,12 @@ public final class GameListener implements Listener {
         if (e.getEntity() instanceof Player p) {
             DungeonInstance di = instanceOf(p);
             if (di == null) return;
+            // Spectators (dead players waiting for revival) can't collect coins/hearts/keys/bombs —
+            // leave the ground items for living party members.
+            if (di.isDead(p.getUniqueId())) {
+                e.setCancelled(true);
+                return;
+            }
             Item it = e.getItem();
             Material m = it.getItemStack().getType();
             if (Pickup.isPickup(m)) {
@@ -865,7 +979,11 @@ public final class GameListener implements Listener {
                 } else if (canWarnFull(p)) {
                     // Pickup no-op (e.g. hearts already full): say why instead of silently ignoring.
                     // Throttled — the pickup event re-fires every tick while standing on the item.
-                    ChatUI.notify(p, Lang.forPlayer(p, "pickup.full", pickupName(p, m)));
+                    if (Pickup.typeOf(m) == com.lieyabull.dung.pickup.Pickup.Type.HEART) {
+                        ChatUI.notify(p, Lang.forPlayer(p, "pickup.fullHeart"));
+                    } else {
+                        ChatUI.notify(p, Lang.forPlayer(p, "pickup.full", pickupName(p, m)));
+                    }
                 }
             }
         }
@@ -901,5 +1019,17 @@ public final class GameListener implements Listener {
             case KEY -> Lang.forPlayer(p, "pickup.name.key");
             case BOMB -> Lang.forPlayer(p, "pickup.name.bomb");
         };
+    }
+
+    /** Ray-trace for a Player within {@code maxDistance} blocks of the caster's crosshair. */
+    private Player targetedPlayer(Player caster, double maxDistance) {
+        RayTraceResult result = caster.getWorld().rayTraceEntities(
+                caster.getEyeLocation(),
+                caster.getEyeLocation().getDirection(),
+                maxDistance,
+                0.4,
+                entity -> entity instanceof Player && !entity.equals(caster));
+        Entity hit = result == null ? null : result.getHitEntity();
+        return hit instanceof Player p ? p : null;
     }
 }

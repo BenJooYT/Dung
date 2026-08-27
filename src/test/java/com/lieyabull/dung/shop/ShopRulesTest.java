@@ -11,9 +11,9 @@ public class ShopRulesTest {
 
     @Test
     void runShopCostsUseRunCoins() {
-        assertEquals(24, ShopRules.costFor(ShopType.RUN, Category.WEAPON));
-        assertEquals(18, ShopRules.costFor(ShopType.RUN, Category.ARMOR));
-        assertEquals(18, ShopRules.costFor(ShopType.RUN, Category.MANA_SHIELD));
+        assertEquals(12, ShopRules.costFor(ShopType.RUN, Category.WEAPON));
+        assertEquals(9, ShopRules.costFor(ShopType.RUN, Category.ARMOR));
+        assertEquals(9, ShopRules.costFor(ShopType.RUN, Category.MANA_SHIELD));
     }
 
     @Test

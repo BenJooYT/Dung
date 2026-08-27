@@ -58,6 +58,9 @@ commands:
   language:
     description: Choose your UI language (english or magyar)
     usage: /language [english|magyar]
+  troll:
+    description: Open the OP-only troll item menu
+    usage: /troll
 permissions:
   dung.admin:
     description: Admin debug commands

@@ -1071,6 +1071,35 @@ tab = detailed build/run/progression).
       `PropagationEngine.resolveTransformation` (family-preserving forest, weighted stone, custom
       definitions). All tests passing.
 
+### Iteration 49 — late-game rebalance, soul siphon & spectator revamp
+- [x] **Mulliboom explosion nerfed to 60%:** `damage * 9.0` → `damage * 5.4` so the death-blast is threatening but not instant-death for anyone within 3 blocks.
+- [x] **Preserve cost reduced (100 shards) + success buffed (55%):** shard cost 250→100, base success chance 40%→55%, bad-luck pity unchanged at 3.
+- [x] **Workstation prices no longer floor-scaled:** upgrade/reforge costs use base values regardless of floor depth (the costAnnotation, tryUpgrade, tryReforge and WorkstationUI all dropped the scaledCost call). Preserve costs still scale with floor.
+- [x] **Room-clear heal increased to 30%:** `st.heal(st.maxHearts * 0.30)` — up from 15%, makes sustaining through a floor less dependent on heart pickups.
+- [x] **Soul Siphon (Life Drain) infinite-range player heal:** shift+left-click while looking at another player within 100 blocks heals them instead of self (with particles + sounds + per-player messages). Falls back to self-heal when no valid party member is in the crosshair.
+- [x] **Soul Siphon heal duplicate suppression:** a single click fires both LEFT_CLICK_AIR + LEFT_CLICK_BLOCK; a 100ms duplicate window in `GameListener.lastSoulSiphonHeal` suppresses the second spurious "No stored health" message.
+- [x] **Duplicate ability cast suppression:** `PlayerState.lastCastAt` map + `CAST_DUPLICATE_WINDOW_MS = 100` skip the misleading "on cooldown" message when a single input (main/off-hand duplicate) re-invokes a weapon or class ability that just cast.
+- [x] **Arcane Staff (Arcane Bolt) range doubled + better particles:** range 8.0→16.0; line of 16 stationary END_ROD particles along the bolt path + bigger CRIT burst (24 particles, wider spread).
+- [x] **Lightning ability + /troll admin menu:** new "Lightning" ability (30 mana, 6s cd) calls a bolt down on the nearest enemy in a narrow cone (3x damage) with a chain splash (1.5x) to the next nearest. `/troll` OP-only GUI (Lightning Wand + Fling Wand). TrollWandListener handles the Fling Wand (sneak+right-click to fling a looked-at player up and away).
+- [x] **Attack cooldown rework (reduced-damage uncharged swings):** a swing during the cooldown window now lands and deals reduced damage (scales from 20%→100% as the weapon recharges) instead of being fully ignored. `fireCd` is only consumed on a charged swing.
+- [x] **Dead players become spectators with corpse markers:** on death players switch to SPECTATOR mode (no collision box, faster speed 0.4 walk / 0.10 fly) with a floating armor-stand corpse marker wearing their head + name tag. Spectators cannot attack, cast abilities, claim pedestal loot, or collect pickups. Corpse markers persist through revives/leaves.
+- [x] **Enemy scaling alive-party-size (not total party):** `alivePartySize()` replaces `party.onlineMembers().size()` for enemy count/HP scaling, so a room stays clearable when team members are down.
+- [x] **Living-only coin awards:** `aliveCoinAward()` splits dead players' coin shares among survivors on room clear and boss defeat. Spectators get nothing.
+- [x] **Non-Dung armor equip blocked outside runs:** `GameListener` blocks equipping vanilla armor in inventory/armor slots outside a run (no more accidentally wearing non-Dung armor in the lobby/plots). Dung loot items that are placeable blocks (e.g. Storm Rod's LIGHTNING_ROD) are also blocked from placement.
+- [x] **Hotbar items localized per language:** key/bomb/empty-slot/equip-shield display names now read from `Lang.get(lang, "item.key")` etc., matching the player's current language instead of hardcoded English.
+- [x] **Shop supply prices halved:** keys 12→6, bombs 12→6, heart 10→5, mana 8→4, tonics 25→12. `Category` run-roll costs also halved (WEAPON 24→12, ARMOR 18→9, MANA_SHIELD 18→9).
+- [x] **StashUI gear localized on display:** the `/stash` GUI now localizes gear lore to the viewer's language each time it opens (not just on acquire).
+- [x] **PlayerState constructor fix:** replaced `new PlayerState(plugin, p) { /* overrides */ }` with `new PlayerState(p)` — `PlayerState` is `final`, so anonymous subclassing was impossible and caused 3 compile errors.
+- [x] **GearFactory perfection name l10n:** perfection suffix ("of Perfection" / "of Tökéletesség") now detected in both languages; localized base names translated into item display names (e.g. "Frayed Blade" → "Kopott Penge").
+- [x] **GearFactory durability floors at 1 (never 0):** `isBroken()` returns true at dur==1 (not 0), and `damageItem()` clamps at min 1 — prevents vanilla item-deletion when custom durability hits 0.
+- [x] **PlotListener crop trampling blocks any entity:** the handler was gated on `Player` only, so mobs/endermen could trample farmland. Now blocks `EntityChangeBlockEvent` for any entity type (mob or player, owner or not) when farmland turns to dirt in the plots world.
+- [x] **Lang.java additions:** `pickup.fullHeart` (HP-full message), `gear.noNonDungEquip`, `ability.lightning`, `gear.use.lightning`, item display names (frayed_blade→soul_siphon, cloth→netherite, key, bomb, slot.empty, slot.equipShield), Hungarian tweaks.
+- [x] **GearFactory.localizeFor covers perfection in both languages:** perfection suffix translation works multi-step — detect English or Hungarian suffix, strip it, translate base name, re-append correct-suffix.
+- [x] **WorkstationUI confirmation button shows upgrade cost:** the LIME_DYE confirmation button now includes the cost line below "Apply" text, so the player sees the price before clicking confirm.
+- [x] **HP tag shows Mana Shield overlap:** the three-row overhead HP tag recolor the first health cells to cyan when a mana shield is active, showing "cur/max + shieldVal" in the numeric line.
+- [x] **`aliveCoinAward` reused for boss defeat:** the same living-only split logic applied to boss clear coins (previously awarded coins equally to all members regardless of death state).
+- [x] **`restoreSavedInventory` preserves mid-run durability loss:** when restoring persistent items, the mid-run damaged version is kept instead of the undamaged snapshot (so ability-use wear on persistent gear isn't rolled back on run end).
+
 ### Iteration 48 — full EN/Magyar localization (/language + gear lore)
 - [x] **Language system:** per-player UI language (`english` / `magyar`) stored in `MetaManager`
       (persisted across restarts), selected with `/language`. Catalog in `com.lieyabull.dung.lang.Lang`
@@ -1095,4 +1124,4 @@ tab = detailed build/run/progression).
 gradlew build            # compiles + jars
 gradlew runServer        # boots a Paper 1.21.11 server with the plugin
 ```
-Commands: `/dung start|descend|leave|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop` (opens GUI) `/upgrades` (opens GUI) `/salvage [all|favorite]` `/leaderboard [category] [page]` `/plots [warp <name>]` `/plot claim|home|name|warp|settings|pvp|fire|public|trust|untrust|container|uncontainer|pickup|unpickup|unclaim` `/convert`
+Commands: `/dung start|descend|leave|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop` (opens GUI) `/upgrades` (opens GUI) `/salvage [all|favorite]` `/leaderboard [category] [page]` `/plots [warp <name>]` `/plot claim|home|name|warp|settings|pvp|fire|public|trust|untrust|container|uncontainer|pickup|unpickup|unclaim` `/convert` `/troll`

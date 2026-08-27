@@ -220,16 +220,18 @@ public final class PlotListener implements Listener {
         if (info != null && !info.fireSpread) e.setCancelled(true);
     }
 
-    /** Prevent players from trampling crops on plots they don't own.
-     *  EntityChangeBlockEvent fires when farmland turns to dirt from trampling. */
+    /** Prevent crops from being trampled in the plots world — by any entity, including the plot
+     *  owner. EntityChangeBlockEvent fires when farmland turns to dirt from trampling. Like the
+     *  naming suggests, a player never gains the right to trample their own crops. */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onEntityChangeBlock(EntityChangeBlockEvent e) {
-        if (!(e.getEntity() instanceof Player p)) return;
         PlotManager pm = plugin.plotManager();
         Location loc = e.getBlock().getLocation();
         PlotManager.PlotCoord coord = pm.plotAt(loc);
         if (coord == null) return;
-        if (!pm.ownsPlot(p, coord)) {
+        // Trampling yields the farmland block changing to dirt; block any entity (mob or player,
+        // owner or not) from stepping crops into dirt anywhere in the plots world.
+        if (e.getBlock().getType() == org.bukkit.Material.FARMLAND && e.getTo() == org.bukkit.Material.DIRT) {
             e.setCancelled(true);
         }
     }

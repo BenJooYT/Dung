@@ -117,11 +117,11 @@ public final class ShopUI implements Listener {
     private static final int SUPPLY_MANA_SLOT = 16;
     private static final int SUPPLY_DMG_TONIC_SLOT = 20;
     private static final int SUPPLY_DEF_TONIC_SLOT = 24;
-    private static final int SUPPLY_KEY_COST = 12;
-    private static final int SUPPLY_BOMB_COST = 12;
-    private static final int SUPPLY_HEART_COST = 10;
-    private static final int SUPPLY_MANA_COST = 8;
-    private static final int SUPPLY_TONIC_COST = 25;
+    private static final int SUPPLY_KEY_COST = 6;
+    private static final int SUPPLY_BOMB_COST = 6;
+    private static final int SUPPLY_HEART_COST = 5;
+    private static final int SUPPLY_MANA_COST = 4;
+    private static final int SUPPLY_TONIC_COST = 12;
     /** Stat boost granted by each tonic for the rest of the run. */
     private static final int TONIC_STAT_AMOUNT = 2;
 

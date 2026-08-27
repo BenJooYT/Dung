@@ -86,9 +86,9 @@ public final class WorkstationRules {
     /** Persistent-coin cost for a preserve attempt (required AND with run coins and shards). */
     public static final int PRESERVE_PERSISTENT_COIN_COST = 200;
     /** Shard cost for a preserve attempt (required AND with run coins and persistent coins). */
-    public static final int PRESERVE_SHARD_COST = 250;
+    public static final int PRESERVE_SHARD_COST = 100;
     /** Base chance (0.0-1.0) a preserve attempt succeeds and queues the item for post-run delivery. */
-    public static final double PRESERVE_SUCCESS_CHANCE = 0.40;
+    public static final double PRESERVE_SUCCESS_CHANCE = 0.55;
     /** Bad-luck protection: after this many consecutive failed preserve attempts, the next attempt is
      *  guaranteed to succeed (a success no later than the Nth attempt). */
     public static final int PRESERVE_PITY = 3;

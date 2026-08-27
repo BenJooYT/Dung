@@ -194,7 +194,13 @@ public final class StashUI implements Listener {
         Inventory inv = Bukkit.createInventory(null, STASH_SIZE,
                 LEGACY.deserialize(com.lieyabull.dung.lang.Lang.forPlayer(p, "stash.title", list.size(), STASH_SIZE)));
         for (int i = 0; i < Math.min(list.size(), STASH_SIZE); i++) {
-            inv.setItem(i, list.get(i).clone());
+            ItemStack shown = list.get(i).clone();
+            // Stash is reachable outside dungeons (lobby/plots), so translate any gear to the
+            // viewer's current language the moment it's displayed.
+            if (com.lieyabull.dung.items.GearFactory.isGear(shown)) {
+                com.lieyabull.dung.items.GearFactory.localizeFor(shown, p);
+            }
+            inv.setItem(i, shown);
         }
         openStashes.put(inv, p.getUniqueId());
         p.openInventory(inv);

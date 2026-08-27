@@ -147,6 +147,7 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/plot unclaim` | all | Unclaim the plot you're standing on (frees it for re-claiming). |
 | `/leaderboard [category] [page]` | all | Top players by `persistent_coins`/`shards`/`kills`/`clears`/`max_floor`, including offline players. |
 | `/dung bossbar` | `dung.admin` | Remove any stuck boss bars from the server. |
+| `/troll` | OP only | Opens the OP-only troll item menu giving a Lightning Wand (call down lightning) or a Fling Wand (fling looked-at players). |
 | `/dung room gen <id> [types]` | `dung.admin` | Auto-write `<id>.yml`+`<id>.schem` from your WorldEdit `//copy`. The id is the schematic name; reads marker signs for spawn/markers. Doors are carved procedurally at generation. |
 | `/dung room list` | `dung.admin` | List registered room structures. |
 | `/dung room reload` | `dung.admin` | Re-scan `plugins/Dung/structures/` and re-register structures. |
@@ -169,9 +170,9 @@ run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
   (+3%/lv), **Max Mana** (+5/lv), **Magic Damage** (+1/lv). Each has a rising cost and a level cap
   (see [meta → Upgrades](#meta--persistent-progression) for exact curves).
 - **Try to persist** — an `UPGRADE` room (every 5th floor) lets you spend **50 run coins + 200
-  persistent coins + 300 shards** to attempt persisting a run item past the current run: **40%**
-  success delivers it after the run as persistent gear at half durability; **60%** fails and
-  returns the item one rarity worse.
+  persistent coins + 100 shards** to attempt persisting a run item past the current run: **55%**
+  success delivers it after the run as persistent gear at half durability; **45%** fails and
+  returns the item one rarity worse (pity: guaranteed preserve after 3 consecutive failures).
 
 ## Localization
 
@@ -353,7 +354,7 @@ and an `id`. Elite variants use `id >= 100`.
 | Gaper / Elite Gaper | Zombie | 1 | shambles toward the player; occasionally stops to spit a short-range snowball; melees when close |
 | Fly | Bee | 2 | swarms erratically in an orbit, reversing direction every 0.5–1.25s; flees for 3s below 30% HP; dive-bombs when close |
 | Spider | Spider | 3 | faster at range, slower in melee; leaps at the player from 2–7 blocks away (every ~2.5s), damaging on landing |
-| Mulliboom | Creeper | 4 | slow walk; explodes on death for 4.5× damage AoE to all players within 3 blocks (visual only, no block damage) |
+| Mulliboom | Creeper | 4 | slow walk; explodes on death for 5.4× damage AoE to all players within 3 blocks (visual only, no block damage) |
 | Charger / Elite Charger | Ravager | 5 | telegraphed dash (0.75s windup → fast lunge), walks slowly while on cooldown; melees when close |
 | Maw | Warden | 6 | stationary ranged; fires sonic-boom projectiles at the player every ~1.75s with a particle telegraph (1.5s first-volley delay) |
 
@@ -539,10 +540,12 @@ Combat:
   (Shadow Step).
 - `tryCastAbility(p, item)` / `dispatchAbility(id, st)` — casts the held weapon's stored ability
   if mana + cooldown allow. Abilities: **Rush** `[5,1000]`, **Slash** `[12,2500]`, **Cleave**
-  `[15,3000]`, **Smash** `[18,3500]`, **Blade Storm** `[25,4500]`, **Arcane Bolt** `[20,3500]`,
-  **Ravage** `[40,8000]`, **Chain Lightning** (Storm Rod: chains to up to 3 enemies with
-  diminishing multipliers), **Fireball** (Blaze Staff: a real projectile that AoE-bursts 3
-  blocks), **Life Drain** (Soul Siphon: AoE drain). Magic abilities draw from the weapon's
+  `[15,3000]`, **Smash** `[18,3500]`, **Blade Storm** `[25,4500]`, **Arcane Bolt** `[20,3500]`
+  (range 16 blocks), **Ravage** `[40,8000]`, **Chain Lightning** (Storm Rod: chains to up to 3
+  enemies with diminishing multipliers), **Fireball** (Blaze Staff: a real projectile that AoE-bursts
+  3 blocks), **Life Drain** (Soul Siphon: AoE drain + infinite-range player heal at shift+left-click),
+  **Lightning** (Lightning Wand: 30 mana/6s cd — strikes nearest enemy with real lightning at 3x
+  damage, arcs 1.5x splash to nearest). Magic abilities draw from the weapon's
   `dung.magic_damage` instead of melee damage. All casts (weapon + class) respect a shared
   **400ms global cooldown** keyed to the player, so swapping between different-ability weapons
   cannot stack casts.
@@ -555,12 +558,12 @@ Combat:
   workstations in an UPGRADE room (see [Workstations](#workstations)).
 - `tryUpgrade` / `previewReforge` / `tryReforge` / `tryPreserve` / `trySalvage` — server-side
   operations applied after re-validating the item is still present, still eligible, and is the
-  exact item the player selected. All UPGRADE/REFORGE/PRESERVE costs scale with floor depth
-  (`WorkstationRules.scaledCost`). UPGRADE raises the item's core stat by 10%/level (max 5) for
-  run coins + shards; REFORGE rerolls affixes for shards, with a guaranteed max-affix **pity** roll
-  every 10 rerolls; PRESERVE is a **gamble** (50 run coins + 200 persistent coins + 250 shards,
-  all AND, ×floor tier) — 40% chance to queue the item for post-run delivery as persistent
-  half-durability gear, on failure it's returned one rarity worse; SALVAGE destroys the item for
+  exact item the player selected. UPGRADE/REFORGE costs use base prices (no floor scaling);
+  PRESERVE costs still scale with floor depth (`WorkstationRules.scaledCost`). UPGRADE raises the
+  item's core stat by 10%/level (max 5) for run coins + shards; REFORGE rerolls affixes for shards,
+   with a guaranteed max-affix **pity** roll every 10 rerolls; PRESERVE is a **gamble** (50 run coins
+   + 200 persistent coins + 100 shards, all AND, ×floor tier) — 55% chance to queue the item for
+   post-run delivery as persistent half-durability gear, on failure it's returned one rarity worse;
   **run coins** (per-run, lost on death — not bankable shards).
 - `tryUnlockRoom(p, loc)` — right-click an IRON_BLOCK barrier with a key item to unlock a
   LOCKED room (consumes 1 key, spawns pedestal loot). The unlocking player is **not** teleported
@@ -890,10 +893,10 @@ immediately and spent in `/upgrades`.
 - **Workstation (UPGRADE) rooms** — every 5th floor has five physical workstations for
   progression (costs scale with floor depth): **UPGRADE** raises an item's core stat by 10%/level
   (max 5) for run coins + shards; **REFORGE** rerolls an item's procedural affixes for shards, with
-  a guaranteed max-affix **pity** roll every 10 rerolls; **PRESERVE** is a gamble costing 50 run
-  coins + 200 persistent coins + 250 shards (all AND): 40% chance queues a run item for post-run
-  delivery as persistent half-durability gear, on failure it's returned one rarity worse;
-  **SALVAGE** destroys an item for **run coins** (per-run, lost on death — not bankable shards)
+   a guaranteed max-affix **pity** roll every 10 rerolls; **PRESERVE** is a gamble costing 50 run
+   coins + 200 persistent coins + 100 shards (all AND): 55% chance queues a run item for post-run
+   delivery as persistent half-durability gear, on failure it's returned one rarity worse;
+   **SALVAGE** destroys an item for **run coins** (per-run, lost on death — not bankable shards)
   (two-click confirm); **STORAGE** is a read-only in-run view of your persistent items (withdraw
   impossible). A successful preserve is never lost to death.
 - **Tab throttle** — `TabUI.refresh` runs every 10 ticks; only the HUD action bar keeps a

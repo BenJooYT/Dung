@@ -56,6 +56,12 @@ public final class PlayerState {
     public final Map<String, Integer> upgrades = new java.util.HashMap<>();
     // cooldowns (ms remaining) keyed by ability id
     public final Map<String, Long> cooldowns = new ConcurrentHashMap<>();
+    // timestamp (ms) of the last successful cast per ability key, used to suppress the redundant
+    // "on cooldown" message when a single input (e.g. a main/off-hand duplicate event) re-invokes
+    // an ability that just cast within the same instant.
+    public final Map<String, Long> lastCastAt = new ConcurrentHashMap<>();
+    // minimum gap (ms) used to treat a failing ability as a duplicate of one that just cast.
+    public static final long CAST_DUPLICATE_WINDOW_MS = 100;
 
     /** Global-cooldown key: shared by every ability/class cast so weapon-swap burst-spam is impossible. */
     public static final String GCD_KEY = "__gcd";

@@ -93,6 +93,9 @@ public final class DungeonInstance {
     private final Map<UUID, TabUI> tabs = new HashMap<>();
     private final Map<UUID, Location> returnLocs = new HashMap<>();
     private final Set<UUID> deadPlayers = new HashSet<>();
+    // Invisible armor-stand corpse marker worn by each dead (spectator) player: carries their head
+    // + name tag so living party members can see where the body is. Hidden from the owner.
+    private final Map<UUID, org.bukkit.entity.ArmorStand> spectatorStands = new HashMap<>();
     private final Set<Location> pedestals = new HashSet<>();
     private final Map<Location, ItemStack> pedestalItems = new HashMap<>();
     // Track destructible wall blocks (CRACKED_STONE_BRICKS) for bomb interaction
@@ -958,6 +961,37 @@ public final class DungeonInstance {
         return ox >= -margin && ox < rn.sizeW + margin && oz >= -margin && oz < rn.sizeH + margin;
     }
 
+    /** Number of currently living (non-dead) online party members. Used to scale enemy difficulty
+     *  to the players who can actually fight, so a room stays clearable when team members are down. */
+    private int alivePartySize() {
+        int alive = 0;
+        for (Player m : party.onlineMembers()) {
+            if (!deadPlayers.contains(m.getUniqueId())) alive++;
+        }
+        return alive;
+    }
+
+    /** Compute a run-coin award distributed ONLY to living members, splitting dead players' shares
+     *  among the survivors so the total coin value (per-member base × full party) is unchanged and
+     *  spectators never hoard coins. Returns per-player amounts keyed by player UUID (empty if none
+     *  alive). The caller applies the amounts and any messaging. */
+    private java.util.Map<java.util.UUID, Integer> aliveCoinAward(int perMemberCoins) {
+        java.util.Map<java.util.UUID, Integer> out = new java.util.HashMap<>();
+        java.util.List<Player> alive = new java.util.ArrayList<>();
+        for (Player p : party.onlineMembers()) {
+            if (!deadPlayers.contains(p.getUniqueId())) alive.add(p);
+        }
+        if (alive.isEmpty()) return out;
+        int totalMembers = party.onlineMembers().size();
+        int pool = perMemberCoins * totalMembers;
+        int share = pool / alive.size();
+        int remainder = pool % alive.size();
+        for (int i = 0; i < alive.size(); i++) {
+            out.put(alive.get(i).getUniqueId(), share + (i < remainder ? 1 : 0));
+        }
+        return out;
+    }
+
     /** Check whether every online, alive party member is physically inside the given room (using their
      *  actual location, not the stale playerRoom map). Dead (spectator) players are skipped so they
      *  don't block combat start or room locking for the rest of the party. */
@@ -979,8 +1013,9 @@ public final class DungeonInstance {
         List<Enemy> list = new ArrayList<>();
         long k = run.floor.key(n.x, n.z);
         boolean elite = n.type == RoomType.ELITE;
-        // Larger parties face more, tougher enemies so a group run isn't trivially easier than solo.
-        int partySize = Math.max(1, party.onlineMembers().size());
+        // Scale enemy count/toughness to the CURRENT living party members (not the full party), so
+        // clearing a room never becomes near-impossible when several members are dead/spectating.
+        int partySize = Math.max(1, alivePartySize());
         int baseCount = elite ? 3 : 2 + Math.min(run.floorIndex, 2);
         int count = baseCount * partySize;
         double hpMult = 1 + 0.3 * (partySize - 1);
@@ -1098,12 +1133,12 @@ public final class DungeonInstance {
     private static String costAnnotation(WorkstationType wt, int floor) {
         return switch (wt) {
             case UPGRADE -> {
-                int coin = WorkstationRules.scaledCost(WorkstationRules.UPGRADE_COIN_BASE, floor);
-                int shard = WorkstationRules.scaledCost(WorkstationRules.UPGRADE_SHARD_BASE, floor);
+                int coin = WorkstationRules.UPGRADE_COIN_BASE;
+                int shard = WorkstationRules.UPGRADE_SHARD_BASE;
                 yield "§e" + coin + " coins §3" + shard + " shards";
             }
             case REFORGE -> {
-                int shard = WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor);
+                int shard = WorkstationRules.REFORGE_SHARD_COST;
                 yield "§3" + shard + " shards";
             }
             case PRESERVE -> {
@@ -1604,10 +1639,26 @@ public final class DungeonInstance {
 
     public void registerAttack(Player p) {
         PlayerState ps = run.playerStateOf(p.getUniqueId());
-        if (!running || ps == null || ps.fireCd > 0) return;
+        if (!running || ps == null) return;
+        // Dead players are spectators during a run — they can observe but never attack.
+        if (deadPlayers.contains(p.getUniqueId())) return;
+
+        // A weapon deals full damage on a charged strike, but a swing made during the attack
+        // cooldown still lands and deals reduced damage instead of being ignored. The reduction
+        // scales with the cooldown's remaining progress (vanilla-style), flooring at 20% damage
+        // at the very start of the cooldown and approaching full damage as the weapon recharges.
+        boolean charged = ps.fireCd <= 0;
+        double dmgMult;
+        if (charged) {
+            dmgMult = 1.0;
+            ps.fireCd = ps.fireRateTicks;
+        } else {
+            double progress = 1.0 - ((double) ps.fireCd / Math.max(1, ps.fireRateTicks));
+            dmgMult = 0.2 + 0.8 * progress;
+        }
 
         // Apply damage boost (War Cry) and guaranteed crit (Shadow Step)
-        double baseDmg = ps.damage;
+        double baseDmg = ps.damage * dmgMult;
         if (ps.hasDamageBoost()) baseDmg *= ps.damageBoostMult;
         boolean guaranteeCrit = ps.hasGuaranteedCrit();
 
@@ -1632,8 +1683,6 @@ public final class DungeonInstance {
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.soulSiphonFull"));
             return;
         }
-
-        ps.fireCd = ps.fireRateTicks;
 
         org.bukkit.util.Vector dir = p.getEyeLocation().getDirection().normalize();
         Floor.RoomNode attackRoom = playerRoom.get(p.getUniqueId());
@@ -1712,17 +1761,18 @@ public final class DungeonInstance {
         }
     }
 
-    private static final Map<String, long[]> ABILITY_COST_CD = Map.of(
-        "Rush",           new long[]{ 5, 1000 },
-        "Slash",          new long[]{ 12, 2500 },
-        "Cleave",         new long[]{ 15, 3000 },
-        "Smash",          new long[]{ 18, 3500 },
-        "Blade Storm",    new long[]{ 25, 4500 },
-        "Arcane Bolt",    new long[]{ 20, 3500 },
-        "Ravage",         new long[]{ 40, 8000 },
-        "Chain Lightning",new long[]{ 35, 5000 },
-        "Fireball",       new long[]{ 25, 3000 },
-        "Life Drain",     new long[]{ 20, 3000 }
+    private static final Map<String, long[]> ABILITY_COST_CD = Map.ofEntries(
+        Map.entry("Rush",            new long[]{ 5, 1000 }),
+        Map.entry("Slash",           new long[]{ 12, 2500 }),
+        Map.entry("Cleave",          new long[]{ 15, 3000 }),
+        Map.entry("Smash",           new long[]{ 18, 3500 }),
+        Map.entry("Blade Storm",     new long[]{ 25, 4500 }),
+        Map.entry("Arcane Bolt",     new long[]{ 20, 3500 }),
+        Map.entry("Ravage",          new long[]{ 40, 8000 }),
+        Map.entry("Chain Lightning", new long[]{ 35, 5000 }),
+        Map.entry("Fireball",        new long[]{ 25, 3000 }),
+        Map.entry("Life Drain",      new long[]{ 20, 3000 }),
+        Map.entry("Lightning",       new long[]{ 30, 6000 })
     );
     private static final long[] DEFAULT_ABILITY_COST_CD = new long[]{ 15, 3500 };
 
@@ -1734,8 +1784,17 @@ public final class DungeonInstance {
     );
 
     public void tryCastAbility(Player p, ItemStack item) {
-        if (!running || item == null) return;
+        if (item == null) return;
         PlayerState st = run.playerStateOf(p.getUniqueId());
+        boolean inRun = st != null;
+        if (!inRun) {
+            // Outside a dungeon run: skip cooldown/mana checks, but still allow the ability.
+            // Create a minimal state so dispatchAbility can run; the ability will use defaults.
+            // PlayerState is final, so we cannot use an anonymous subclass — a basic instance
+            // works fine because canCast, spendMana, startCooldown are either unguarded for
+            // no-ops (GCD check cost=0) or guarded by the (inRun) condition below.
+            st = new PlayerState(p);
+        }
         if (st == null) return;
         var pdc = item.getItemMeta() == null ? null : item.getItemMeta().getPersistentDataContainer();
         if (pdc == null || !pdc.has(org.bukkit.NamespacedKey.minecraft("dung.ability"),
@@ -1751,8 +1810,14 @@ public final class DungeonInstance {
         if (cfg == null) cfg = DEFAULT_ABILITY_COST_CD;
         double cost = costI != null ? costI : cfg[0];
         long cd = cfg[1];
-        if (!st.canCast(id, cost, cd)) {
-            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.noManaCd"));
+        if (inRun && !st.canCast(id, cost, cd)) {
+            // A single input can deliver the interact event twice (main + off hand); the duplicate
+            // re-invocation arrives right after a successful cast of the same ability, so skip the
+            // misleading "on cooldown" message instead of reporting it as if the player cast twice.
+            Long last = st.lastCastAt.get(id);
+            if (last == null || System.currentTimeMillis() - last > PlayerState.CAST_DUPLICATE_WINDOW_MS) {
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.noManaCd"));
+            }
             return;
         }
         if (!st.canCast(PlayerState.GCD_KEY, 0, PlayerState.GCD_MS)) {
@@ -1764,9 +1829,12 @@ public final class DungeonInstance {
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.itemBroken")));
             return;
         }
-        st.spendMana(cost);
-        st.startCooldown(PlayerState.GCD_KEY, PlayerState.GCD_MS);
-        st.startCooldown(id, cd);
+        if (inRun) {
+            st.spendMana(cost);
+            st.startCooldown(PlayerState.GCD_KEY, PlayerState.GCD_MS);
+            st.startCooldown(id, cd);
+            st.lastCastAt.put(id, System.currentTimeMillis());
+        }
         dispatchAbility(id, st, p);
         // Persistent weapons lose 1-2 durability when their ability is used
         if (item != null && GearFactory.isPersistent(item)) {
@@ -1788,6 +1856,8 @@ public final class DungeonInstance {
         if (!running) return;
         PlayerState st = run.playerStateOf(p.getUniqueId());
         if (st == null) return;
+        // Dead players are spectators during a run — they can observe but never cast abilities.
+        if (deadPlayers.contains(p.getUniqueId())) return;
 
         String classId = st.classId;
         long[] cfg = CLASS_ABILITY_COST_CD.get(classId);
@@ -1799,7 +1869,10 @@ public final class DungeonInstance {
         long cd = cfg[1];
         String abilityKey = "class_" + classId;
         if (!st.canCast(abilityKey, cost, cd)) {
-            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.noManaCd"));
+            Long last = st.lastCastAt.get(abilityKey);
+            if (last == null || System.currentTimeMillis() - last > PlayerState.CAST_DUPLICATE_WINDOW_MS) {
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.noManaCd"));
+            }
             return;
         }
         if (!st.canCast(PlayerState.GCD_KEY, 0, PlayerState.GCD_MS)) {
@@ -1809,6 +1882,7 @@ public final class DungeonInstance {
         st.spendMana(cost);
         st.startCooldown(PlayerState.GCD_KEY, PlayerState.GCD_MS);
         st.startCooldown(abilityKey, cd);
+        st.lastCastAt.put(abilityKey, System.currentTimeMillis());
         dispatchClassAbility(classId, st, p);
     }
 
@@ -1913,7 +1987,7 @@ public final class DungeonInstance {
         List<Enemy> roomList = roomEnemies.getOrDefault(k, List.of());
         // Magic abilities use st.magicDamage instead of st.damage
         boolean isMagic = switch (id) {
-            case "Arcane Bolt", "Chain Lightning", "Fireball", "Life Drain" -> true;
+            case "Arcane Bolt", "Chain Lightning", "Fireball", "Life Drain", "Lightning" -> true;
             default -> false;
         };
         double baseDmg = isMagic && st.magicDamage > 0 ? st.magicDamage : st.damage;
@@ -1969,10 +2043,16 @@ public final class DungeonInstance {
                 break;
             case "Arcane Bolt":
                 // "mage strike in a line" — up to a few along the line
-                hitBoss.accept(8.0);
+                hitBoss.accept(16.0);
                 hitTargets(roomList, caster, 3, dmg * 2.2, dir.getX(), dir.getZ(),
-                        e -> inCone(e, caster, dir, 8.0, 0.6));
-                caster.getWorld().spawnParticle(org.bukkit.Particle.CRIT, caster.getEyeLocation().add(dir.clone().multiply(1.5)), 8, 0.2, 0.2, 0.2);
+                        e -> inCone(e, caster, dir, 16.0, 0.6));
+                // Line of stationary end rod particles along the bolt path
+                org.bukkit.Location boltOrigin = caster.getEyeLocation().add(dir.clone().multiply(1.5));
+                for (int i = 0; i < 16; i++) {
+                    org.bukkit.Location pt = boltOrigin.clone().add(dir.clone().multiply(i * 0.8));
+                    caster.getWorld().spawnParticle(org.bukkit.Particle.END_ROD, pt, 1, 0, 0, 0, 0);
+                }
+                caster.getWorld().spawnParticle(org.bukkit.Particle.CRIT, boltOrigin, 24, 0.4, 0.4, 0.4, 0.1);
                 caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.arcaneBolt"));
                 break;
             case "Ravage":
@@ -2036,6 +2116,59 @@ public final class DungeonInstance {
                     }
                     world.playSound(caster.getLocation(), org.bukkit.Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 0.6f, 1.2f);
                     caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.chainLightning"));
+                } else {
+                    caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.noTarget"));
+                }
+                break;
+            }
+            case "Lightning": {
+                // Call a bolt of lightning down on the target the caster is looking at: pick the
+                // nearest living enemy in a narrow cone ahead (or the boss), strike it with a real
+                // lightning bolt for big damage, and arc a splash to the next nearest enemy.
+                Enemy primary = null;
+                double bestDist = Double.MAX_VALUE;
+                for (Enemy e : roomList) {
+                    if (e.dead) continue;
+                    if (!inCone(e, caster, dir, 14.0, 0.7)) continue;
+                    double dist = e.entity.getLocation().distanceSquared(caster.getLocation());
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        primary = e;
+                    }
+                }
+                if (primary == null && boss != null && boss.isActive()) {
+                    org.bukkit.util.Vector toBoss = boss.location().toVector().subtract(caster.getLocation().toVector());
+                    toBoss.setY(0);
+                    if (toBoss.length() < 14.0 && toBoss.clone().normalize().dot(dir) > 0.7) {
+                        boss.damage(dmg * 3.0, caster);
+                        world.strikeLightningEffect(boss.location());
+                        world.playSound(boss.location(), org.bukkit.Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 1.0f, 1.0f);
+                        primary = null;
+                    }
+                }
+                if (primary != null) {
+                    final Enemy struck = primary;
+                    org.bukkit.Location targetLoc = struck.entity.getLocation();
+                    primary.damage(dmg * 3.0, caster, 0, 0);
+                    world.strikeLightningEffect(targetLoc);
+                    world.playSound(targetLoc, org.bukkit.Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 1.0f, 1.0f);
+                    // Arc a half-strength splash to the next nearest living enemy.
+                    Enemy splash = null;
+                    double splashDist = Double.MAX_VALUE;
+                    for (Enemy e : roomList) {
+                        if (e.dead || e == struck) continue;
+                        double dist = e.entity.getLocation().distanceSquared(targetLoc);
+                        if (dist < 36.0 && dist < splashDist) {
+                            splashDist = dist;
+                            splash = e;
+                        }
+                    }
+                    if (splash != null) {
+                        splash.damage(dmg * 1.5, caster, 0, 0);
+                        drawLightningArcLinger(world, targetLoc.clone().add(0, 1, 0),
+                                splash.entity.getLocation().clone().add(0, 1, 0));
+                    }
+                    caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.lightning"));
                 } else {
                     caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.noTarget"));
                 }
@@ -2265,9 +2398,8 @@ public final class DungeonInstance {
             return false;
         }
         boolean isPersistent = GearFactory.isPersistent(item);
-        int floor = currentFloorNumber();
-        int coinCost = WorkstationRules.scaledCost(WorkstationRules.upgradeCoinCost(level), floor);
-        int shardCost = WorkstationRules.scaledCost(WorkstationRules.upgradeShardCost(level), floor);
+        int coinCost = WorkstationRules.upgradeCoinCost(level);
+        int shardCost = WorkstationRules.upgradeShardCost(level);
         if (isPersistent) {
             coinCost *= 2;
             shardCost *= 2;
@@ -2310,9 +2442,8 @@ public final class DungeonInstance {
             return false;
         }
         boolean isPersistent = GearFactory.isPersistent(item);
-        int floor = currentFloorNumber();
         int reforgeCount = GearFactory.getReforgeCount(item);
-        int shardCost = WorkstationRules.scaledCost(WorkstationRules.reforgeShardCost(reforgeCount), floor);
+        int shardCost = WorkstationRules.reforgeShardCost(reforgeCount);
         if (isPersistent) shardCost *= 2;
         if (prof.shards < shardCost) {
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.needShards", shardCost, prof.shards));
@@ -2439,15 +2570,17 @@ public final class DungeonInstance {
         roomLocked.put(k, false);
         openDoors(n);
         int coins = 2 + run.floorIndex;
-        // Give coins to all party members and heal them by 15% HP
+        // Award coins only to living members (dead players' shares are split among survivors) and
+        // heal living members by 30% HP. Spectators get nothing.
+        java.util.Map<java.util.UUID, Integer> award = aliveCoinAward(coins);
         for (Player p : party.onlineMembers()) {
+            Integer amt = award.remove(p.getUniqueId());
             PlayerState st = run.playerStateOf(p.getUniqueId());
-            if (st != null) {
-                st.coins += coins;
-                run.runCoinsEarned += coins;
-                st.heal(st.maxHearts * 0.15);
-                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.cleared", coins));
-            }
+            if (amt == null || st == null) continue;
+            st.coins += amt;
+            run.runCoinsEarned += amt;
+            st.heal(st.maxHearts * 0.30);
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.cleared", amt));
         }
         List<ItemStack> loot = ItemPool.roomReward(run.floorIndex, n.type.kind);
         Location center = RoomGen.center(world, n, BASE_Y, spacing, offsetX, offsetZ);
@@ -2505,12 +2638,14 @@ public final class DungeonInstance {
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.bossSlain"));
         }
         int coins = 8 + run.floorIndex * 4;
-        for (Player p : party.onlineMembers()) {
-            PlayerState st = run.playerStateOf(p.getUniqueId());
-            if (st != null) {
-                st.coins += coins;
-                run.runCoinsEarned += coins;
-            }
+        // Award run coins only to living players (dead players' shares are split among survivors) —
+        // spectators get nothing. This runs before reviveDeadPlayers so dead members are still out.
+        java.util.Map<java.util.UUID, Integer> award = aliveCoinAward(coins);
+        for (java.util.Map.Entry<java.util.UUID, Integer> en : award.entrySet()) {
+            PlayerState st = run.playerStateOf(en.getKey());
+            if (st == null) continue;
+            st.coins += en.getValue();
+            run.runCoinsEarned += en.getValue();
         }
         dropGear(roomSpawn(defeated), 2, 6);
         // Bank coins for each player — calculate once, distribute to all
@@ -2568,9 +2703,12 @@ public final class DungeonInstance {
             p.setInvisible(false);
             p.setInvulnerable(false);
             p.getInventory().setHelmet(null);
+            removeSpectatorStand(p);
             p.setGameMode(org.bukkit.GameMode.SURVIVAL);
             p.setHealth(20);
             p.setFoodLevel(20);
+            p.setWalkSpeed(0.2f);
+            p.setFlySpeed(0.05f);
             // Restore persistent gear from the pre-run snapshot — stripRunGear removed it on death
             // along with non-persistent run gear, but persistent gear should come back on revive.
             restorePersistentGear(p);
@@ -2747,6 +2885,8 @@ public final class DungeonInstance {
 
     /** Claim a pedestal: give the item to the player and remove the pedestal. */
     public boolean claimPedestal(Player p, Location blockLoc) {
+        // Dead players are spectators during a run — they can observe pedestals but never claim loot.
+        if (deadPlayers.contains(p.getUniqueId())) return false;
         Location key = new Location(world, blockLoc.getBlockX(), blockLoc.getBlockY(), blockLoc.getBlockZ());
         ItemStack item = pedestalItems.remove(key);
         if (item == null) return false;
@@ -3096,10 +3236,10 @@ public final class DungeonInstance {
     public static final int SHIELD_SLOT = 8;
 
     /** Create an enchanted key item for the hotbar. */
-    private static ItemStack makeKeyItem() {
+    private static ItemStack makeKeyItem(com.lieyabull.dung.lang.Language lang) {
         ItemStack s = new ItemStack(Material.TRIPWIRE_HOOK);
         s.editMeta(meta -> {
-            meta.setDisplayName("§9§lKey");
+            meta.setDisplayName("§9§l" + com.lieyabull.dung.lang.Lang.get(lang, "item.key"));
             meta.addEnchant(org.bukkit.enchantments.Enchantment.UNBREAKING, 1, true);
             meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
             meta.getPersistentDataContainer().set(
@@ -3110,10 +3250,10 @@ public final class DungeonInstance {
     }
 
     /** Create an enchanted bomb item for the hotbar. */
-    private static ItemStack makeBombItem() {
+    private static ItemStack makeBombItem(com.lieyabull.dung.lang.Language lang) {
         ItemStack s = new ItemStack(Material.TNT);
         s.editMeta(meta -> {
-            meta.setDisplayName("§4§lBomb");
+            meta.setDisplayName("§4§l" + com.lieyabull.dung.lang.Lang.get(lang, "item.bomb"));
             meta.addEnchant(org.bukkit.enchantments.Enchantment.UNBREAKING, 1, true);
             meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
             meta.getPersistentDataContainer().set(
@@ -3156,9 +3296,10 @@ public final class DungeonInstance {
         PlayerState st = run == null ? null : run.playerStateOf(p.getUniqueId());
         if (st == null) return;
         PlayerInventory inv = p.getInventory();
+        com.lieyabull.dung.lang.Language lang = com.lieyabull.dung.lang.Lang.languageOf(p);
 
-        syncCountedSlot(inv, KEY_SLOT, st.keys, makeKeyItem());
-        syncCountedSlot(inv, BOMB_SLOT, st.bombs, makeBombItem());
+        syncCountedSlot(inv, KEY_SLOT, st.keys, makeKeyItem(lang), lang);
+        syncCountedSlot(inv, BOMB_SLOT, st.bombs, makeBombItem(lang), lang);
 
         // Slot 9 (index 8): Mana Shield item. A shield here is the active mana shield.
         syncShieldSlot(p);
@@ -3168,7 +3309,8 @@ public final class DungeonInstance {
      *  the slot every tick. When the count is 0 a leftover real key/bomb is cleared so the empty
      *  placeholder can show, but the placeholder itself is never touched once it is in place — so it
      *  does not flicker or get duplicated tick to tick. */
-    private void syncCountedSlot(PlayerInventory inv, int slot, int count, ItemStack item) {
+    private void syncCountedSlot(PlayerInventory inv, int slot, int count, ItemStack item,
+                                 com.lieyabull.dung.lang.Language lang) {
         ItemStack cur = inv.getItem(slot);
         String kind = runItemKind(cur);
         if (count > 0) {
@@ -3186,7 +3328,7 @@ public final class DungeonInstance {
         }
         // Show the empty placeholder only if the slot isn't already holding one (no per-tick re-send).
         if (cur == null || cur.getType() == Material.AIR || !isRunItem(cur)) {
-            inv.setItem(slot, makeEmptySlotItem());
+            inv.setItem(slot, makeEmptySlotItem(lang));
         }
     }
 
@@ -3230,7 +3372,8 @@ public final class DungeonInstance {
         // green swappable pane stays up while the player moves a shield toward this slot.
         clearEquipIndicators(inv);
         boolean hasShield = GearFactory.findShieldItem(inv) != null || shieldOnCursor(p);
-        ItemStack indicator = hasShield ? makeEquipSlotItem() : makeEmptySlotItem();
+        com.lieyabull.dung.lang.Language lang = com.lieyabull.dung.lang.Lang.languageOf(p);
+        ItemStack indicator = hasShield ? makeEquipSlotItem(lang) : makeEmptySlotItem(lang);
         ItemStack cur = inv.getItem(SHIELD_SLOT);
         if (cur == null || cur.getType() != indicator.getType()) {
             inv.setItem(SHIELD_SLOT, indicator);
@@ -3371,10 +3514,10 @@ public final class DungeonInstance {
      *  Marked as a run item so inventory click/drag handlers block moving it — without the
      *  tag, a player can pull it out of the hotbar and syncHotbarItems spawns a fresh copy
      *  each tick, duplicating it. */
-    private static ItemStack makeEmptySlotItem() {
+    private static ItemStack makeEmptySlotItem(com.lieyabull.dung.lang.Language lang) {
         ItemStack s = new ItemStack(Material.BLACK_STAINED_GLASS_PANE);
         s.editMeta(meta -> {
-            meta.setDisplayName("§8Empty");
+            meta.setDisplayName("§8" + com.lieyabull.dung.lang.Lang.get(lang, "item.slot.empty"));
             meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
             meta.getPersistentDataContainer().set(
                     org.bukkit.NamespacedKey.minecraft(ItemTags.RUN_ITEM),
@@ -3389,10 +3532,10 @@ public final class DungeonInstance {
      *  a shield into the slot manually. It carries its own {@link ItemTags#EQUIP_INDICATOR} tag so the
      *  sync can recognise and sweep up any panes (so it only exists while the slot is empty of a shield).
      *  It holds no gameplay value, so it can't be exploited. */
-    private static ItemStack makeEquipSlotItem() {
+    private static ItemStack makeEquipSlotItem(com.lieyabull.dung.lang.Language lang) {
         ItemStack s = new ItemStack(Material.LIME_STAINED_GLASS_PANE);
         s.editMeta(meta -> {
-            meta.setDisplayName("§aEquip Shield");
+            meta.setDisplayName("§a" + com.lieyabull.dung.lang.Lang.get(lang, "item.slot.equipShield"));
             meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
             meta.getPersistentDataContainer().set(
                     org.bukkit.NamespacedKey.minecraft(ItemTags.EQUIP_INDICATOR),
@@ -3523,14 +3666,23 @@ public final class DungeonInstance {
         }
         p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "death.tryAgain")));
 
-        // Make player invisible, give them their own head, and disable targeting
+        // Make player invisible, give them their own head, and disable targeting.
         // They stay in the instance and can be revived if the boss is defeated.
         p.setHealth(20);
         p.setInvisible(true);
-        p.setWalkSpeed(0.2f);
+        // Switch the corpse to SPECTATOR so it has no collision box: other players can hit
+        // through it and abilities/projectiles pass through it instead of stopping on the body.
+        p.setGameMode(org.bukkit.GameMode.SPECTATOR);
         p.setInvulnerable(true);
         p.getInventory().setHelmet(createPlayerHead(p));
         removeHeadHp(p); // spectators don't carry an HP readout
+        // At the spectator's position, leave an invisible armor-stand marker wearing their head and
+        // name tag so living party members can still see where the body is. Hidden from the owner
+        // so the spectator doesn't see their own floating head/name.
+        spawnSpectatorStand(p);
+        // Spectators move at double speed (walk 0.2 -> 0.4, fly 0.05 -> 0.10).
+        p.setWalkSpeed(0.4f);
+        p.setFlySpeed(0.10f);
 
         HUD hud = huds.get(p.getUniqueId());
         TabUI tab = tabs.get(p.getUniqueId());
@@ -3595,6 +3747,7 @@ public final class DungeonInstance {
         lastBarMana.remove(pid);
         lastHeadHp.remove(pid);
         removeHeadHp(p);
+        removeSpectatorStand(p);
         playerRoom.remove(pid);
         stripRunGear(p);
         restoreSavedInventory(p);
@@ -3608,7 +3761,9 @@ public final class DungeonInstance {
             damagePersistentGear(p, LEAVE_DURABILITY_DIVISOR);
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "leave.early"));
         }
+        p.setGameMode(org.bukkit.GameMode.SURVIVAL);
         p.setWalkSpeed(0.2f);
+        p.setFlySpeed(0.05f);
         p.setFoodLevel(20);
         teleportOut(p);
         GameManager.instance().removePlayerFromInstance(p);
@@ -3745,12 +3900,30 @@ public final class DungeonInstance {
         int cur = (int) Math.ceil(st.hearts);
         int max = st.maxHearts;
         int filled = Math.max(0, Math.min(10, (int) Math.round(10.0 * cur / max)));
-        StringBuilder bar = new StringBuilder();
+        java.util.List<String> cells = new java.util.ArrayList<>();
         for (int i = 0; i < 10; i++) {
-            bar.append(i < filled ? "§a█" : "§8█");
+            cells.add(i < filled ? "§a█" : "§8█");
         }
-        // Three rows above the head: player name / HP bar / HP as numbers
-        String text = "§f" + p.getName() + "\n" + bar + "\n§c" + cur + " §7/ §f" + max;
+        // Rows above the head: player name / HP bar / HP as numbers.
+        String text = "§f" + p.getName() + "\n" + String.join("", cells)
+                + "\n§c" + cur + " §7/ §f" + max;
+        // Overlay the active Mana Shield's extra HP onto the bar: recolor the first (leftmost)
+        // health cells to cyan so the shield overlaps the HP bar, and show the shield amount as a
+        // "+ x" next to the health tag.
+        if (st.shieldActive && st.shieldMax > 0) {
+            int shieldVal = (int) Math.ceil(st.shield);
+            int shieldFilled = Math.max(0, Math.min(filled,
+                    (int) Math.round(10.0 * st.shield / st.shieldMax)));
+            if (shieldFilled > 0) {
+                // Recolor the first cells of the real-HP green fill to cyan (the shield overlaps
+                // the HP bar from the left, its extra HP repainting the leading health cells).
+                for (int i = 0; i < shieldFilled; i++) {
+                    cells.set(i, "§b█");
+                }
+                text = "§f" + p.getName() + "\n" + String.join("", cells)
+                        + "\n§c" + cur + " §7/ §f" + max + " §b+ " + shieldVal;
+            }
+        }
         org.bukkit.entity.TextDisplay tag = hpTags.get(p.getUniqueId());
         if (tag == null || !tag.isValid()) {
             if (tag != null) tag.remove();
@@ -3806,6 +3979,34 @@ public final class DungeonInstance {
         meta.setDisplayName("§7" + p.getName());
         head.setItemMeta(meta);
         return head;
+    }
+
+    /** Spawn an invisible armor-stand corpse marker at a dead (spectator) player's position. The
+     *  stand wears the player's head and their name tag so living party members can see where the
+     *  body is, but it is hidden from the owner so the spectator never sees their own marker. */
+    private void spawnSpectatorStand(Player p) {
+        removeSpectatorStand(p);
+        org.bukkit.entity.ArmorStand stand = p.getWorld().spawn(p.getLocation(),
+                org.bukkit.entity.ArmorStand.class, as -> {
+                    as.setSmall(true);
+                    as.setInvisible(true);      // body hidden -> head floats, no collision box
+                    as.setBasePlate(false);
+                    as.setArms(false);
+                    as.setInvulnerable(true);
+                    as.setGravity(false);
+                    as.setCanPickupItems(false);
+                    as.setCustomName(p.getName());
+                    as.setCustomNameVisible(true);
+                    as.getEquipment().setHelmet(createPlayerHead(p));
+                });
+        p.hideEntity(plugin, stand);
+        spectatorStands.put(p.getUniqueId(), stand);
+    }
+
+    /** Remove a player's spectator corpse marker (on revive / leave / run end). */
+    private void removeSpectatorStand(Player p) {
+        org.bukkit.entity.ArmorStand stand = spectatorStands.remove(p.getUniqueId());
+        if (stand != null && stand.isValid()) stand.remove();
     }
 
     /** Handle a persistent gear item reaching 0 durability: if it is actually equipped (an armor
@@ -3903,9 +4104,12 @@ public final class DungeonInstance {
             }
             // Restore game mode, health, and hunger
             p.setGameMode(org.bukkit.GameMode.SURVIVAL);
+            p.setWalkSpeed(0.2f);
+            p.setFlySpeed(0.05f);
             p.setHealth(p.getMaxHealth());
             p.setFoodLevel(20);
             removeHeadHp(p);
+            removeSpectatorStand(p);
             teleportOut(p);
         }
         clearRoomEntities();
@@ -3913,6 +4117,7 @@ public final class DungeonInstance {
         tabs.clear();
         playerBoards.clear();
         deadPlayers.clear();
+        spectatorStands.clear();
         for (org.bukkit.entity.TextDisplay t : hpTags.values()) t.remove();
         hpTags.clear();
         lastHeadHp.clear();

@@ -102,7 +102,7 @@ public final class WorkstationUI implements Listener {
 
         // Info panel (shifted right by 1 slot)
         int infoSlot = type == WorkstationType.STORAGE ? 32 : 31;
-        inv.setItem(infoSlot, makeInfo(p, type, di.currentFloorNumber()));
+        inv.setItem(infoSlot, makeInfo(p, type));
 
         fillEmpty(inv);
         openStates.put(inv, state);
@@ -123,7 +123,7 @@ public final class WorkstationUI implements Listener {
         return p.getInventory().getItem(playerSlot);
     }
 
-    private ItemStack makeInfo(Player p, WorkstationType type, int floor) {
+    private ItemStack makeInfo(Player p, WorkstationType type) {
         List<String> lines = new ArrayList<>();
         lines.add("§7" + wsDesc(p, type));
         lines.add("");
@@ -133,8 +133,7 @@ public final class WorkstationUI implements Listener {
                 lines.add(Lang(p, "ws.info.upgrade.effect", (int) (WorkstationRules.UPGRADE_STAT_PER_LEVEL * 100)));
             }
             case REFORGE -> {
-                int base = WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor);
-                lines.add(Lang(p, "ws.info.reforge.cost", base, WorkstationRules.REFORGE_SHARD_PER_REFORGE));
+                lines.add(Lang(p, "ws.info.reforge.cost", WorkstationRules.REFORGE_SHARD_COST, WorkstationRules.REFORGE_SHARD_PER_REFORGE));
                 lines.add(Lang(p, "ws.info.reforge.effect"));
             }
             case PRESERVE -> {
@@ -238,7 +237,8 @@ public final class WorkstationUI implements Listener {
         List<String> lines = new ArrayList<>();
         lines.add(Lang(p, "ws.selected", item.getItemMeta() == null ? item.getType().name()
                 : item.getItemMeta().getDisplayName()));
-        int floor = state.di.currentFloorNumber();
+        // Cost line for the confirmation button lore (set by UPGRADE case)
+        String[] confirmCostLine = {null};
         switch (state.type) {
             case UPGRADE -> {
                 int lvl = GearFactory.getUpgradeLevel(item);
@@ -264,12 +264,14 @@ public final class WorkstationUI implements Listener {
                 }
                 lines.add(Lang(p, "ws.nextLevel", lvl + 1,
                         (int) (WorkstationRules.UPGRADE_STAT_PER_LEVEL * 100)));
-                int coinCost = WorkstationRules.scaledCost(WorkstationRules.upgradeCoinCost(lvl), floor);
-                int shardCost = WorkstationRules.scaledCost(WorkstationRules.upgradeShardCost(lvl), floor);
+                int coinCost = WorkstationRules.upgradeCoinCost(lvl);
+                int shardCost = WorkstationRules.upgradeShardCost(lvl);
                 if (isPersistent) {
                     lines.add(Lang(p, "ws.upgrade.cost.persistent", coinCost * 2, shardCost * 2));
+                    confirmCostLine[0] = Lang(p, "ws.upgrade.cost.persistent", coinCost * 2, shardCost * 2);
                 } else {
                     lines.add(Lang(p, "ws.upgrade.cost.normal", coinCost, shardCost));
+                    confirmCostLine[0] = Lang(p, "ws.upgrade.cost.normal", coinCost, shardCost);
                 }
             }
             case REFORGE -> {
@@ -277,7 +279,7 @@ public final class WorkstationUI implements Listener {
                 boolean isPersistent = GearFactory.isPersistent(item);
                 List<Affix.AffixRoll> rolled = state.di.previewReforge(item);
                 lines.add(Lang(p, "ws.reforge.newAffixes", affixSummary(rolled)));
-                int cost = WorkstationRules.scaledCost(WorkstationRules.reforgeShardCost(reforgeCount), floor);
+                int cost = WorkstationRules.reforgeShardCost(reforgeCount);
                 if (isPersistent) {
                     lines.add(Lang(p, "ws.reforge.cost.persistent", cost * 2));
                 } else {
@@ -285,7 +287,7 @@ public final class WorkstationUI implements Listener {
                 }
                 if (reforgeCount > 0) {
                     lines.add(Lang(p, "ws.reforge.prior",
-                            cost - WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor),
+                            cost - WorkstationRules.REFORGE_SHARD_COST,
                             reforgeCount, reforgeCount == 1 ? "" : "s"));
                 }
             }
@@ -318,13 +320,20 @@ public final class WorkstationUI implements Listener {
         boolean destructive = state.type == WorkstationType.PRESERVE || state.type == WorkstationType.SALVAGE;
         String confirmName = (destructive && state.confirmed)
                 ? Lang(p, "ws.confirmAgain") : Lang(p, "ws.confirm");
-        List<String> confirmLore = (destructive && state.confirmed)
-                ? List.of(Lang(p, "ws.confirmDestructive"))
-                : List.of(Lang(p, "ws.confirmApply"));
+        List<String> confirmLore;
+        if (destructive && state.confirmed) {
+            confirmLore = List.of(Lang(p, "ws.confirmDestructive"));
+        } else {
+            confirmLore = new ArrayList<>();
+            confirmLore.add(Lang(p, "ws.confirmApply"));
+            if (confirmCostLine[0] != null) {
+                confirmLore.add(confirmCostLine[0]);
+            }
+        }
         inv.setItem(31, makeItem(Material.LIME_DYE, confirmName, confirmLore, ACTION_CONFIRM));
         inv.setItem(41, makeItem(Material.ARROW, Lang(p, "ws.back.name"),
                 List.of(Lang(p, "ws.back.lore")), ACTION_BACK));
-        inv.setItem(32, makeInfo(p, state.type, floor)); // keep the info panel anchored
+        inv.setItem(32, makeInfo(p, state.type)); // keep the info panel anchored
     }
 
     private ItemStack currentItem(Player p, State state, int playerSlot) {

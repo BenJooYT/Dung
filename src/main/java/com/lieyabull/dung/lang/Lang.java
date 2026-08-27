@@ -113,6 +113,7 @@ public final class Lang {
             entry("pickup.key", "§9+1 Key §7(%s)", "§9+1 Kulcs §7(%s)"),
             entry("pickup.bomb", "§4+1 Bomb §7(%s)", "§4+1 Bomba §7(%s)"),
             entry("pickup.full", "§7%s §7is full — left on the ground.", "§7A(z) %s §7tele van — a földön maradt."),
+            entry("pickup.fullHeart", "§7Your health is already full.", "§7Az életerőd nem tölthető tovább!"),
             entry("pickup.name.heart", "§cHearts", "§cSzívek"),
             entry("pickup.name.coin", "§eCoins", "§eÉrmék"),
             entry("pickup.name.key", "§9Keys", "§9Kulcsok"),
@@ -170,6 +171,7 @@ public final class Lang {
             entry("death.tryAgain", "§7  Try /shop, /upgrades, or /dung start to go again.", "§7  Próbáld a /shop, /upgrades vagy /dung start parancsot."),
             entry("death.youDied", "§cYou died.", "§cMeghaltál."),
             entry("gear.armorBrokenEquip", "§cThat armor is broken — repair it at §6/shop§7 before equipping.", "§cEz a páncél eltört — javítsd meg a §6/shop§7 menüben, mielőtt felszereled."),
+            entry("gear.noNonDungEquip", "§cYou can only equip Dung armor outside of a run.", "§cA futamon kívül csak Dung páncélt tudsz felszerelni."),
             entry("heal.self", "§aYou healed yourself for §c%s§c❤", "§aGyógyítottál önmagadon. §c+%s❤"),
             entry("heal.other", "§aHealed %s §afor §c%s§c❤", "§aMeggyógyítottad %s§a: §c%s§c❤"),
             entry("heal.otherTarget", "§a%s §ahealed you for §c%s§c❤", "§a%s §ameggyógyított: §c%s§c❤"),
@@ -483,6 +485,7 @@ public final class Lang {
             entry("ability.chainLightning", "§6Chain Lightning!", "§6Láncvillám!"),
             entry("ability.fireball", "§6Fireball!", "§6Tűzgolyó!"),
             entry("ability.lifeDrain", "§6Life Drain! §7Siphoned §c%s❤ §7→ Stored §c%s§7/§f%s§7❤", "§6Vámpirizmus! §7Leszívva §c%s❤ §7→ Tárolva §c%s§7/§f%s§7❤"),
+            entry("ability.lightning", "§e§lLIGHTNING!", "§e§lVILLÁM!"),
             entry("ability.generic", "§6Ability!", "§6Képesség!"),
 
             // ---- in-run: workstation actions (upgrade / reforge / preserve / salvage) ----
@@ -517,10 +520,10 @@ public final class Lang {
             entry("dir.north", "North", "Észak"),
             entry("dir.northEast", "North-East", "Észak-Kelet"),
             entry("boss.bankedCoins", "§dYou banked §6%s§d coins into your persistent coins.", "§d§6%s§d érmét tettél a maradandó érméid közé."),
-            entry("boss.bankedShards", "§dYou banked §b%s§d shards from salvaged gear.", "§d§b%s§d szilánkot tettél el a selejtezett felszerelésből."),
+            entry("boss.bankedShards", "§dYou banked §b%s§d shards from salvaged gear.", "§d§b%s§d szilánkot zsákmányoltál a selejtezett felszerelésből."),
             entry("boss.revived", "§a§lYou have been revived by the boss's defeat!", "§a§lA főnök legyőzése életre keltett téged!"),
             entry("boss.crackOpens", "§dA crack opens below... ", "§dRepedés nyílik alattad... "),
-            entry("boss.descendBtn", "[Descend]", "[Leszállás]"),
+            entry("boss.descendBtn", "[Descend]", "[Folytatás]"),
             entry("boss.descendHover", "Click to descend to the next floor", "Kattints a következő szintre való leszálláshoz"),
             entry("boss.endBtn", " [End Run]", " [Futam Vége]"),
             entry("boss.endHover", "Leave the run and return to the hub", "Hagyd el a futamot, és térj vissza a központba"),
@@ -585,6 +588,7 @@ public final class Lang {
             entry("gear.use.chainLightning", "§8     strike a target, chaining to nearby enemies", "§8     célpontot sújt, és továbbugrik a közeli ellenségekre"),
             entry("gear.use.fireball", "§8     launch an explosive fireball", "§8     robbanó tűzgolyót lő ki"),
             entry("gear.use.lifeDrain", "§8     drain life from enemies, right-click ally to heal", "§8     életerőt szív az ellenségekből, jobb egérrel szövetségest gyógyít"),
+            entry("gear.use.lightning", "§8     call a bolt of lightning down on your target", "§8     villámot idéz a célpontodra"),
             entry("gear.use.default", "§8     trigger a burst of damage", "§8     sebzéshullámot indít"),
 
             // ---- rarity names (used in the lore rarity line) ----
@@ -593,7 +597,30 @@ public final class Lang {
             entry("gear.rar.rare", "Rare", "Ritka"),
             entry("gear.rar.epic", "Epic", "Epikus"),
             entry("gear.rar.legendary", "Legendary", "Legendás"),
-            entry("gear.rar.mythic", "Mythic", "Mítikus")
+            entry("gear.rar.mythic", "Mythic", "Mítikus"),
+
+            // ---- gear item display names (base name of the item, shown colored by rarity) ----
+            entry("item.frayed_blade", "Frayed Blade", "Kopott Penge"),
+            entry("item.crude_axe", "Crude Axe", "Durva Fejsze"),
+            entry("item.longsword", "Longsword", "Hosszúkard"),
+            entry("item.war_hammer", "War Hammer", "Háborús Pöröly"),
+            entry("item.crystal_shard", "Crystal Shard", "Kristályszilánk"),
+            entry("item.arcane_staff", "Arcane Staff", "Ősi Pálca"),
+            entry("item.doomblade", "Doomblade", "Végzetpengé"),
+            entry("item.storm_rod", "Storm Rod", "Viharpálca"),
+            entry("item.blaze_staff", "Blaze Staff", "Lángpálca"),
+            entry("item.soul_siphon", "Soul Siphon", "Lélekszívó"),
+            entry("item.cloth", "Cloth", "Textil"),
+            entry("item.chain", "Chain", "Lánc"),
+            entry("item.iron", "Iron", "Vas"),
+            entry("item.golden", "Golden", "Arany"),
+            entry("item.diamond", "Diamond", "Gyémánt"),
+            entry("item.netherite", "Netherite", "Necrit"),
+            entry("item.mana_shield", "Mana Shield", "Mana Pajzs"),
+            entry("item.key", "Key", "Kulcs"),
+            entry("item.bomb", "Bomb", "Bomba"),
+            entry("item.slot.empty", "Empty", "Üres"),
+            entry("item.slot.equipShield", "Equip Shield", "Pajzs felszerelése")
     );
 
     private static Map.Entry<String, Map<Language, String>> entry(String key,

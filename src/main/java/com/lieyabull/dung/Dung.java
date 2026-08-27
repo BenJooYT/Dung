@@ -17,6 +17,7 @@ import com.lieyabull.dung.plot.ProvenanceManager;
 import com.lieyabull.dung.structure.StructureManager;
 import com.lieyabull.dung.ui.ShopUI;
 import com.lieyabull.dung.ui.StashUI;
+import com.lieyabull.dung.ui.TrollUI;
 import com.lieyabull.dung.ui.WorkstationUI;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
@@ -39,6 +40,7 @@ public final class Dung extends JavaPlugin {
     private ProvenanceManager provenanceManager;
     private PotionListener potionListener;
     private DummyManager dummyManager;
+    private TrollUI trollUI;
     private World world;
     private com.lieyabull.dung.world.WorldManager worldManager;
 
@@ -62,7 +64,9 @@ public final class Dung extends JavaPlugin {
         provenanceManager = new ProvenanceManager(this);
         potionListener = new PotionListener(this);
         dummyManager = new DummyManager(this);
+        trollUI = new TrollUI();
         Bukkit.getPluginManager().registerEvents(dummyManager, this);
+        Bukkit.getPluginManager().registerEvents(new com.lieyabull.dung.listener.TrollWandListener(this), this);
         Bukkit.getPluginManager().registerEvents(new com.lieyabull.dung.listener.LobbyListener(this), this);
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
         Bukkit.getPluginManager().registerEvents(new PlotListener(this), this);
@@ -74,6 +78,7 @@ public final class Dung extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(shopUI, this);
         Bukkit.getPluginManager().registerEvents(stashUI, this);
         Bukkit.getPluginManager().registerEvents(workstationUI, this);
+        Bukkit.getPluginManager().registerEvents(trollUI, this);
         com.lieyabull.dung.command.MetaCommand metaCmd = new com.lieyabull.dung.command.MetaCommand(this);
         DungCommand dungCmd = new DungCommand(this, metaCmd);
         // Core run commands
@@ -102,6 +107,7 @@ public final class Dung extends JavaPlugin {
                 new com.lieyabull.dung.command.LanguageCommand(this);
         getCommand("language").setExecutor(languageCmd);
         getCommand("language").setTabCompleter(languageCmd);
+        getCommand("troll").setExecutor(new com.lieyabull.dung.command.TrollCommand(this));
         // The lobby world is lazy-created — resolve it NOW so dummies living there exist when
         // loadAll runs (previously every restart silently skipped them as "unloaded world").
         worldManager().getLobby();
@@ -180,6 +186,10 @@ public final class Dung extends JavaPlugin {
 
     public DummyManager dummyManager() {
         return dummyManager;
+    }
+
+    public TrollUI trollUI() {
+        return trollUI;
     }
 
     public com.lieyabull.dung.world.WorldManager worldManager() {
