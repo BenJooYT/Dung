@@ -78,6 +78,13 @@ public final class Party {
         }
     }
 
+    /** Broadcast a localized message to all online party members, each in their own language. */
+    public void broadcastLocalized(String key, Object... args) {
+        for (Player p : onlineMembers()) {
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, key, args));
+        }
+    }
+
     /** Get all online party members. */
     public List<Player> onlineMembers() {
         org.bukkit.Server server;

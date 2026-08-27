@@ -1,5 +1,6 @@
 package com.lieyabull.dung.meta;
 
+import com.lieyabull.dung.lang.Language;
 import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.File;
@@ -59,6 +60,7 @@ public final class MetaManager {
                 data.set(key + ".shards", prof.shards);
                 data.set(key + ".tutorial", prof.hasSeenTutorial);
                 data.set(key + ".lobbyEditNotified", prof.lobbyEditNotified);
+                data.set(key + ".language", prof.language);
                 if (prof.lastWorld != null) {
                     data.set(key + ".lastWorld", prof.lastWorld);
                     data.set(key + ".lastX", prof.lastX);
@@ -101,6 +103,7 @@ public final class MetaManager {
             p.shards = data.getInt(key + ".shards", 0);
             p.hasSeenTutorial = data.getBoolean(key + ".tutorial", false);
             p.lobbyEditNotified = data.getBoolean(key + ".lobbyEditNotified", false);
+            p.language = data.getString(key + ".language", Language.ENGLISH.code);
             if (data.contains(key + ".lastWorld")) {
                 p.lastWorld = data.getString(key + ".lastWorld");
                 p.lastX = data.getDouble(key + ".lastX", 0);
@@ -161,6 +164,8 @@ public final class MetaManager {
         public int deaths;
         public int clears;
         public String classId = "warrior";
+        /** UI language persisted for this player; a {@link Language} code like "en" or "hu". */
+        public String language = Language.ENGLISH.code;
         public int kills;
         public int bestFloor;
         // Last known location for rejoin — null means use default spawn

@@ -18,7 +18,8 @@ clearing rooms banks persistent coins and kill/full-clear stats that survive dea
 1. [Quick start](#quick-start)
 2. [Architecture overview](#architecture-overview)
 3. [Commands](#commands)
-4. [Package reference](#package-reference)
+4. [Localization](#localization)
+5. [Package reference](#package-reference)
    - [`com.lieyabull.dung` — plugin root](#comlieyabullndung--plugin-root)
    - [`dungeon` — floor & room generation](#dungeon--floor--room-generation)
    - [`room` — shared room geometry](#room--shared-room-geometry)
@@ -33,9 +34,9 @@ clearing rooms banks persistent coins and kill/full-clear stats that survive dea
    - [`meta` — persistent progression](#meta--persistent-progression)
    - [`pickup` — floor pickups](#pickup--floor-pickups)
    - [`ui` — HUD, tab menu & chat](#ui--hud-tab-menu--chat)
-5. [Combat & stats model](#combat--stats-model)
-6. [Death & persistence model](#death--persistence-model)
-7. [Design notes & known issues](#design-notes--known-issues)
+6. [Combat & stats model](#combat--stats-model)
+7. [Death & persistence model](#death--persistence-model)
+8. [Design notes & known issues](#design-notes--known-issues)
 
 ---
 
@@ -118,6 +119,7 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/salvage` | all | Break the held Dung armor piece into permanent shards. Outside a run, shards go straight to your persistent balance; in a run they're banked on boss defeat. |
 | `/salvage all` | all | Salvage every Dung armor piece in your bag outside the hotbar, equipped slots, and offhand — favorites are skipped. |
 | `/salvage favorite` | all | Toggle the favorite flag on the held armor piece (favorited gear can never be salvaged). |
+| `/language [language]` | all | Show or set your UI language (`english` or `magyar`). Re-localizes the lore on gear you already hold and your stash immediately. |
 | `/dung stats` | all | Prints the profile: class, coins, shards, deaths, best floor, kills, clears. |
 | `/dung class <w\|m\|r>` | all | Sets the class for the next run; persists immediately. |
 | `/dung give <t>` | `dung.admin` | Debug: `rareweapon`, `heal`, `coins`. |
@@ -170,6 +172,27 @@ run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
   persistent coins + 300 shards** to attempt persisting a run item past the current run: **40%**
   success delivers it after the run as persistent gear at half durability; **60%** fails and
   returns the item one rarity worse.
+
+## Localization
+
+The plugin is fully localized in **English** and **Magyar (Hungarian)**. Each player picks their UI
+language with `/language english` / `/language magyar` (or `/language` to see the current choice);
+the setting is stored per player in `MetaManager` and persists across restarts.
+
+- **Catalog** — every string lives in `com.lieyabull.dung.lang.Lang` as a key → `{EN, HU}` pair.
+  `Lang.get(Language, key, args...)` resolves by language (falling back to English, then the key),
+  and `Lang.forPlayer(Player, ...)` / `Lang.languageOf(Player)` resolve a specific player's choice.
+- **Coverage** — tutorial, menu, pickups, room/descend/death messages, all chat surfaces, the HUD /
+  tab menu, and every GUI (`ShopUI`, `StashUI`, `WorkstationUI`) are localized.
+- **Gear lore** — weapon / armor / shield item lores are localized **on acquire**: ground drops are
+  rewritten in the picker's language the moment they enter the inventory (`GearLoreListener`), and
+  direct-add paths (shop roll, starter kit, pedestal claim, persisted delivery, workstation
+  upgrade/reforge) localize at grant. `/language` re-localizes everything already held and in the
+  stash. Combat rewrites (durability bar, Life Drain "Stored" line) follow the item's current lore
+  language so they don't revert to English mid-fight. Unpicked ground items stay English.
+- **Not translated** — command tokens (`/shop`, `/stash`, `/dung start`, …) and proper-noun ability
+  names (e.g. `Rush`, `Life Drain`) are kept verbatim in both languages; only surrounding prose is
+  translated.
 
 ---
 

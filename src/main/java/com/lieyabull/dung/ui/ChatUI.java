@@ -18,17 +18,24 @@ public final class ChatUI {
 
     /** Full prompt, or one without the Start-a-Run button (for players already inside a run). */
     public static void startPrompt(Player p, boolean includeStartRun) {
+        String lang = "lang";
         p.sendMessage("");
         p.sendMessage(Component.text("═══════════════════════════", NamedTextColor.DARK_GRAY));
         p.sendMessage(Component.text("    Dung", NamedTextColor.RED, TextDecoration.BOLD)
-                .append(Component.text(" — the dungeon awaits.", NamedTextColor.GRAY)));
+                .append(Component.text(com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.tagline"),
+                        NamedTextColor.GRAY)));
         if (includeStartRun) {
-            p.sendMessage(menuButton("[ Start a Run ]", NamedTextColor.GREEN, "/dung start", "Begin a fresh run"));
+            p.sendMessage(menuButton(com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.start.label"),
+                    NamedTextColor.GREEN, "/dung start", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.start.hover")));
         }
-        p.sendMessage(menuButton("[ Shop ]", NamedTextColor.GOLD, "/shop", "Open the shop GUI — spend persistent coins on gear\n§cUnavailable during a run."));
-        p.sendMessage(menuButton("[ Upgrades ]", NamedTextColor.AQUA, "/upgrades", "Open the upgrades GUI — spend shards on permanent stat upgrades\n§cUnavailable during a run."));
-        p.sendMessage(menuButton("[ My Stats ]", NamedTextColor.YELLOW, "/dung stats", "View your meta-progression"));
-        p.sendMessage(menuButton("[ Help ]", NamedTextColor.GRAY, "/dung help", "List commands"));
+        p.sendMessage(menuButton(com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.shop.label"),
+                NamedTextColor.GOLD, "/shop", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.shop.hover")));
+        p.sendMessage(menuButton(com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.upgrades.label"),
+                NamedTextColor.AQUA, "/upgrades", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.upgrades.hover")));
+        p.sendMessage(menuButton(com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.stats.label"),
+                NamedTextColor.YELLOW, "/dung stats", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.stats.hover")));
+        p.sendMessage(menuButton(com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.help.label"),
+                NamedTextColor.GRAY, "/dung help", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.help.hover")));
         p.sendMessage(Component.text("═══════════════════════════", NamedTextColor.DARK_GRAY));
     }
 

@@ -9,14 +9,34 @@ import org.bukkit.World;
  * directions the graph says. Room interior is a flat floor with a ceiling and walls.
  */
 public final class RoomGen {
-    public static final int SQUARE = 13; // common interior width/depth (odd so rooms stay centered)
-    public static final int LONG = 17;   // elongated axis interior dimension
+    public static final int SQUARE = 13; // base interior width/depth at party size 1 (odd so rooms stay centered)
+    public static final int LONG = 17;   // base elongated axis interior dimension at party size 1
     public static final int WALL = 1;
     public static final int ROOM_HEIGHT = 4; // interior air blocks above the floor
     /** Fixed off-axis line (from a room's base) that EVERY door/corridor is centered on, anchored
      *  to the widest room so square + long neighbours carve on the SAME line. Any code that seals
      *  or references a doorway must use this, not the room's own geometric center. */
     public static final int PERP_CENTER = Math.max(WALL + SQUARE / 2, WALL + LONG / 2); // 9
+
+    /** Interior dimensions grow with party tier (0 = solo, 3 = 4-player) so larger parties get more
+     *  elbow room. Each tier keeps the dimensions odd to stay centered. */
+    public static int squareFor(int tier) { return SQUARE + 2 * tier; }
+    public static int longFor(int tier) { return LONG + 2 * tier; }
+
+    /** Half-width of the solid corridor mass around the fixed door line. It must reach from
+     *  {@link #PERP_CENTER} to both edges of the widest room interior (interior spans 1..longFor)
+     *  so the corridor stays walled end-to-end and a player can't fall into void beside it. */
+    public static int corridorHalfFor(int tier) {
+        return Math.max(PERP_CENTER - 1, longFor(tier) - PERP_CENTER);
+    }
+
+    /** Resize a room from the base (solo) dimensions to the given party tier, keeping its shape
+     *  (square / long-wide / long-deep / start). Structure rooms never call this (fixed templates). */
+    public static void scaleToTier(Floor.RoomNode n, int tier) {
+        int sq = squareFor(tier), ln = longFor(tier);
+        if (n.sizeW == SQUARE) n.sizeW = sq; else if (n.sizeW == LONG) n.sizeW = ln;
+        if (n.sizeH == SQUARE) n.sizeH = sq; else if (n.sizeH == LONG) n.sizeH = ln;
+    }
     // shape constants
     public static final int SHAPE_RECTANGLE = 0;
     public static final int SHAPE_L = 1;
@@ -37,10 +57,16 @@ public final class RoomGen {
     }
 
     public static void build(World w, Floor.RoomNode n, int baseY, int spacing) {
-        build(w, n, baseY, spacing, 0, 0);
+        build(w, n, baseY, spacing, LONG / 2, 0, 0);
     }
 
     public static void build(World w, Floor.RoomNode n, int baseY, int spacing, int offsetX, int offsetZ) {
+        build(w, n, baseY, spacing, LONG / 2, offsetX, offsetZ);
+    }
+
+    /** {@code corridorHalf} is the shared half-width of the corridor side walls ({@link #corridorHalfFor}),
+     *  derived from the floor's party tier so larger rooms stay fully sealed. */
+    public static void build(World w, Floor.RoomNode n, int baseY, int spacing, int corridorHalf, int offsetX, int offsetZ) {
         RoomBase b = baseFor(n, spacing, offsetX, offsetZ);
         int sx = b.x, sz = b.z;
         int wl = n.sizeW + 2 * WALL;       // footprint including walls
@@ -175,7 +201,7 @@ public final class RoomGen {
                 // spanning the widest room's interior, with the 3-wide passage (already carved above)
                 // cut through the middle. Sides are solid walls instead of open floor, so the corridor
                 // reads as a tunnel (not a room-in-a-room) and there is no void to fall into.
-                int COW = LONG / 2;                   // solid mass covers the widest room interior
+                int COW = corridorHalf;               // solid mass covers the widest room interior
                 for (int t = innerWallT; t < nextWallT; t++) {
                     for (int off = -COW; off <= COW; off++) {
                         if (Math.abs(off) <= 1) continue; // the 3-wide passage is already carved

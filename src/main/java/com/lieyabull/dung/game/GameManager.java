@@ -68,7 +68,7 @@ public final class GameManager {
             if (existing == null) continue;
             if (instances.containsKey(existing.instanceId()) && existing.isRunning()) {
                 Player p = Bukkit.getPlayer(uid);
-                if (p != null) p.sendMessage("§cYou're already in a run.");
+                if (p != null) p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.alreadyIn"));
                 return false;
             }
             playerInstance.remove(uid);

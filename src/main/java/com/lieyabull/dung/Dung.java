@@ -70,6 +70,7 @@ public final class Dung extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(provenanceManager, this);
         Bukkit.getPluginManager().registerEvents(potionListener, this);
         Bukkit.getPluginManager().registerEvents(new com.lieyabull.dung.listener.ChatFormatListener(), this);
+        Bukkit.getPluginManager().registerEvents(new com.lieyabull.dung.listener.GearLoreListener(), this);
         Bukkit.getPluginManager().registerEvents(shopUI, this);
         Bukkit.getPluginManager().registerEvents(stashUI, this);
         Bukkit.getPluginManager().registerEvents(workstationUI, this);
@@ -97,6 +98,10 @@ public final class Dung extends JavaPlugin {
         getCommand("lobby").setExecutor(new com.lieyabull.dung.command.LobbyCommand(this));
         getCommand("convert").setExecutor(plotCmd);
         getCommand("flyspeed").setExecutor(new com.lieyabull.dung.command.FlySpeedCommand(this));
+        com.lieyabull.dung.command.LanguageCommand languageCmd =
+                new com.lieyabull.dung.command.LanguageCommand(this);
+        getCommand("language").setExecutor(languageCmd);
+        getCommand("language").setTabCompleter(languageCmd);
         // The lobby world is lazy-created — resolve it NOW so dummies living there exist when
         // loadAll runs (previously every restart silently skipped them as "unloaded world").
         worldManager().getLobby();

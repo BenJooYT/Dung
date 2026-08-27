@@ -114,10 +114,10 @@ public final class Enemy {
         } catch (Throwable ignored) {}
     }
 
-    public void tick(Player p, long deltaMs) {
+    public void tick(Player p, long deltaMs, java.util.Set<java.util.UUID> deadPlayers) {
         if (dead || !entity.isValid() || p == null || !p.isOnline()) return;
-        // Don't target spectators (dead players)
-        if (p.getGameMode() == org.bukkit.GameMode.SPECTATOR) return;
+        // Don't target dead players (spectators)
+        if (deadPlayers != null && deadPlayers.contains(p.getUniqueId())) return;
         if (attackCd > 0) attackCd--;
         if (knockTicks > 0) {
             knockTicks--;

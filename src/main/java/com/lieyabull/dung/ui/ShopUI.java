@@ -230,7 +230,7 @@ public final class ShopUI implements Listener {
         Inventory old = s.inv;
         if (old != null) openGuis.remove(old);
         Inventory inv = Bukkit.createInventory(null, SIZE,
-                LEGACY.deserialize(title(p, s) + "  §8— §f" + cat.label()));
+                LEGACY.deserialize(title(p, s) + clang(p, "shop.titleSeparator", catLabel(p, cat))));
         openGuis.put(inv, s.player);
         s.inv = inv;
         render(p, s);
@@ -248,7 +248,7 @@ public final class ShopUI implements Listener {
         Inventory old = s.inv;
         if (old != null) openGuis.remove(old);
         Inventory inv = Bukkit.createInventory(null, SIZE,
-                LEGACY.deserialize(title(p, s) + "  §8— §f" + cat.label()));
+                LEGACY.deserialize(title(p, s) + clang(p, "shop.titleSeparator", catLabel(p, cat))));
         openGuis.put(inv, s.player);
         s.inv = inv;
         render(p, s);
@@ -260,10 +260,11 @@ public final class ShopUI implements Listener {
             int floor = s.di == null ? 1 : s.di.currentFloorNumber();
             PlayerState st = s.di == null ? null : s.di.playerStateOf(p);
             int coins = st == null ? 0 : st.coins;
-            return "§8Shop  §7(Floor " + floor + ")  §e" + coins + " coins";
+            return com.lieyabull.dung.lang.Lang.forPlayer(p, "shop.title.run", floor, coins);
         }
         MetaManager.MetaProfile prof = plugin.meta().profile(s.player);
-        return "§8Persistent Shop  §6" + prof.persistentCoins + " pc  §3" + prof.shards + " shards";
+        return com.lieyabull.dung.lang.Lang.forPlayer(p, "shop.title.persistent",
+                prof.persistentCoins, prof.shards);
     }
 
     // ==================== RENDERING ====================
@@ -273,12 +274,12 @@ public final class ShopUI implements Listener {
         if (inv == null) return;
         inv.clear();
         fillEmpty(inv);
-        inv.setItem(BACK_SLOT, makeButton(Material.ARROW, "§7← Back to Shop",
-                List.of("§7Return to the shop menu"), ACTION_BACK));
+        inv.setItem(BACK_SLOT, makeButton(Material.ARROW, clang(p, "shop.back.name"),
+                List.of(clang(p, "shop.back.lore")), ACTION_BACK));
         switch (s.transaction.state()) {
             case IDLE -> renderIdle(p, s);
             case RESULT, KEEP_PENDING -> renderResult(p, s);
-            case ROLLING_ITEM, ROLLING_RARITY -> renderRolling(s);
+            case ROLLING_ITEM, ROLLING_RARITY -> renderRolling(p, s);
         }
     }
 
@@ -286,27 +287,31 @@ public final class ShopUI implements Listener {
     private void renderMenu(Player p, ShopSession s, Inventory inv) {
         inv.clear();
         fillEmpty(inv);
-        inv.setItem(MENU_WEAPON_SLOT, menuEntry(s, Category.WEAPON, ACTION_MENU_WEAPON));
-        inv.setItem(MENU_ARMOR_SLOT, menuEntry(s, Category.ARMOR, ACTION_MENU_ARMOR));
-        inv.setItem(MENU_SHIELD_SLOT, menuEntry(s, Category.MANA_SHIELD, ACTION_MENU_SHIELD));
+        inv.setItem(MENU_WEAPON_SLOT, menuEntry(p, s, Category.WEAPON, ACTION_MENU_WEAPON));
+        inv.setItem(MENU_ARMOR_SLOT, menuEntry(p, s, Category.ARMOR, ACTION_MENU_ARMOR));
+        inv.setItem(MENU_SHIELD_SLOT, menuEntry(p, s, Category.MANA_SHIELD, ACTION_MENU_SHIELD));
         if (s.type == ShopType.PERSISTENT) {
             inv.setItem(MENU_REPAIR_SLOT, makeRepairItemButton(p));
-            inv.setItem(MENU_UPGRADES_SLOT, makeButton(Material.NETHER_STAR, "§fPermanent Upgrades",
-                    List.of("§7Spend shards on permanent stat boosts"), ACTION_UPGRADES));
+            inv.setItem(MENU_UPGRADES_SLOT, makeButton(Material.NETHER_STAR,
+                    clang(p, "shop.upgrades.name"),
+                    List.of(clang(p, "shop.upgrades.lore")), ACTION_UPGRADES));
             inv.setItem(MENU_REPAIR_ALL_SLOT, makeRepairAllButton(p));
             // Potion buttons
             inv.setItem(MENU_POTION_FOREST_SLOT, makePotionBuyButton(Material.SPLASH_POTION,
-                    "§aForest Transmutation Elixir", POTION_FOREST_COST, p,
-                    List.of("§7Transforms wood blocks into new", "§7tree varieties on your plot."),
+                    clang(p, "shop.potion.forest.name"), POTION_FOREST_COST, p,
+                    List.of(clang(p, "shop.potion.forest.lore1"),
+                            clang(p, "shop.potion.forest.lore2")),
                     ACTION_BUY_FOREST_POTION));
             inv.setItem(MENU_POTION_STONE_SLOT, makePotionBuyButton(Material.SPLASH_POTION,
-                    "§7Stone Transmutation Elixir", POTION_STONE_COST, p,
-                    List.of("§7Transforms stone blocks into new", "§7stone and ore variants on your plot."),
+                    clang(p, "shop.potion.stone.name"), POTION_STONE_COST, p,
+                    List.of(clang(p, "shop.potion.stone.lore1"),
+                            clang(p, "shop.potion.stone.lore2")),
                     ACTION_BUY_STONE_POTION));
         } else {
-            inv.setItem(MENU_SUPPLIES_SLOT, makeButton(Material.CHEST, "§fSupplies",
-                    List.of("§7Keys, bombs, heals and run tonics.",
-                            "§7Bought directly with §erun coins§7."),
+            inv.setItem(MENU_SUPPLIES_SLOT, makeButton(Material.CHEST,
+                    clang(p, "shop.supplies.name"),
+                    List.of(clang(p, "shop.supplies.lore1"),
+                            clang(p, "shop.supplies.lore2")),
                     ACTION_MENU_SUPPLIES));
         }
     }
@@ -314,7 +319,8 @@ public final class ShopUI implements Listener {
     /** Open the in-run supplies GUI (direct purchases with run coins). */
     private void openSupplies(Player p, ShopSession s) {
         Inventory inv = Bukkit.createInventory(null, SUPPLY_SIZE,
-                LEGACY.deserialize(title(p, s) + "  §8— §fSupplies"));
+                LEGACY.deserialize(title(p, s) + clang(p, "shop.titleSeparator",
+                        clang(p, "shop.supplies.titleSuffix"))));
         openSupplyGuis.put(inv, s.player);
         renderSupplies(p, s, inv);
         p.openInventory(inv);
@@ -326,21 +332,30 @@ public final class ShopUI implements Listener {
         int coins = st == null ? 0 : st.coins;
         inv.clear();
         fillEmpty(inv);
-        inv.setItem(BACK_SLOT, makeButton(Material.ARROW, "§7← Back to Shop",
-                List.of("§7Return to the shop menu"), ACTION_BACK));
-        inv.setItem(SUPPLY_KEY_SLOT, supplyButton(Material.TRIPWIRE_HOOK, "§9§lKey", SUPPLY_KEY_COST, coins,
-                List.of("§7Opens a locked door.", st == null ? "" : "§9You have: §f" + st.keys), ACTION_BUY_KEY));
-        inv.setItem(SUPPLY_BOMB_SLOT, supplyButton(Material.TNT, "§4§lBomb", SUPPLY_BOMB_COST, coins,
-                List.of("§7Blows up cracked walls hiding secret rooms.",
-                        st == null ? "" : "§4You have: §f" + st.bombs), ACTION_BUY_BOMB));
-        inv.setItem(SUPPLY_HEART_SLOT, supplyButton(Material.RED_DYE, "§c§lRed Heart", SUPPLY_HEART_COST, coins,
-                List.of("§7Restores §c8 HP §7instantly."), ACTION_BUY_HEART));
-        inv.setItem(SUPPLY_MANA_SLOT, supplyButton(Material.LAPIS_LAZULI, "§b§lMana Potion", SUPPLY_MANA_COST, coins,
-                List.of("§7Refills your mana to max."), ACTION_BUY_MANA));
-        inv.setItem(SUPPLY_DMG_TONIC_SLOT, supplyButton(Material.BLAZE_POWDER, "§c§lDamage Tonic", SUPPLY_TONIC_COST, coins,
-                List.of("§7+" + TONIC_STAT_AMOUNT + " melee damage §7for the rest of the FLOOR."), ACTION_BUY_DMG_TONIC));
-        inv.setItem(SUPPLY_DEF_TONIC_SLOT, supplyButton(Material.IRON_INGOT, "§a§lDefense Tonic", SUPPLY_TONIC_COST, coins,
-                List.of("§7+" + TONIC_STAT_AMOUNT + " defense §7for the rest of the FLOOR."), ACTION_BUY_DEF_TONIC));
+        inv.setItem(BACK_SLOT, makeButton(Material.ARROW, clang(p, "shop.back.name"),
+                List.of(clang(p, "shop.back.lore")), ACTION_BACK));
+        inv.setItem(SUPPLY_KEY_SLOT, supplyButton(p, Material.TRIPWIRE_HOOK,
+                clang(p, "shop.supply.key.name"), SUPPLY_KEY_COST, coins,
+                List.of(clang(p, "shop.supply.key.lore"),
+                        st == null ? "" : clang(p, "shop.supply.have", "§9", st.keys)), ACTION_BUY_KEY));
+        inv.setItem(SUPPLY_BOMB_SLOT, supplyButton(p, Material.TNT,
+                clang(p, "shop.supply.bomb.name"), SUPPLY_BOMB_COST, coins,
+                List.of(clang(p, "shop.supply.bomb.lore"),
+                        st == null ? "" : clang(p, "shop.supply.have", "§4", st.bombs)), ACTION_BUY_BOMB));
+        inv.setItem(SUPPLY_HEART_SLOT, supplyButton(p, Material.RED_DYE,
+                clang(p, "shop.supply.heart.name"), SUPPLY_HEART_COST, coins,
+                List.of(clang(p, "shop.supply.heart.lore")), ACTION_BUY_HEART));
+        inv.setItem(SUPPLY_MANA_SLOT, supplyButton(p, Material.LAPIS_LAZULI,
+                clang(p, "shop.supply.mana.name"), SUPPLY_MANA_COST, coins,
+                List.of(clang(p, "shop.supply.mana.lore")), ACTION_BUY_MANA));
+        inv.setItem(SUPPLY_DMG_TONIC_SLOT, supplyButton(p, Material.BLAZE_POWDER,
+                clang(p, "shop.supply.dmgTonic.name"), SUPPLY_TONIC_COST, coins,
+                List.of(clang(p, "shop.supply.dmgTonic.lore", TONIC_STAT_AMOUNT)),
+                ACTION_BUY_DMG_TONIC));
+        inv.setItem(SUPPLY_DEF_TONIC_SLOT, supplyButton(p, Material.IRON_INGOT,
+                clang(p, "shop.supply.defTonic.name"), SUPPLY_TONIC_COST, coins,
+                List.of(clang(p, "shop.supply.defTonic.lore", TONIC_STAT_AMOUNT)),
+                ACTION_BUY_DEF_TONIC));
     }
 
     /** A persistent-coins direct-purchase button for potions and other items. */
@@ -348,25 +363,28 @@ public final class ShopUI implements Listener {
                                            List<String> extraLore, String action) {
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
         int balance = prof.persistentCoins;
+        String currency = clang(p, "shop.currency.persistent");
         List<String> lore = new ArrayList<>(extraLore);
         if (balance >= cost) {
-            lore.add("§6" + cost + " persistent coins §7— click to buy");
+            lore.add(clang(p, "shop.buy.afford", cost, currency));
             return makeButton(mat, name, lore, action);
         }
-        lore.add("§8" + cost + " persistent coins");
-        lore.add("§cCan't afford — need " + (cost - balance) + " more.");
+        lore.add("§8" + cost + " " + currency);
+        lore.add("§c" + clang(p, "shop.buy.cant", cost - balance));
         return makeButton(Material.GRAY_DYE, "§8" + name.replaceFirst("§.", ""), lore, action);
     }
 
     /** A direct-purchase button; grayed out when the balance can't cover it. */
-    private ItemStack supplyButton(Material mat, String name, int cost, int balance, List<String> extraLore, String action) {
+    private ItemStack supplyButton(Player p, Material mat, String name, int cost, int balance,
+                                   List<String> extraLore, String action) {
+        String currency = clang(p, "shop.currency.run");
         List<String> lore = new ArrayList<>(extraLore);
         if (balance >= cost) {
-            lore.add("§e" + cost + " run coins §7— click to buy");
+            lore.add(clang(p, "shop.buy.afford", cost, currency));
             return makeButton(mat, name, lore, action);
         }
-        lore.add("§8" + cost + " run coins");
-        lore.add("§cCan't afford — need " + (cost - balance) + " more.");
+        lore.add("§8" + cost + " " + currency);
+        lore.add("§c" + clang(p, "shop.buy.cant", cost - balance));
         return makeButton(Material.GRAY_DYE, "§8" + name.replaceFirst("§.", ""), lore, action);
     }
 
@@ -383,16 +401,16 @@ public final class ShopUI implements Listener {
 
         int cost; Material icon; String label; Runnable effect;
         switch (action) {
-            case ACTION_BUY_KEY -> { cost = SUPPLY_KEY_COST; icon = Material.TRIPWIRE_HOOK; label = "Key"; effect = () -> st.keys++; }
-            case ACTION_BUY_BOMB -> { cost = SUPPLY_BOMB_COST; icon = Material.TNT; label = "Bomb"; effect = () -> st.bombs++; }
-            case ACTION_BUY_HEART -> { cost = SUPPLY_HEART_COST; icon = Material.RED_DYE; label = "Red Heart"; effect = () -> st.heal(8); }
-            case ACTION_BUY_MANA -> { cost = SUPPLY_MANA_COST; icon = Material.LAPIS_LAZULI; label = "Mana Potion"; effect = () -> st.mana = st.maxMana; }
-            case ACTION_BUY_DMG_TONIC -> { cost = SUPPLY_TONIC_COST; icon = Material.BLAZE_POWDER; label = "Damage Tonic"; effect = () -> st.tonicDamage += TONIC_STAT_AMOUNT; }
-            case ACTION_BUY_DEF_TONIC -> { cost = SUPPLY_TONIC_COST; icon = Material.IRON_INGOT; label = "Defense Tonic"; effect = () -> st.tonicDefense += TONIC_STAT_AMOUNT; }
+            case ACTION_BUY_KEY -> { cost = SUPPLY_KEY_COST; icon = Material.TRIPWIRE_HOOK; label = clang(p, "shop.supply.key.name"); effect = () -> st.keys++; }
+            case ACTION_BUY_BOMB -> { cost = SUPPLY_BOMB_COST; icon = Material.TNT; label = clang(p, "shop.supply.bomb.name"); effect = () -> st.bombs++; }
+            case ACTION_BUY_HEART -> { cost = SUPPLY_HEART_COST; icon = Material.RED_DYE; label = clang(p, "shop.supply.heart.name"); effect = () -> st.heal(8); }
+            case ACTION_BUY_MANA -> { cost = SUPPLY_MANA_COST; icon = Material.LAPIS_LAZULI; label = clang(p, "shop.supply.mana.name"); effect = () -> st.mana = st.maxMana; }
+            case ACTION_BUY_DMG_TONIC -> { cost = SUPPLY_TONIC_COST; icon = Material.BLAZE_POWDER; label = clang(p, "shop.supply.dmgTonic.name"); effect = () -> st.tonicDamage += TONIC_STAT_AMOUNT; }
+            case ACTION_BUY_DEF_TONIC -> { cost = SUPPLY_TONIC_COST; icon = Material.IRON_INGOT; label = clang(p, "shop.supply.defTonic.name"); effect = () -> st.tonicDefense += TONIC_STAT_AMOUNT; }
             default -> { return; }
         }
         if (st.coins < cost) {
-            p.sendMessage("§cYou need §e" + cost + " coins§c for a " + label + ".");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "shop.supply.needCoins", cost, label));
             return;
         }
         st.coins -= cost;
@@ -406,16 +424,17 @@ public final class ShopUI implements Listener {
         Category cat = s.transaction.category();
         inv.setItem(ROLL_SLOT, rollButton(p, s, cat));
         for (int i = 0; i < WINDOW_ITEM_SLOTS.length; i++) {
-            inv.setItem(WINDOW_ITEM_SLOTS[i], i == WINDOW_CENTER ? categoryPreview(cat) : darkPane());
+            inv.setItem(WINDOW_ITEM_SLOTS[i], i == WINDOW_CENTER ? categoryPreview(p, cat) : darkPane());
         }
         for (int slot : WINDOW_RARITY_SLOTS) {
             inv.setItem(slot, darkPane());
         }
     }
 
-    private void renderRolling(ShopSession s) {
+    private void renderRolling(Player p, ShopSession s) {
         Inventory inv = s.inv;
-        inv.setItem(ROLL_SLOT, makeButton(Material.BARRIER, "§8Rolling...", List.of("§7Please wait"), null));
+        inv.setItem(ROLL_SLOT, makeButton(Material.BARRIER, "§8" + clang(p, "shop.rolling"),
+                List.of(clang(p, "shop.rolling")), null));
     }
 
     private void renderResult(Player p, ShopSession s) {
@@ -444,8 +463,8 @@ public final class ShopUI implements Listener {
                 inv.setItem(WINDOW_RARITY_SLOTS[i], darkPane());
             }
         }
-        inv.setItem(KEEP_SLOT, keepButton(s, r));
-        inv.setItem(SALVAGE_SLOT, salvageButton(s, r));
+        inv.setItem(KEEP_SLOT, keepButton(p, s, r));
+        inv.setItem(SALVAGE_SLOT, salvageButton(p, s, r));
     }
 
     /** Last frame of a slot-machine window (the frozen landing position), or null if absent. */
@@ -483,7 +502,7 @@ public final class ShopUI implements Listener {
             }
             if (st.coins < cost) {
                 s.transaction.reset();
-                p.sendMessage("§cYou need §e" + cost + " coins§c to roll for a " + cat.articleLabel() + ".");
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "shop.roll.needCoins", cost, cat.articleLabel()));
                 return;
             }
             st.coins -= cost; // charged exactly once
@@ -491,7 +510,7 @@ public final class ShopUI implements Listener {
             MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
             if (prof.persistentCoins < cost) {
                 s.transaction.reset();
-                p.sendMessage("§cYou need §6" + cost + " persistent coins§c to roll for a " + cat.articleLabel() + ".");
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "shop.roll.needPersistent", cost, cat.articleLabel()));
                 return;
             }
             prof.persistentCoins -= cost;
@@ -516,7 +535,7 @@ public final class ShopUI implements Listener {
         }
         buildWindows(s); // precompute the frames the animations + frozen result screen will show
 
-        renderRolling(s);
+        renderRolling(p, s);
         startItemAnimation(p, s);
     }
 
@@ -534,13 +553,13 @@ public final class ShopUI implements Listener {
             // Full inventory: the item is never lost. Keep it pending and let the player retry
             // (or choose SALVAGE instead) after freeing a slot.
             s.transaction.markKeepPending();
-            p.sendMessage("§cYour inventory is full — free up a slot, then click §aKEEP§c again (or choose §eSALVAGE§c).");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "shop.fullInventory"));
             renderResult(p, s);
             return;
         }
         if (s.type == ShopType.PERSISTENT) pendingStore.remove(p.getUniqueId());
         s.transaction.reset();
-        p.sendMessage("§aYou kept the " + r.rarity.legacy + r.category.articleLabel() + "§a!");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "shop.kept", r.rarity.legacy + r.category.articleLabel()));
         refresh(p, s);
     }
 
@@ -558,13 +577,13 @@ public final class ShopUI implements Listener {
         if (s.type == ShopType.RUN && di != null) {
             // In-run shards are banked to the persistent balance on boss defeat (existing behavior).
             di.run().salvageShards.merge(p.getUniqueId(), r.salvageValue, Integer::sum);
-            p.sendMessage("§eSalvaged for §3" + r.salvageValue + " shards§e. §7(Banked on boss defeat — lost if you die first.)");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "shop.salvageBanked", r.salvageValue));
         } else {
             MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
             prof.shards += r.salvageValue;
             plugin.meta().save();
             if (s.type == ShopType.PERSISTENT) pendingStore.remove(p.getUniqueId());
-            p.sendMessage("§eSalvaged for §3" + r.salvageValue + " shards§e.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "shop.salvage", r.salvageValue));
         }
         s.transaction.reset();
         refresh(p, s);
@@ -661,6 +680,7 @@ public final class ShopUI implements Listener {
             item = GearFactory.markPersistent(item);
             GearFactory.initDurability(item);
         }
+        GearFactory.localizeFor(item, p);
         return item;
     }
 
@@ -712,13 +732,14 @@ public final class ShopUI implements Listener {
     // ==================== ITEM BUILDERS ====================
 
     /** A main-menu entry for one roll category. */
-    private ItemStack menuEntry(ShopSession s, Category cat, String action) {
+    private ItemStack menuEntry(Player p, ShopSession s, Category cat, String action) {
         int cost = ShopRules.costFor(s.type, cat);
-        String currency = s.type == ShopType.RUN ? " run coins" : " pc";
-        return makeButton(cat.icon(), "§f" + cat.label(),
-                List.of("§7Roll for " + cat.articleLabel() + ".",
-                        "§e" + cost + currency + "§7 per roll.",
-                        "§7Click to enter the " + cat.label() + " roller."),
+        String currency = s.type == ShopType.RUN
+                ? clang(p, "shop.currency.run.short") : clang(p, "shop.currency.persistent.short");
+        return makeButton(cat.icon(), "§f" + catLabel(p, cat),
+                List.of(clang(p, "menuEntry.rollFor", catArticleLabel(p, cat)),
+                        "§e" + cost + " " + currency + "§7 " + clang(p, "shop.roll.pricePer"),
+                        clang(p, "menuEntry.enter", catLabel(p, cat))),
                 action);
     }
 
@@ -735,40 +756,43 @@ public final class ShopUI implements Listener {
     /** ROLL button: the single source of cost + rules info (no separate cost/status panes). */
     private ItemStack rollButton(Player p, ShopSession s, Category cat) {
         int cost = ShopRules.costFor(s.type, cat == null ? Category.WEAPON : cat);
-        String currency = s.type == ShopType.RUN ? " coins" : " pc";
-        String what = (cat == null ? "piece of gear" : cat.articleLabel());
+        String currency = s.type == ShopType.RUN
+                ? clang(p, "shop.currency.run.short") : clang(p, "shop.currency.persistent.short");
+        String price = cost + " " + currency;
+        String what = cat == null ? clang(p, "shop.roll.anItem") : catArticleLabel(p, cat);
         int balance = p == null ? -1 : balanceOf(p, s);
         if (balance >= 0 && balance < cost) {
             // Affordance: visually locked BEFORE the click instead of a red chat line after it.
-            return makeButton(Material.GRAY_DYE, "§8§lROLL  §7(§e" + cost + currency + "§7)",
-                    List.of("§cCan't afford — need " + (cost - balance) + " more.",
-                            "§8Rolls a " + what + ", then KEEP or SALVAGE."),
+            return makeButton(Material.GRAY_DYE,
+                    clang(p, "shop.roll.buttonDisabled", price),
+                    List.of(clang(p, "shop.roll.cantAfford", cost - balance),
+                            clang(p, "shop.roll.why", what)),
                     ACTION_ROLL);
         }
-        List<String> lore = new ArrayList<>(List.of(
-                "§7Rolls a " + what + ", then KEEP or SALVAGE."));
+        List<String> lore = new ArrayList<>(List.of(clang(p, "shop.roll.why", what)));
         if (s.type == ShopType.RUN) {
-            lore.add("§eRun coins §7are lost on death.");
+            lore.add(clang(p, "shop.roll.runCoinsLost"));
         } else {
-            lore.add("§6Persistent rolls §7produce base-quality gear.");
+            lore.add(clang(p, "shop.roll.persistentBase"));
         }
-        return makeButton(Material.ANVIL, "§a§lROLL  §7(§e" + cost + currency + "§7)", lore, ACTION_ROLL);
+        return makeButton(Material.ANVIL, clang(p, "shop.roll.button", price), lore, ACTION_ROLL);
     }
 
-    private ItemStack categoryPreview(Category cat) {
+    private ItemStack categoryPreview(Player p, Category cat) {
         if (cat == null) return darkPane();
-        return makeButton(cat.icon(), "§f" + cat.label(), List.of("§7Ready to roll."), null);
+        return makeButton(cat.icon(), "§f" + catLabel(p, cat),
+                List.of(clang(p, "shop.categoryPreview.ready")), null);
     }
 
-    private ItemStack keepButton(ShopSession s, ServerSideRollResult r) {
-        return makeButton(Material.EMERALD_BLOCK, "§a§lKEEP",
-                List.of("§7Keep the " + r.rarity.legacy + r.category.articleLabel() + "§7 in your inventory."),
+    private ItemStack keepButton(Player p, ShopSession s, ServerSideRollResult r) {
+        return makeButton(Material.EMERALD_BLOCK, clang(p, "shop.keep.name"),
+                List.of(clang(p, "shop.keep.lore", r.rarity.legacy + catArticleLabel(p, r.category))),
                 ACTION_KEEP);
     }
 
-    private ItemStack salvageButton(ShopSession s, ServerSideRollResult r) {
-        return makeButton(Material.REDSTONE_BLOCK, "§e§lSALVAGE",
-                List.of("§7Destroy the item for §3" + r.salvageValue + " shards§7."),
+    private ItemStack salvageButton(Player p, ShopSession s, ServerSideRollResult r) {
+        return makeButton(Material.REDSTONE_BLOCK, clang(p, "shop.salvage.name"),
+                List.of(clang(p, "shop.salvage.lore", r.salvageValue)),
                 ACTION_SALVAGE);
     }
 
@@ -909,7 +933,7 @@ public final class ShopUI implements Listener {
     public void openUpgrades(Player p) {
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
         Inventory inv = Bukkit.createInventory(null, UPGRADES_SIZE,
-                LEGACY.deserialize("§8Upgrades  §3" + prof.shards + " shards"));
+                LEGACY.deserialize(clang(p, "shop.upgrades.title", prof.shards)));
         for (int i = 0; i < Upgrades.ALL.size(); i++) {
             Upgrades.Track t = Upgrades.ALL.get(i);
             int owned = prof.upgrades.getOrDefault(t.id(), 0);
@@ -927,24 +951,25 @@ public final class ShopUI implements Listener {
             };
             // Condensed lore: level + effect on one line, cost/affordance on the next.
             List<String> lore = new ArrayList<>();
-            lore.add("§7Lv §f" + owned + "§7/§f" + t.maxLevel() + " §8· §7Effect: " + effectDesc(t, owned));
+            lore.add(clang(p, "upg.lvLine", owned, t.maxLevel(), effectDesc(p, t, owned)));
             if (maxed) {
                 // Locked affordance: a MAXED icon with no action, instead of a clickable button
                 // that only fails in chat.
-                inv.setItem(i, makeButton(Material.BARRIER, "§8§lMAXED §7" + t.label(), lore, null));
+                inv.setItem(i, makeButton(Material.BARRIER,
+                        clang(p, "upg.maxedBtn", upgLabel(p, t)), lore, null));
                 continue;
             }
             boolean affordable = prof.shards >= cost;
             if (affordable) {
-                lore.add("§b" + cost + " shards §7— click to upgrade");
+                lore.add(clang(p, "upg.clickUpgrade", cost));
             } else {
-                lore.add("§cNeed " + (cost - prof.shards) + " more shards");
+                lore.add(clang(p, "upg.needMore", cost - prof.shards));
             }
-            String name = (affordable ? "§f" : "§8") + t.label();
+            String name = (affordable ? "§f" : "§8") + upgLabel(p, t);
             inv.setItem(i, makeButton(affordable ? mat : Material.GRAY_DYE, name, lore, t.id()));
         }
-        inv.setItem(22, makeButton(Material.ARROW, "§7← Back to Shop",
-                List.of("§7Return to the main shop"), "back"));
+        inv.setItem(22, makeButton(Material.ARROW, clang(p, "upg.back.name"),
+                List.of(clang(p, "upg.back.lore")), "back"));
         fillEmpty(inv);
         openUpgradeGuis.put(inv, p.getUniqueId());
         p.openInventory(inv);
@@ -960,18 +985,18 @@ public final class ShopUI implements Listener {
         if (t == null) return;
         int owned = prof.upgrades.getOrDefault(t.id(), 0);
         if (owned >= t.maxLevel()) {
-            p.sendMessage("§8That upgrade is already maxed.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "upg.maxed"));
             return;
         }
         int cost = Upgrades.cost(t, owned);
         if (prof.shards < cost) {
-            p.sendMessage("§cYou need " + cost + " shards (have " + prof.shards + ").");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "upg.needShards", cost, prof.shards));
             return;
         }
         prof.shards -= cost;
         prof.upgrades.put(t.id(), owned + 1);
         plugin.meta().save();
-        p.sendMessage("§a" + t.label() + " §7is now §fLv " + (owned + 1) + "§7.");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "upg.levelled", t.label(), owned + 1));
         reopen(() -> openUpgrades(p));
     }
 
@@ -1015,41 +1040,41 @@ public final class ShopUI implements Listener {
     private void repairHeld(Player p, ShopSession s) {
         ItemStack target = p.getInventory().getItemInMainHand();
         if (target == null || target.getType() == Material.AIR || !GearFactory.isPersistent(target)) {
-            p.sendMessage("§cHold a damaged persistent item in your main hand to repair it.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.holdDamaged"));
             return;
         }
         int dur = GearFactory.getDurability(target);
         int max = GearFactory.getMaxDurability(target);
         if (dur <= 0 || max <= 0 || dur >= max) {
-            p.sendMessage("§cThat item is not damaged or is broken. Use 'Repair Broken Item' for broken items.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.notDamaged"));
             return;
         }
         int repairCount = GearFactory.getRepairCount(target);
         int cost = repairCost(target);
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
         if (prof.persistentCoins < cost) {
-            p.sendMessage("§cYou need " + cost + " coins to repair this item (repair #" + (repairCount + 1) + ").");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.needCoins", cost, repairCount + 1));
             return;
         }
         prof.persistentCoins -= cost;
         GearFactory.repairItem(target, Math.min(max - dur, 10));
         GearFactory.setRepairCount(target, repairCount + 1);
         plugin.meta().save();
-        p.sendMessage("§aRepaired item! §7(-§6" + cost + " coins§7) §7(repair #" + (repairCount + 1) + ")");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.done", cost, repairCount + 1));
         refresh(p, s);
     }
 
     private void repairAll(Player p, ShopSession s) {
         List<ItemStack> toRepair = damagedPersistentGear(p);
         if (toRepair.isEmpty()) {
-            p.sendMessage("§cYou have no damaged persistent gear to repair.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.noneDamaged"));
             return;
         }
         int totalCost = 0;
         for (ItemStack it : toRepair) totalCost += repairCost(it);
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
         if (prof.persistentCoins < totalCost) {
-            p.sendMessage("§cYou need " + totalCost + " coins to repair all items.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.needAll", totalCost));
             return;
         }
         prof.persistentCoins -= totalCost;
@@ -1060,7 +1085,7 @@ public final class ShopUI implements Listener {
             GearFactory.setRepairCount(it, GearFactory.getRepairCount(it) + 1);
         }
         plugin.meta().save();
-        p.sendMessage("§aRepaired " + toRepair.size() + " item(s)! §7(-§6" + totalCost + " coins§7)");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.allDone", toRepair.size(), totalCost));
         refresh(p, s);
     }
 
@@ -1068,24 +1093,23 @@ public final class ShopUI implements Listener {
         ItemStack target = p.getInventory().getItemInMainHand();
         if (target == null || target.getType() == Material.AIR
                 || !GearFactory.isPersistent(target) || !GearFactory.isBroken(target)) {
-            p.sendMessage("§cHold a broken persistent item in your main hand to repair it.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.holdBroken"));
             return;
         }
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
         if (prof.persistentCoins < REPAIR_BROKEN_COINS) {
-            p.sendMessage("§cYou need " + REPAIR_BROKEN_COINS + " persistent coins to repair a broken item.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.needBrokenCoins", REPAIR_BROKEN_COINS));
             return;
         }
         if (prof.shards < REPAIR_BROKEN_SHARDS) {
-            p.sendMessage("§cYou need " + REPAIR_BROKEN_SHARDS + " shards to repair a broken item.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.needBrokenShards", REPAIR_BROKEN_SHARDS));
             return;
         }
         prof.persistentCoins -= REPAIR_BROKEN_COINS;
         prof.shards -= REPAIR_BROKEN_SHARDS;
         GearFactory.repairItem(target, 10);
         plugin.meta().save();
-        p.sendMessage("§aRepaired broken item! §7(-§6" + REPAIR_BROKEN_COINS + " coins§7, §3-"
-                + REPAIR_BROKEN_SHARDS + " shards§7) §7(+10 durability)");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.brokenDone", REPAIR_BROKEN_COINS, REPAIR_BROKEN_SHARDS));
         refresh(p, s);
     }
 
@@ -1097,74 +1121,103 @@ public final class ShopUI implements Listener {
         }
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
         if (prof.persistentCoins < cost) {
-            p.sendMessage("§cYou need §6" + cost + " persistent coins§c for a " + def.displayName() + "§c.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "shop.needPersistentFor", cost, def.displayName()));
             return;
         }
         prof.persistentCoins -= cost;
         plugin.meta().save();
         ItemStack potion = PotionFactory.createPotion(def);
         StashUI.placeOrStash(p, potion);
-        p.sendMessage("§aPurchased a " + def.displayName() + "§a! §7(-§6" + cost + " coins§7)");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "shop.purchased", def.displayName(), cost));
         refresh(p, s);
     }
 
     private ItemStack makeRepairItemButton(Player p) {
         ItemStack held = p.getInventory().getItemInMainHand();
         List<String> lore = new ArrayList<>();
-        lore.add("§7Repairs the held item · cost scales with repair count");
+        lore.add(clang(p, "shop.repairItem.lore1"));
         if (held != null && held.getType() != Material.AIR && GearFactory.isPersistent(held)) {
             int dur = GearFactory.getDurability(held);
             int max = GearFactory.getMaxDurability(held);
             if (dur > 0 && max > 0 && dur < max) {
                 String name = held.getItemMeta().getDisplayName();
                 lore.add("");
-                lore.add("§7Held: §f" + (name == null ? held.getType().name().toLowerCase() : name));
-                lore.add("§7Durability: §f" + dur + "§7/§f" + max);
-                lore.add("§7Repair #" + (GearFactory.getRepairCount(held) + 1) + ": §6" + repairCost(held) + " coins");
+                lore.add(clang(p, "shop.repairItem.held",
+                        name == null ? held.getType().name().toLowerCase() : name));
+                lore.add(clang(p, "shop.repairItem.durability", dur, max));
+                lore.add(clang(p, "shop.repairItem.repairNum",
+                        GearFactory.getRepairCount(held) + 1, repairCost(held)));
             } else if (dur <= 0) {
                 lore.add("");
-                lore.add("§cHeld item is broken — use 'Repair Broken Item'");
+                lore.add(clang(p, "shop.repairItem.broken"));
             } else {
                 lore.add("");
-                lore.add("§aHeld item is at full durability");
+                lore.add(clang(p, "shop.repairItem.fullDura"));
             }
         } else {
             lore.add("");
-            lore.add("§7Hold a damaged persistent item");
-            lore.add("§7to see the repair cost");
+            lore.add(clang(p, "shop.repairItem.holdDamaged1"));
+            lore.add(clang(p, "shop.repairItem.holdDamaged2"));
         }
-        return makeButton(Material.ANVIL, "§aRepair Item", lore, ACTION_REPAIR);
+        return makeButton(Material.ANVIL, clang(p, "shop.repairItem.name"), lore, ACTION_REPAIR);
     }
 
     private ItemStack makeRepairAllButton(Player p) {
         List<String> lore = new ArrayList<>();
-        lore.add("§7Repairs all damaged persistent gear · cost scales with repair count");
+        lore.add(clang(p, "shop.repairAll.lore1"));
         List<ItemStack> damaged = damagedPersistentGear(p);
         int totalCost = 0;
         for (ItemStack it : damaged) totalCost += repairCost(it);
         lore.add("");
         if (!damaged.isEmpty()) {
-            lore.add("§7Items to repair: §f" + damaged.size());
-            lore.add("§7Total cost: §6" + totalCost + " coins");
+            lore.add(clang(p, "shop.repairAll.items", damaged.size()));
+            lore.add(clang(p, "shop.repairAll.total", totalCost));
         } else {
-            lore.add("§7No damaged items found");
+            lore.add(clang(p, "shop.repairAll.none"));
         }
-        return makeButton(Material.DIAMOND, "§bRepair All", lore, ACTION_REPAIR_ALL);
+        return makeButton(Material.DIAMOND, clang(p, "shop.repairAll.name"), lore, ACTION_REPAIR_ALL);
     }
 
     // ==================== HELPERS ====================
 
-    private String effectDesc(Upgrades.Track t, int level) {
+    private String effectDesc(Player p, Upgrades.Track t, int level) {
         return switch (t.id()) {
-            case "damage" -> "+" + (level * Upgrades.delta(t)) + " melee damage";
-            case "magic_damage" -> "+" + (level * Upgrades.delta(t)) + " magic damage";
-            case "hearts" -> "+" + (level * Upgrades.delta(t)) + " max HP";
-            case "defense" -> "+" + (level * Upgrades.delta(t)) + " defense";
-            case "crit" -> "+" + (level * Upgrades.CRIT_DELTA_PCT) + "% crit chance";
-            case "speed" -> "+" + (level * Upgrades.delta(t)) + "% move speed";
-            case "mana" -> "+" + (level * Upgrades.delta(t)) + " max mana";
+            case "damage" -> clang(p, "upg.effect.damage", level * Upgrades.delta(t));
+            case "magic_damage" -> clang(p, "upg.effect.magic_damage", level * Upgrades.delta(t));
+            case "hearts" -> clang(p, "upg.effect.hearts", level * Upgrades.delta(t));
+            case "defense" -> clang(p, "upg.effect.defense", level * Upgrades.delta(t));
+            case "crit" -> clang(p, "upg.effect.crit", level * Upgrades.CRIT_DELTA_PCT);
+            case "speed" -> clang(p, "upg.effect.speed", level * Upgrades.delta(t));
+            case "mana" -> clang(p, "upg.effect.mana", level * Upgrades.delta(t));
             default -> "";
         };
+    }
+
+    private static String clang(Player p, String key, Object... args) {
+        return com.lieyabull.dung.lang.Lang.forPlayer(p, key, args);
+    }
+
+    /** Localized label of a roll category (used in menus/titles/buttons). */
+    private static String catLabel(Player p, Category cat) {
+        return switch (cat) {
+            case WEAPON -> clang(p, "shop.category.weapon");
+            case ARMOR -> clang(p, "shop.category.armor");
+            case MANA_SHIELD -> clang(p, "shop.category.manashield");
+        };
+    }
+
+    /** Localized "a/an <category>" (accusative for HU) used in roll/keep phrasing. */
+    private static String catArticleLabel(Player p, Category cat) {
+        return switch (cat) {
+            case WEAPON -> clang(p, "shop.category.weapon.article");
+            case ARMOR -> clang(p, "shop.category.armor.article");
+            case MANA_SHIELD -> clang(p, "shop.category.manashield.article");
+        };
+    }
+
+    /** Localized label of a permanent upgrade track. */
+    private static String upgLabel(Player p, Upgrades.Track t) {
+        return clang(p, "upg.label." + t.id());
     }
 
     /** Defer a GUI open by one tick so the InventoryCloseEvent of the previous GUI doesn't untrack it. */

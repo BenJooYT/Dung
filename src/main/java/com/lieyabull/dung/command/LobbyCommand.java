@@ -24,15 +24,15 @@ public final class LobbyCommand implements CommandExecutor {
             return true;
         }
         if (plugin.game().instanceOf(p) != null) {
-            p.sendMessage("§cYou're in a run — use §f/dung leave§c first.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.cantLobbyInRun"));
             return true;
         }
         if (p.getWorld().getName().equals(com.lieyabull.dung.world.WorldManager.LOBBY_WORLD_NAME)) {
-            p.sendMessage("§7You're already in the lobby.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "lobby.alreadyIn"));
             return true;
         }
         p.teleport(plugin.worldManager().lobbySpawn());
-        p.sendMessage("§aWelcome back to the lobby.");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "lobby.welcomeBack"));
         return true;
     }
 }

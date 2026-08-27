@@ -157,15 +157,14 @@ public final class StashUI implements Listener {
         List<ItemStack> list = items(p.getUniqueId());
         if (list.size() >= STASH_SIZE) {
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(
-                    "§cYour stash is full — your " + itemName(item)
-                            + " §c dropped. §7Open it with §f/stash§7 to make room."));
+                    com.lieyabull.dung.lang.Lang.forPlayer(p, "stash.fullDropped", itemName(item))));
             p.getWorld().dropItemNaturally(p.getLocation().add(0, 0.5, 0), item);
             return false;
         }
         list.add(item.clone());
         save();
         p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(
-                "§8Your " + itemName(item) + " §8 was stashed. §7Retrieve it with §f/stash§7."));
+                com.lieyabull.dung.lang.Lang.forPlayer(p, "stash.stashed", itemName(item))));
         return true;
     }
 
@@ -193,7 +192,7 @@ public final class StashUI implements Listener {
     public void open(Player p) {
         List<ItemStack> list = items(p.getUniqueId());
         Inventory inv = Bukkit.createInventory(null, STASH_SIZE,
-                LEGACY.deserialize("§8Stash  §7(" + list.size() + "/" + STASH_SIZE + " items)"));
+                LEGACY.deserialize(com.lieyabull.dung.lang.Lang.forPlayer(p, "stash.title", list.size(), STASH_SIZE)));
         for (int i = 0; i < Math.min(list.size(), STASH_SIZE); i++) {
             inv.setItem(i, list.get(i).clone());
         }
@@ -250,7 +249,7 @@ public final class StashUI implements Listener {
         if (leftover.isEmpty()) {
             list.remove(slot);
             save();
-            p.sendMessage("§7Took " + itemName(item) + " §7out of the stash.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "stash.took", itemName(item)));
             // Refresh the open GUI in place so the taken slot visibly empties.
             Inventory inv = openStashes.entrySet().stream()
                     .filter(en -> en.getValue().equals(owner))
@@ -261,7 +260,7 @@ public final class StashUI implements Listener {
                 inv.setItem(slot, null);
             }
         } else {
-            p.sendMessage("§cYour inventory is full — make room before taking items out of the stash.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "stash.full"));
         }
     }
 
@@ -274,8 +273,8 @@ public final class StashUI implements Listener {
             for (Player p : Bukkit.getOnlinePlayers()) {
                 int c = count(p);
                 if (c <= 0) continue;
-                ChatUI.notify(p, "§8Your stash holds §f" + c + " item" + (c == 1 ? "" : "s")
-                        + "§8. §7Click to open: §f/stash");
+                ChatUI.notify(p, com.lieyabull.dung.lang.Lang.forPlayer(p,
+                        c == 1 ? "stash.reminder.one" : "stash.reminder.many", c));
             }
         }, REMINDER_TICKS, REMINDER_TICKS);
     }

@@ -63,100 +63,100 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
         if (args.length == 0) {
             Party party = pm.partyOf(p);
             if (party == null) {
-                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7You are not in a party. Use §f/party create§7 to start one."));
-                p.sendMessage("§7Commands: §fcreate, invite <player>, accept, decline, leave, kick <player>, disband, info");
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.notInParty")));
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.usage"));
                 return true;
             }
-            p.sendMessage("§6--- Party ---");
-            p.sendMessage("§7Leader: §f" + Bukkit.getOfflinePlayer(party.leader()).getName());
-            p.sendMessage("§7Members (" + party.size() + "/" + Party.MAX_SIZE + "):");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.header"));
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.leaderLine", Bukkit.getOfflinePlayer(party.leader()).getName()));
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.membersLine", party.size(), Party.MAX_SIZE));
             for (UUID uid : party.members()) {
                 String name = Bukkit.getOfflinePlayer(uid).getName();
-                String tag = uid.equals(party.leader()) ? " §6(Leader)" : "";
-                p.sendMessage("  §7- §f" + name + tag);
+                String tag = uid.equals(party.leader()) ? com.lieyabull.dung.lang.Lang.forPlayer(p, "party.leaderTag") : "";
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.memberLine", name, tag));
             }
             return true;
         }
         switch (args[0].toLowerCase()) {
             case "create": {
                 if (pm.partyOf(p) != null) {
-                    p.sendMessage("§cYou're already in a party. Leave first.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.alreadyInLeaveFirst"));
                     return true;
                 }
                 pm.createParty(p);
-                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§aParty created! Invite players with §f/party invite <player>"));
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.created")));
                 return true;
             }
             case "invite": {
-                if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: /party invite <player>")); return true; }
+                if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.inviteUsage"))); return true; }
                 long now = System.currentTimeMillis();
                 Long last = lastPartyInvite.get(p.getUniqueId());
                 if (last != null && now - last < PARTY_INVITE_COOLDOWN_MS) {
-                    p.sendMessage("§cYou can't invite yet. Wait " + (int) Math.ceil((PARTY_INVITE_COOLDOWN_MS - (now - last)) / 1000.0) + "s.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.inviteCooldown", (int) Math.ceil((PARTY_INVITE_COOLDOWN_MS - (now - last)) / 1000.0)));
                     return true;
                 }
                 Player target = Bukkit.getPlayer(args[1]);
-                if (target == null) { p.sendMessage("§cPlayer not found."); return true; }
-                if (target.equals(p)) { p.sendMessage("§cYou can't invite yourself."); return true; }
+                if (target == null) { p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.playerNotFound")); return true; }
+                if (target.equals(p)) { p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.cantInviteSelf")); return true; }
                 if (gm.isInInstance(p)) {
-                    p.sendMessage("§cYou can't invite while your party is in a run.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.cantInviteInRun"));
                     return true;
                 }
                 if (pm.invite(p, target)) {
                     lastPartyInvite.put(p.getUniqueId(), now);
-                    p.sendMessage("§aInvited " + target.getName() + " to the party.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.invitedTarget", target.getName()));
                     target.sendMessage(
-                            com.lieyabull.dung.ui.ChatUI.command("§a[Accept]", "/party accept", "Join the party")
+                            com.lieyabull.dung.ui.ChatUI.command(com.lieyabull.dung.lang.Lang.forPlayer(target, "party.inviteBtnAccept"), "/party accept", com.lieyabull.dung.lang.Lang.forPlayer(target, "party.inviteBtnAcceptHover"))
                                     .append(Component.text("  "))
-                                    .append(com.lieyabull.dung.ui.ChatUI.command("§c[Decline]", "/party decline", "Decline the invite"))
+                                    .append(com.lieyabull.dung.ui.ChatUI.command(com.lieyabull.dung.lang.Lang.forPlayer(target, "party.inviteBtnDecline"), "/party decline", com.lieyabull.dung.lang.Lang.forPlayer(target, "party.inviteBtnDeclineHover")))
                                     .hoverEvent(null) // remove hover from the container
                     );
-                    target.sendMessage("§a" + p.getName() + " invited you to a party!");
+                    target.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(target, "party.invitedYouCmd", p.getName()));
                 } else {
-                    p.sendMessage("§cCould not invite. They may already be in a party, or the party is full.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.couldNotInvite"));
                 }
                 return true;
             }
             case "accept": {
                 if (gm.isInInstance(p)) {
-                    p.sendMessage("§cYou can't join a party while you're in a run.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.cantJoinInRun"));
                     return true;
                 }
                 UUID inviterId = pm.getInviter(p);
                 Player inviter = inviterId != null ? Bukkit.getPlayer(inviterId) : null;
                 if (inviter != null && gm.isInInstance(inviter)) {
-                    p.sendMessage("§cThat party has already started a run.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.alreadyStartedRun"));
                     return true;
                 }
                 if (pm.acceptInvite(p)) {
-                    p.sendMessage("§aYou joined the party!");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.joinedSelf"));
                 } else {
-                    p.sendMessage("§cNo pending invite or party is full.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.noPendingOrFull"));
                 }
                 return true;
             }
             case "decline": {
                 pm.declineInvite(p);
-                p.sendMessage("§7Invite declined.");
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.inviteDeclined"));
                 return true;
             }
             case "leave": {
                 pm.leaveParty(p);
                 DungeonInstance leaveDi = gm.instanceOf(p);
                 if (leaveDi != null) leaveDi.removePlayer(p);
-                p.sendMessage("§7You left the party.");
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.leftSelf"));
                 return true;
             }
             case "kick": {
-                if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cUsage: /party kick <player>")); return true; }
+                if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.kickUsage"))); return true; }
                 Player target = Bukkit.getPlayer(args[1]);
-                if (target == null) { p.sendMessage("§cPlayer not found."); return true; }
+                if (target == null) { p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.playerNotFound")); return true; }
                 if (pm.kick(p, target)) {
                     DungeonInstance kickDi = gm.instanceOf(target);
                     if (kickDi != null) kickDi.removePlayer(target);
-                    p.sendMessage("§aKicked " + target.getName() + " from the party.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.kickedSelf", target.getName()));
                 } else {
-                    p.sendMessage("§cCould not kick. You may not be the leader.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.couldNotKick"));
                 }
                 return true;
             }
@@ -164,14 +164,14 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
                 DungeonInstance disbandDi = gm.instanceOf(p);
                 if (pm.disband(p)) {
                     if (disbandDi != null) disbandDi.endRun();
-                    p.sendMessage("§cParty disbanded.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.disbandedSelf"));
                 } else {
-                    p.sendMessage("§cYou are not the party leader.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.notLeader"));
                 }
                 return true;
             }
             default:
-                p.sendMessage("§7Party commands: §fcreate, invite <player>, accept, decline, leave, kick <player>, disband, info");
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "party.help"));
                 return true;
         }
     }
@@ -180,7 +180,7 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
 
     public boolean shopCmd(Player p, String[] args) {
         if (plugin.game().isInInstance(p)) {
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYou can't use /shop while inside a dungeon run. Leave with /dung leave first."));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.cantShopInRun")));
             return true;
         }
         plugin.shopUI().openPersistentShop(p);
@@ -191,7 +191,7 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
 
     public boolean upgradesCmd(Player p, String[] args) {
         if (plugin.game().isInInstance(p)) {
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYou can't use /upgrades while inside a dungeon run. Leave with /dung leave first."));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.cantUpgradesInRun")));
             return true;
         }
         plugin.shopUI().openUpgrades(p);
@@ -202,7 +202,7 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
 
     public boolean stashCmd(Player p, String[] args) {
         if (plugin.game().isInInstance(p)) {
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYou can't use /stash while inside a dungeon run. Leave with /dung leave first."));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.cantStashInRun")));
             return true;
         }
         plugin.stashUI().open(p);
@@ -226,15 +226,15 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
         org.bukkit.inventory.ItemStack held = p.getInventory().getItemInMainHand();
         String kind = tag(held, com.lieyabull.dung.items.ItemTags.KIND);
         if (!"armor".equals(kind)) {
-            p.sendMessage("§cHold a Dung armor piece in your main hand to salvage it.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "salvage.holdArmor"));
             return true;
         }
         if (GearFactory.isFavorite(held)) {
-            p.sendMessage(ChatUI.clickableCommands("§8That armor is §bfavorited§8. Run §f/salvage favorite§8 to un-favorite it first."));
+            p.sendMessage(ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "salvage.favorited")));
             return true;
         }
         if (GearFactory.isStarter(held)) {
-            p.sendMessage("§8That's your free starter kit — it can't be salvaged.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "salvage.starter"));
             return true;
         }
         // Persistent gear IS salvable when held, so a player can consciously turn a permanent piece
@@ -249,14 +249,12 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
         DungeonInstance di = plugin.game().instanceOf(p);
         if (di == null) {
             addShards(p, value);
-            p.sendMessage("§bSalvaged " + rarityColor(held) + name
-                    + "§b → §b+" + value + " shards§7 (balance §b" + plugin.meta().profile(pid).shards + "§7).");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "salvage.doneBalance", rarityColor(held), name, value, plugin.meta().profile(pid).shards));
         } else {
             Run run = di.run();
             run.salvageShards.merge(pid, value, Integer::sum);
             int total = run.salvageShards.getOrDefault(pid, 0);
-            p.sendMessage("§bSalvaged " + rarityColor(held) + name
-                    + "§b → §b+" + value + " shards§7 (floor total §b" + total + "§7).");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "salvage.doneFloor", rarityColor(held), name, value, total));
         }
         return true;
     }
@@ -265,13 +263,13 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
     private boolean toggleFavorite(Player p) {
         org.bukkit.inventory.ItemStack held = p.getInventory().getItemInMainHand();
         if (!"armor".equals(tag(held, com.lieyabull.dung.items.ItemTags.KIND))) {
-            p.sendMessage("§cHold a Dung armor piece to favorite/un-favorite it.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "salvage.holdArmorFavorite"));
             return true;
         }
         boolean now = GearFactory.toggleFavorite(held);
         p.sendMessage(now
-                ? "§bFavorited — §f/salvage§b and §f/salvage all§b will skip this piece."
-                : "§7Un-favorited — this piece can be salvaged again.");
+                ? com.lieyabull.dung.lang.Lang.forPlayer(p, "salvage.favoritedOn")
+                : com.lieyabull.dung.lang.Lang.forPlayer(p, "salvage.favoritedOff"));
         return true;
     }
 
@@ -291,21 +289,19 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
             inv.setItem(slot, null);
         }
         if (pieces == 0) {
-            p.sendMessage("§7Nothing to salvage — no Dung armor in your bag that isn't favorited, hotbar, or equipped.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "salvage.nothing"));
             return true;
         }
         UUID pid = p.getUniqueId();
         DungeonInstance di = plugin.game().instanceOf(p);
         if (di == null) {
             addShards(p, totalValue);
-            p.sendMessage("§bSalvaged §f" + pieces + "§b armor pieces §b→ §b+" + totalValue
-                    + " shards§7 (balance §b" + plugin.meta().profile(pid).shards + "§7).");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "salvage.allBalance", pieces, totalValue, plugin.meta().profile(pid).shards));
         } else {
             Run run = di.run();
             run.salvageShards.merge(pid, totalValue, Integer::sum);
             int total = run.salvageShards.getOrDefault(pid, 0);
-            p.sendMessage("§bSalvaged §f" + pieces + "§b armor pieces §b→ §b+" + totalValue
-                    + " shards§7 (floor total §b" + total + "§7).");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "salvage.allFloor", pieces, totalValue, total));
         }
         return true;
     }
@@ -339,18 +335,18 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
             // Check another player's balance
             Player target = Bukkit.getPlayerExact(args[1]);
             if (target == null) {
-                p.sendMessage("§cPlayer not found.");
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "balance.playerNotFound"));
                 return;
             }
             MetaManager.MetaProfile prof = plugin.meta().profile(target.getUniqueId());
-            p.sendMessage("§6--- " + target.getName() + "'s Balance ---");
-            p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins);
-            p.sendMessage("§7Shards: §b" + prof.shards);
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "balance.header", target.getName()));
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "balance.coins", prof.persistentCoins));
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "balance.shards", prof.shards));
         } else {
             MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
-            p.sendMessage("§6--- " + p.getName() + "'s Balance ---");
-            p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins);
-            p.sendMessage("§7Shards: §b" + prof.shards);
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "balance.header", p.getName()));
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "balance.coins", prof.persistentCoins));
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "balance.shards", prof.shards));
         }
     }
 
@@ -468,11 +464,11 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
 
         // Build header
         p.sendMessage("");
-        p.sendMessage("§6§l--- " + LB_LABELS[catIdx] + " §6§lLeaderboard ---");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "lb.header", LB_LABELS[catIdx]));
         p.sendMessage("");
 
         if (sorted.isEmpty()) {
-            p.sendMessage("§7No data yet.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "lb.noData"));
         } else {
             for (int i = start; i < end; i++) {
                 var entry = sorted.get(i);
@@ -482,7 +478,7 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
                 if (name == null) name = org.bukkit.Bukkit.getOfflinePlayer(entry.getKey()).getName();
                 if (name == null) name = "§7Unknown";
                 boolean online = org.bukkit.Bukkit.getPlayer(entry.getKey()) != null;
-                String suffix = online ? "" : " §8(offline)";
+                String suffix = online ? "" : com.lieyabull.dung.lang.Lang.forPlayer(p, "lb.offlineSuffix");
                 int rank = i + 1;
                 String rankStr = rank <= 3 ? getRankColor(rank) + "#" + rank : "§7#" + rank;
                 int value = switch (catIdx) {
@@ -501,20 +497,20 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
         // Page navigation
         var line = net.kyori.adventure.text.Component.empty();
         if (page > 1) {
-            line = line.append(ChatUI.command("§7[§f◀ Prev§7]", "/leaderboard " + LB_CATEGORIES[catIdx] + " " + (page - 1), "Previous page"));
+            line = line.append(ChatUI.command(com.lieyabull.dung.lang.Lang.forPlayer(p, "lb.prevButton"), "/leaderboard " + LB_CATEGORIES[catIdx] + " " + (page - 1), "Previous page"));
         } else {
-            line = line.append(LegacyComponentSerializer.legacySection().deserialize("§8◀ Prev"));
+            line = line.append(LegacyComponentSerializer.legacySection().deserialize(com.lieyabull.dung.lang.Lang.forPlayer(p, "lb.prevDisabled")));
         }
-        line = line.append(LegacyComponentSerializer.legacySection().deserialize(" §7Page " + page + "/" + totalPages + " "));
+        line = line.append(LegacyComponentSerializer.legacySection().deserialize(com.lieyabull.dung.lang.Lang.forPlayer(p, "lb.page", page, totalPages)));
         if (page < totalPages) {
-            line = line.append(ChatUI.command("§7[§fNext ▶§7]", "/leaderboard " + LB_CATEGORIES[catIdx] + " " + (page + 1), "Next page"));
+            line = line.append(ChatUI.command(com.lieyabull.dung.lang.Lang.forPlayer(p, "lb.nextButton"), "/leaderboard " + LB_CATEGORIES[catIdx] + " " + (page + 1), "Next page"));
         } else {
-            line = line.append(LegacyComponentSerializer.legacySection().deserialize("§8Next ▶"));
+            line = line.append(LegacyComponentSerializer.legacySection().deserialize(com.lieyabull.dung.lang.Lang.forPlayer(p, "lb.nextDisabled")));
         }
         p.sendMessage(line);
 
         // Category switcher buttons
-        var catLine = LegacyComponentSerializer.legacySection().deserialize("§7Categories: ");
+        var catLine = LegacyComponentSerializer.legacySection().deserialize(com.lieyabull.dung.lang.Lang.forPlayer(p, "lb.categories"));
         for (int i = 0; i < LB_CATEGORIES.length; i++) {
             if (i == catIdx) {
                 catLine = catLine.append(LegacyComponentSerializer.legacySection().deserialize("§a§l" + getShortLabel(i) + "§7"));

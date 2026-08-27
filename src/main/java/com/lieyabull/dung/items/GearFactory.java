@@ -1,5 +1,7 @@
 package com.lieyabull.dung.items;
 
+import com.lieyabull.dung.lang.Lang;
+import com.lieyabull.dung.lang.Language;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Material;
@@ -135,6 +137,14 @@ public final class GearFactory {
                 org.bukkit.persistence.PersistentDataType.STRING);
     }
 
+    /** True if the item is Dung gear (weapon / armor / shield). */
+    public static boolean isGear(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return false;
+        var pdc = s.getItemMeta().getPersistentDataContainer();
+        return pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.GEAR),
+                org.bukkit.persistence.PersistentDataType.STRING);
+    }
+
     /** True if the item is a mana shield. */
     public static boolean isShield(ItemStack s) {
         if (s == null || s.getItemMeta() == null) return false;
@@ -217,8 +227,8 @@ public final class GearFactory {
                     org.bukkit.persistence.PersistentDataType.INTEGER, capped);
             // Update lore to show stored health
             List<String> lore = meta.hasLore() ? new ArrayList<>(meta.getLore()) : new ArrayList<>();
-            // Remove old stored health line if present
-            lore.removeIf(line -> line.startsWith("§7Stored:"));
+            // Remove any prior stored health line (language-agnostic: a §7 line ending in ❤)
+            lore.removeIf(line -> line.startsWith("§7") && line.endsWith("❤"));
             // Find the ability line index and insert after it
             int insertAt = -1;
             for (int i = 0; i < lore.size(); i++) {
@@ -227,8 +237,11 @@ public final class GearFactory {
                     break;
                 }
             }
+            // Match the item's current lore language for the re-written line
+            Language lang = hasLine(lore, Lang.get(Language.MAGYAR, "gear.how"))
+                    ? Language.MAGYAR : Language.ENGLISH;
             if (capped > 0) {
-                String shLine = "§7Stored: §c" + capped + "§7/§f" + max + "§7❤";
+                String shLine = Lang.get(lang, "gear.stored", capped, max);
                 if (insertAt >= 0 && insertAt < lore.size()) {
                     lore.add(insertAt, shLine);
                 } else {
@@ -381,6 +394,17 @@ public final class GearFactory {
         s.editMeta(meta -> {
             List<Component> lore = meta.lore();
             if (lore == null) lore = new ArrayList<>();
+            List<String> legacy = new ArrayList<>();
+            for (Component c : lore) legacy.add(LegacyComponentSerializer.legacySection().serialize(c));
+            // Detect the item's current lore language so the bar doesn't revert to English mid-combat.
+            boolean hu = false;
+            for (String t : legacy) {
+                if (t.startsWith("§7Tartósság:") || t.equals(Lang.get(Language.MAGYAR, "gear.how"))) {
+                    hu = true;
+                    break;
+                }
+            }
+            Language lang = hu ? Language.MAGYAR : Language.ENGLISH;
             // Build the durability bar
             double pct = (double) dur / max;
             String color;
@@ -389,17 +413,18 @@ public final class GearFactory {
             else color = "§c";                     // Red
             int filled = (int) Math.round(pct * 10);
             int empty = 10 - filled;
-            StringBuilder bar = new StringBuilder("§7Durability: ").append(color);
+            StringBuilder bar = new StringBuilder(Lang.get(lang, "tab.durability")).append(color);
             bar.append("█".repeat(Math.max(0, filled)));
             bar.append("§8░".repeat(Math.max(0, empty)));
             bar.append(" §7").append(dur).append("/").append(max);
             String durLine = bar.toString();
+            String prefix = Lang.get(lang, "tab.durability");
             // Find and replace existing durability line, or add before the rarity line
             int durIdx = -1;
             int rarityIdx = -1;
-            for (int i = 0; i < lore.size(); i++) {
-                String text = LegacyComponentSerializer.legacySection().serialize(lore.get(i));
-                if (text.startsWith("§7Durability:")) durIdx = i;
+            for (int i = 0; i < legacy.size(); i++) {
+                String text = legacy.get(i);
+                if (text.startsWith(prefix)) durIdx = i;
                 if (text.startsWith("§") && !text.startsWith("§7") && !text.startsWith("§8")) {
                     // This is likely the rarity line (colored rarity name)
                     rarityIdx = i;
@@ -1043,5 +1068,141 @@ public final class GearFactory {
         l.add("");
         l.add(r.legacy + r.name());
         return l;
+    }
+
+    /** Rebuild a gear item's full lore from its PDC in the given language. This is the
+     *  localize-on-acquire entry point: call it (or {@link #localizeFor}) when a gear item
+     *  enters a player's inventory so the lore matches their chosen UI language. Ability names
+     *  and rarity color codes are kept verbatim; only prose (stat labels, usage, rarity name,
+     *  perfection suffix) is translated. */
+    public static void localizeLore(ItemStack s, Language lang) {
+        if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return;
+        String kind = kindOf(s);
+        if (kind == null) return;
+        int dmg = intTagOf(s, ItemTags.DAMAGE);
+        int magic = intTagOf(s, ItemTags.MAGIC_DAMAGE);
+        int def = intTagOf(s, ItemTags.DEFENSE);
+        int health = intTagOf(s, ItemTags.HEALTH);
+        int shieldMax = intTagOf(s, ItemTags.SHIELD_MAX);
+        int upLevel = getUpgradeLevel(s);
+        boolean magicWeapon = magic > 0 && "weapon".equals(kind);
+        List<Affix.AffixRoll> affixes = getAffixes(s);
+
+        List<String> lore = new ArrayList<>();
+        if (magicWeapon) lore.add(Lang.get(lang, "gear.magicDamage", magic));
+        else if (dmg > 0) lore.add(Lang.get(lang, "gear.damage", dmg));
+        if (def > 0) lore.add(Lang.get(lang, "gear.defense", def));
+        if (health > 0) lore.add(Lang.get(lang, "gear.health", health));
+        if (shieldMax > 0) lore.add(Lang.get(lang, "gear.shieldCapacity", shieldMax));
+        if (magic > 0 && !magicWeapon) lore.add(Lang.get(lang, "gear.magicDamage", magic));
+        for (Affix.AffixRoll roll : affixes) {
+            lore.add("§8" + roll.affix().label + " " + roll.affix().stat.color + "+" + roll.value());
+        }
+        if (upLevel > 0) lore.add(Lang.get(lang, "gear.upgrade", upLevel));
+
+        String ability = strTagOf(s, ItemTags.ABILITY);
+        if (ability != null && !ability.isEmpty()) {
+            Integer cost = intTagOf(s, ItemTags.COST);
+            lore.add(Lang.get(lang, "gear.ability", ability, cost == null ? 0 : cost));
+            int stored = getStoredHealth(s);
+            if ("Life Drain".equals(ability) && stored > 0) {
+                lore.add(Lang.get(lang, "gear.stored", stored, getStoredHealthMax(s)));
+            }
+            lore.add(Lang.get(lang, "gear.how"));
+            lore.add(Lang.get(lang, usageKey(ability)));
+        }
+        if ("shield".equals(kind)) {
+            lore.add(Lang.get(lang, "gear.shield.activate"));
+            lore.add(Lang.get(lang, "gear.shield.charge"));
+            lore.add(Lang.get(lang, "gear.shield.absorb"));
+        }
+        String durLine = durabilityBar(s, lang);
+        if (durLine != null) lore.add(durLine);
+
+        Rarity r = getRarity(s);
+        if (r != null) {
+            lore.add("");
+            lore.add(r.legacy + rarityName(r, lang));
+        }
+        s.editMeta(meta -> meta.setLore(lore));
+        localizePerfectionName(s, upLevel, lang);
+    }
+
+    /** Localize a gear item's lore for the given player using their selected language. */
+    public static void localizeFor(ItemStack s, org.bukkit.entity.Player p) {
+        if (s == null) return;
+        localizeLore(s, Lang.languageOf(p));
+    }
+
+    private static boolean hasLine(List<String> lore, String line) {
+        for (String l : lore) if (l.equals(line)) return true;
+        return false;
+    }
+
+    private static String usageKey(String ability) {
+        switch (ability) {
+            case "Rush": return "gear.use.rush";
+            case "Slash": return "gear.use.slash";
+            case "Cleave": return "gear.use.cleave";
+            case "Smash": return "gear.use.smash";
+            case "Blade Storm": return "gear.use.bladeStorm";
+            case "Arcane Bolt": return "gear.use.arcaneBolt";
+            case "Ravage": return "gear.use.ravage";
+            case "Chain Lightning": return "gear.use.chainLightning";
+            case "Fireball": return "gear.use.fireball";
+            case "Life Drain": return "gear.use.lifeDrain";
+            default: return "gear.use.default";
+        }
+    }
+
+    private static String rarityName(Rarity r, Language lang) {
+        switch (r) {
+            case COMMON: return Lang.get(lang, "gear.rar.common");
+            case UNCOMMON: return Lang.get(lang, "gear.rar.uncommon");
+            case RARE: return Lang.get(lang, "gear.rar.rare");
+            case EPIC: return Lang.get(lang, "gear.rar.epic");
+            case LEGENDARY: return Lang.get(lang, "gear.rar.legendary");
+            case MYTHIC: return Lang.get(lang, "gear.rar.mythic");
+        }
+        return r.name();
+    }
+
+    /** Localized durability bar, or null if the item has no custom durability. */
+    private static String durabilityBar(ItemStack s, Language lang) {
+        int dur = getDurability(s);
+        int max = getMaxDurability(s);
+        if (dur < 0 || max < 0) return null;
+        double pct = (double) dur / max;
+        String color = pct >= 0.67 ? "§a" : (pct >= 0.34 ? "§e" : "§c");
+        int filled = (int) Math.round(pct * 10);
+        int empty = 10 - filled;
+        StringBuilder bar = new StringBuilder(Lang.get(lang, "tab.durability")).append(color);
+        bar.append("█".repeat(Math.max(0, filled)));
+        bar.append("§8░".repeat(Math.max(0, empty)));
+        bar.append(" §7").append(dur).append("/").append(max);
+        return bar.toString();
+    }
+
+    /** Swap any perfection star + suffix on the display name to the given language. */
+    private static void localizePerfectionName(ItemStack s, int upLevel, Language lang) {
+        boolean isMaxed = upLevel >= com.lieyabull.dung.game.WorkstationRules.UPGRADE_MAX;
+        String enSuffix = Lang.get(Language.ENGLISH, "gear.perfection");
+        String huSuffix = Lang.get(Language.MAGYAR, "gear.perfection");
+        String want = Lang.get(lang, "gear.perfection");
+        s.editMeta(meta -> {
+            String name = meta.getDisplayName();
+            if (name == null || name.isEmpty()) return;
+            String base = name;
+            if (base.endsWith(" " + enSuffix)) base = base.substring(0, base.length() - (" " + enSuffix).length());
+            else if (base.endsWith(" " + huSuffix)) base = base.substring(0, base.length() - (" " + huSuffix).length());
+            if (base.startsWith("★ §e✦ ")) base = "★ " + base.substring(5);
+            else if (base.startsWith("§e✦ ")) base = base.substring(4);
+            if (isMaxed) {
+                String val = base.startsWith("★ ") ? "★ §e✦ " + base.substring(2) : "§e✦ " + base;
+                meta.setDisplayName(val + " " + want);
+            } else {
+                meta.setDisplayName(base);
+            }
+        });
     }
 }

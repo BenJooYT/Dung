@@ -111,7 +111,7 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
         switch (sub) {
             case "start":
                 if (gm.isInInstance(p)) {
-                    p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYou're already in a run. Use /dung leave first."));
+                    p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.alreadyInLeaveFirst")));
                     return true;
                 }
                 // Check if player is in a party
@@ -119,11 +119,11 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                 if (party != null) {
                     // Party leader starts the run for the whole party
                     if (!party.isLeader(p.getUniqueId())) {
-                        p.sendMessage("§cOnly the party leader can start a run.");
+                        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.leaderOnlyStart"));
                         return true;
                     }
                     if (!gm.startRun(party, System.nanoTime())) return true; // reason already sent
-                    party.broadcast("§aRun started! Clear rooms, gear up, defeat the Warden.");
+                    party.broadcastLocalized("run.started");
                 } else {
                     // Solo: create a single-player party
                     party = gm.partyManager().createParty(p);
@@ -131,18 +131,18 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                         gm.partyManager().cleanupAfterLeave(p); // don't leave an empty solo party behind
                         return true; // reason already sent
                     }
-                    p.sendMessage("§aRun started! Clear rooms, gear up, defeat the Warden.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.started"));
                 }
                 return true;
             case "descend": {
                 DungeonInstance di = gm.instanceOf(p);
-                if (di == null) { p.sendMessage("§cStart a run first."); return true; }
+                if (di == null) { p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.startFirst")); return true; }
                 di.descend(p);
                 return true;
             }
             case "shieldswitch": {
                 DungeonInstance di = gm.instanceOf(p);
-                if (di == null) { p.sendMessage("§cStart a run first."); return true; }
+                if (di == null) { p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.startFirst")); return true; }
                 di.doShieldSwitch(p);
                 return true;
             }
@@ -150,9 +150,9 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                 DungeonInstance di = gm.instanceOf(p);
                 if (di != null) {
                     gm.leaveInstance(p);
-                    p.sendMessage("§7Left the run.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.left"));
                 } else {
-                    p.sendMessage("§cNo active run.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.noActive"));
                 }
                 return true;
             }
@@ -634,26 +634,26 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
 
     private void stats(Player p) {
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
-        p.sendMessage("§6--- " + p.getName() + " ---");
-        p.sendMessage("§7Class: §f" + TextUtil.capital(prof.classId));
-        p.sendMessage("§7Persistent coins: §6" + prof.persistentCoins + "   §7Shards: §b" + prof.shards);
-        p.sendMessage("§7Deaths: §c" + prof.deaths + "   §7Best floor: §f" + prof.bestFloor + "   §7Kills: §f" + prof.kills);
-        p.sendMessage("§7Floors cleared: §f" + prof.clears);
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "stats.header", p.getName()));
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "stats.class", TextUtil.capital(prof.classId)));
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "stats.currency", prof.persistentCoins, prof.shards));
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "stats.deathsFloor", prof.deaths, prof.bestFloor, prof.kills));
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "stats.clears", prof.clears));
     }
 
     private void classCmd(Player p, String[] args) {
         if (args.length < 2) {
-            p.sendMessage("§7Classes: §fwarrior, mage, ranger");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "dung.classHint"));
             return;
         }
         String c = args[1].toLowerCase();
         if (!c.equals("warrior") && !c.equals("mage") && !c.equals("ranger")) {
-            p.sendMessage("§cUnknown class.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "dung.unknownClass"));
             return;
         }
         plugin.meta().profile(p.getUniqueId()).classId = c;
         plugin.meta().save(); // persist immediately so a crash/restart can't roll the choice back
-        p.sendMessage("§aClass set to " + TextUtil.capital(c) + ". Next run uses it.");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "dung.classSet", TextUtil.capital(c)));
     }
 
     private void give(Player p, String[] args) {
@@ -661,7 +661,9 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
         switch (args[1].toLowerCase()) {
             case "rareweapon":
                 // free debug spawn (no coin cost): real purchases go through /shop
-                p.getInventory().addItem(GearFactory.markPersistent(ItemPool.randomWeapon(2)));
+                var debugWep = GearFactory.markPersistent(ItemPool.randomWeapon(2));
+                GearFactory.localizeFor(debugWep, p);
+                p.getInventory().addItem(debugWep);
                 p.sendMessage("§aDebug: spawned a weapon (persists through death).");
                 break;
             case "heal":

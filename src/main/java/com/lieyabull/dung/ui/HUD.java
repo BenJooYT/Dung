@@ -52,32 +52,35 @@ public final class HUD {
             o.setDisplaySlot(DisplaySlot.SIDEBAR);
             registerRows(o);
         }
-        String display = "§cDUNG §8Floor " + (run.floorIndex + 1);
+        String display = com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.title", run.floorIndex + 1);
         if (!display.equals(lastDisplayName)) {
             o.setDisplayName(display);
             lastDisplayName = display;
         }
         setLine(o, 0, "§8§m                   ");
         // combat stats — DMG always shows melee (red) and magic (blue) counters side by side
-        String dmgLine = "§7DMG §c" + TextUtil.fmt(st.damage) + "§f/§b" + TextUtil.fmt(st.magicDamage);
-        setLine(o, 1, dmgLine + "   §7DEF §a" + (int) st.defense);
-        setLine(o, 2, "§7Crit §f" + (int) (st.critChance * 100) + "% §b✕" + TextUtil.fmt(st.critMult));
-        setLine(o, 3, "§7Reach §f" + TextUtil.fmt(st.reach) + "   §7Spd §f" + TextUtil.fmt(st.speedMult));
+        String dmgLine = com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.dmgDef",
+                TextUtil.fmt(st.damage), TextUtil.fmt(st.magicDamage), (int) st.defense);
+        setLine(o, 1, dmgLine);
+        setLine(o, 2, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.crit",
+                (int) (st.critChance * 100), TextUtil.fmt(st.critMult)));
+        setLine(o, 3, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.reachSpd",
+                TextUtil.fmt(st.reach), TextUtil.fmt(st.speedMult)));
         setLine(o, 4, "");
         // consumables / run
-        setLine(o, 5, "§e⛁ Coins §f" + st.coins + "   §9⛂ Keys §f" + st.keys + " §7[slot 7]");
-        setLine(o, 6, "§4✹ Bombs §f" + st.bombs + " §7[slot 8]   §cKills §f" + run.kills);
+        setLine(o, 5, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.coinsLine", st.coins, st.keys));
+        setLine(o, 6, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bombsLine", st.bombs, run.kills));
         setLine(o, 7, "");
         // Determine which room the player is physically inside. If they're in the corridor
         // (between rooms), show "Corridor" instead of the stale previous room.
         Floor.RoomNode physicalRoom = di.roomAt(p.getLocation());
         String roomLabel;
         if (physicalRoom != null) {
-            roomLabel = physicalRoom.type.label;
+            roomLabel = roomTypeLabel(p, physicalRoom.type);
         } else {
-            roomLabel = "§7Corridor";
+            roomLabel = com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.corridor");
         }
-        setLine(o, 8, "§6Room: §f" + roomLabel);
+        setLine(o, 8, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.room", roomLabel));
         // Gear condition: show worst durability among persistent gear
         String gearCond = gearCondition(p);
         if (!gearCond.isEmpty()) {
@@ -95,13 +98,13 @@ public final class HUD {
                 if (!cur.doors[d]) continue;
                 Floor.RoomNode adj = run.floor.at(cur.x + DX[d], cur.z + DZ[d]);
                 if (adj != null && adj.type == RoomType.LOCKED && !adj.cleared) {
-                    lockedHint = "§e🔒 Locked nearby (need key)";
+                    lockedHint = com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.lockedHint");
                     break;
                 }
             }
         }
-        setLine(o, 10, di.boss() != null ? "§4!! BOSS ACTIVE" : lockedHint);
-        setLine(o, 11, "§7Class §f" + TextUtil.capital(st.classId));
+        setLine(o, 10, di.boss() != null ? com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bossActive") : lockedHint);
+        setLine(o, 11, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.class", className(p, st.classId)));
         // ability cooldown (longest currently running)
         long now = System.currentTimeMillis();
         long rem = 0; String cdName = "";
@@ -111,22 +114,43 @@ public final class HUD {
             if (r > 0 && r > rem) { rem = r; cdName = e.getKey(); }
         }
         // Show class ability cooldown with a friendly name
-        String classAbilityLabel = switch (st.classId) {
-            case "warrior" -> "War Cry";
-            case "mage" -> "Arcane Nova";
-            case "ranger" -> "Shadow Step";
-            default -> "Class";
-        };
+        String classAbilityLabel = classAbilityName(p, st.classId);
         String classKey = "class_" + st.classId;
         Long classCd = st.cooldowns.get(classKey);
         long classRem = classCd == null ? 0 : classCd - now;
         if (classRem > 0) {
-            setLine(o, 12, "§7" + classAbilityLabel + " §f" + String.format("%.1f", classRem / 1000.0) + "s");
+            setLine(o, 12, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.cd", classAbilityLabel, String.format("%.1f", classRem / 1000.0)));
         } else if (rem > 0) {
-            setLine(o, 12, "§7" + cdName + " §f" + String.format("%.1f", rem / 1000.0) + "s");
+            setLine(o, 12, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.cd", cdName, String.format("%.1f", rem / 1000.0)));
         } else {
-            setLine(o, 12, "§7" + classAbilityLabel + " §aReady");
+            setLine(o, 12, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.ready", classAbilityLabel));
         }
+    }
+
+    /** Localized friendly name for a room type (used in the sidebar Room row). */
+    private static String roomTypeLabel(Player p, RoomType type) {
+        String key = "roomtype." + type.name();
+        String localized = com.lieyabull.dung.lang.Lang.get(com.lieyabull.dung.lang.Lang.languageOf(p), key);
+        if (localized.equals(key)) return type.label;
+        return "§f" + localized;
+    }
+
+    /** Localized friendly name of a player's class for the sidebar. */
+    private static String className(Player p, String classId) {
+        String key = "class." + classId;
+        String localized = com.lieyabull.dung.lang.Lang.get(com.lieyabull.dung.lang.Lang.languageOf(p), key);
+        if (!localized.equals(key)) return localized;
+        return TextUtil.capital(classId);
+    }
+
+    /** Localized name of the player's class ability for the cooldown row. */
+    private static String classAbilityName(Player p, String classId) {
+        return switch (classId) {
+            case "warrior" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.warrior");
+            case "mage" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.mage");
+            case "ranger" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.ranger");
+            default -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.class");
+        };
     }
 
     /** Check the player's persistent gear and return a durability condition string. */
@@ -157,7 +181,7 @@ public final class HUD {
         else color = "§c";
         int filled = (int) Math.round(pct * 10);
         int empty = 10 - filled;
-        StringBuilder bar = new StringBuilder("§7Gear: ").append(color);
+        StringBuilder bar = new StringBuilder(com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.gear")).append(color);
         bar.append("█".repeat(Math.max(0, filled)));
         bar.append("§8░".repeat(Math.max(0, empty)));
         return bar.toString();

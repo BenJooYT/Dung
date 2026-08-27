@@ -74,8 +74,8 @@ public final class WorkstationUI implements Listener {
         if (st == null) return;
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
 
-        String title = type.color + type.label + "  §8§7" + (prof.persistentCoins) + " pc  §3" + prof.shards
-                + " shards  §e" + st.coins + " coins";
+        String title = com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.title",
+                type.color + wsLabel(p, type), prof.persistentCoins, prof.shards, st.coins);
         Inventory inv = Bukkit.createInventory(null, SIZE, LEGACY.deserialize(title));
         State state = new State();
         state.type = type;
@@ -102,7 +102,7 @@ public final class WorkstationUI implements Listener {
 
         // Info panel (shifted right by 1 slot)
         int infoSlot = type == WorkstationType.STORAGE ? 32 : 31;
-        inv.setItem(infoSlot, makeInfo(type, di.currentFloorNumber()));
+        inv.setItem(infoSlot, makeInfo(p, type, di.currentFloorNumber()));
 
         fillEmpty(inv);
         openStates.put(inv, state);
@@ -123,39 +123,32 @@ public final class WorkstationUI implements Listener {
         return p.getInventory().getItem(playerSlot);
     }
 
-    private ItemStack makeInfo(WorkstationType type, int floor) {
+    private ItemStack makeInfo(Player p, WorkstationType type, int floor) {
         List<String> lines = new ArrayList<>();
-        lines.add("§7" + type.description);
+        lines.add("§7" + wsDesc(p, type));
         lines.add("");
         switch (type) {
             case UPGRADE -> {
-                lines.add("§eRun coins + §3shards §7(scale with level AND floor)");
-                lines.add("§7Effect: §5+" + (int) (WorkstationRules.UPGRADE_STAT_PER_LEVEL * 100)
-                        + "%§7 core stat per level");
+                lines.add(Lang(p, "ws.info.upgrade.cost"));
+                lines.add(Lang(p, "ws.info.upgrade.effect", (int) (WorkstationRules.UPGRADE_STAT_PER_LEVEL * 100)));
             }
             case REFORGE -> {
                 int base = WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor);
-                lines.add("§3" + base + " shards§7 (+§3"
-                        + WorkstationRules.REFORGE_SHARD_PER_REFORGE + "§7 per prior reforge)");
-                lines.add("§7Rerolls affixes; keeps base stats, rarity, ability.");
+                lines.add(Lang(p, "ws.info.reforge.cost", base, WorkstationRules.REFORGE_SHARD_PER_REFORGE));
+                lines.add(Lang(p, "ws.info.reforge.effect"));
             }
             case PRESERVE -> {
-                lines.add("§7Chance: §a" + (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100)
-                        + "%§7 · pity after " + WorkstationRules.PRESERVE_PITY + " fails");
-                lines.add("§aSuccess: §7persists past the run (§ehalf durability§7). "
-                        + "§cFail: one rarity worse.");
-                lines.add("§e" + WorkstationRules.PRESERVE_COIN_COST + " run coins §d+ "
-                        + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " pc §3+ "
-                        + WorkstationRules.PRESERVE_SHARD_COST + " shards");
+                lines.add(Lang(p, "ws.info.preserve.chance",
+                        (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100), WorkstationRules.PRESERVE_PITY));
+                lines.add(Lang(p, "ws.info.preserve.effect"));
+                lines.add(Lang(p, "ws.info.preserve.cost", WorkstationRules.PRESERVE_COIN_COST,
+                        WorkstationRules.PRESERVE_PERSISTENT_COIN_COST, WorkstationRules.PRESERVE_SHARD_COST));
             }
             case SALVAGE -> {
-                lines.add("§cDestroys the item §7for §erun coins§7 (lost on death — not");
-                lines.add("§7counted toward the boss persistent reward). Value scales");
-                lines.add("§7with rarity + stats. §cRequires confirmation.");
+                lines.add(Lang(p, "ws.info.salvage.effect"));
             }
             case STORAGE -> {
-                lines.add("§cRead-only §7inside a run: you may view but not withdraw");
-                lines.add("§7persistent items while in a run.");
+                lines.add(Lang(p, "ws.info.storage.effect"));
             }
         }
         Material mat = switch (type) {
@@ -165,7 +158,7 @@ public final class WorkstationUI implements Listener {
             case SALVAGE -> Material.BARREL;
             case STORAGE -> Material.ENDER_CHEST;
         };
-        return makeItem(mat, type.color + type.label, lines);
+        return makeItem(mat, type.color + wsLabel(p, type), lines);
     }
 
     @EventHandler
@@ -237,20 +230,20 @@ public final class WorkstationUI implements Listener {
         int playerSlot = state.selected;
         ItemStack item = currentItem(p, state, playerSlot);
         if (item == null) {
-            p.sendMessage("§cThat item is no longer available.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "workstation.unavailable"));
             reopen(() -> openWorkstation(p, state.di, state.type));
             return;
         }
         state.selectedFp = fingerprint(item);
         List<String> lines = new ArrayList<>();
-        lines.add("§7Selected: §f" + (item.getItemMeta() == null ? item.getType().name()
+        lines.add(Lang(p, "ws.selected", item.getItemMeta() == null ? item.getType().name()
                 : item.getItemMeta().getDisplayName()));
         int floor = state.di.currentFloorNumber();
         switch (state.type) {
             case UPGRADE -> {
                 int lvl = GearFactory.getUpgradeLevel(item);
                 boolean isPersistent = GearFactory.isPersistent(item);
-                lines.add("§7Current level: §5" + lvl);
+                lines.add(Lang(p, "ws.currentLevel", lvl));
                 // Show base stat + upgrade bonus, e.g. "DMG: 32 (+4)"
                 String coreTag = GearFactory.coreStatTag(item);
                 if (coreTag != null) {
@@ -261,62 +254,62 @@ public final class WorkstationUI implements Listener {
                     int base = (int) Math.round(current / mult);
                     int bonus = current - base;
                     String label = switch (coreTag) {
-                        case ItemTags.DAMAGE -> "§cDMG";
-                        case ItemTags.MAGIC_DAMAGE -> "§dMagic DMG";
-                        case ItemTags.DEFENSE -> "§aDEF";
-                        case ItemTags.SHIELD_MAX -> "§bShield";
-                        default -> "§7Stat";
+                        case ItemTags.DAMAGE -> Lang(p, "ws.stat.dmg");
+                        case ItemTags.MAGIC_DAMAGE -> Lang(p, "ws.stat.magicdmg");
+                        case ItemTags.DEFENSE -> Lang(p, "ws.stat.def");
+                        case ItemTags.SHIELD_MAX -> Lang(p, "ws.stat.shield");
+                        default -> Lang(p, "ws.stat.stat");
                     };
-                    lines.add(label + ": §f" + current + " §7(+" + bonus + ")");
+                    lines.add(Lang(p, "ws.stat.value", label, current, bonus));
                 }
-                lines.add("§5Next: Lv " + (lvl + 1) + " §7(+"
-                        + (int) (WorkstationRules.UPGRADE_STAT_PER_LEVEL * 100) + "% core stat)");
+                lines.add(Lang(p, "ws.nextLevel", lvl + 1,
+                        (int) (WorkstationRules.UPGRADE_STAT_PER_LEVEL * 100)));
                 int coinCost = WorkstationRules.scaledCost(WorkstationRules.upgradeCoinCost(lvl), floor);
                 int shardCost = WorkstationRules.scaledCost(WorkstationRules.upgradeShardCost(lvl), floor);
                 if (isPersistent) {
-                    lines.add("§e" + (coinCost * 2) + " run coins §3+ " + (shardCost * 2)
-                            + " shards §7(§6persistent§7, 2x)");
+                    lines.add(Lang(p, "ws.upgrade.cost.persistent", coinCost * 2, shardCost * 2));
                 } else {
-                    lines.add("§e" + coinCost + " run coins §3+ " + shardCost + " shards");
+                    lines.add(Lang(p, "ws.upgrade.cost.normal", coinCost, shardCost));
                 }
             }
             case REFORGE -> {
                 int reforgeCount = GearFactory.getReforgeCount(item);
                 boolean isPersistent = GearFactory.isPersistent(item);
                 List<Affix.AffixRoll> rolled = state.di.previewReforge(item);
-                lines.add("§bNew affixes: " + affixSummary(rolled));
+                lines.add(Lang(p, "ws.reforge.newAffixes", affixSummary(rolled)));
                 int cost = WorkstationRules.scaledCost(WorkstationRules.reforgeShardCost(reforgeCount), floor);
                 if (isPersistent) {
-                    lines.add("§3Cost: " + (cost * 2) + " shards §7(§6persistent§7, 2x)");
+                    lines.add(Lang(p, "ws.reforge.cost.persistent", cost * 2));
                 } else {
-                    lines.add("§3Cost: " + cost + " shards");
+                    lines.add(Lang(p, "ws.reforge.cost.normal", cost));
                 }
                 if (reforgeCount > 0) {
-                    lines.add("§7(+§3" + (cost - WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor))
-                            + "§7 from " + reforgeCount + " prior reforge" + (reforgeCount == 1 ? "" : "s") + ")");
+                    lines.add(Lang(p, "ws.reforge.prior",
+                            cost - WorkstationRules.scaledCost(WorkstationRules.REFORGE_SHARD_COST, floor),
+                            reforgeCount, reforgeCount == 1 ? "" : "s"));
                 }
             }
             case PRESERVE -> {
                 int fails = state.di.preserveFails().getOrDefault(p.getUniqueId(), 0);
                 boolean guaranteed = WorkstationRules.preserveGuaranteed(fails);
-                lines.add("Attempts to preserve this item past the run.");
+                lines.add(Lang(p, "ws.preserve.attempt"));
                 if (guaranteed) {
-                    lines.add("§6§l✦ PITY! §7Next attempt guaranteed!");
+                    lines.add(Lang(p, "ws.preserve.pity"));
                 } else {
                     int remaining = WorkstationRules.PRESERVE_PITY - fails;
-                    lines.add("§a" + (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100) + "% §7· pity: §e"
-                            + remaining + "§7 more fail" + (remaining == 1 ? "" : "s") + " → guaranteed");
+                    lines.add(Lang(p, "ws.preserve.chance",
+                            (int) (WorkstationRules.PRESERVE_SUCCESS_CHANCE * 100), remaining,
+                            remaining == 1 ? "" : "s"));
                 }
-                lines.add("§aSuccess: §7kept at half durability. §cFail: one rarity worse.");
-                lines.add("§e" + WorkstationRules.PRESERVE_COIN_COST + " run coins §d+ "
-                        + WorkstationRules.PRESERVE_PERSISTENT_COIN_COST + " pc §3+ "
-                        + WorkstationRules.PRESERVE_SHARD_COST + " shards");
+                lines.add(Lang(p, "ws.preserve.effect"));
+                lines.add(Lang(p, "ws.info.preserve.cost", WorkstationRules.PRESERVE_COIN_COST,
+                        WorkstationRules.PRESERVE_PERSISTENT_COIN_COST, WorkstationRules.PRESERVE_SHARD_COST));
             }
             case SALVAGE -> {
                 int value = WorkstationRules.salvageValue(
                         GearFactory.getRarity(item), WorkstationRules.primaryStat(item));
-                lines.add("§e+ " + value + " run coins §7(per-run, lost on death — not counted");
-                lines.add("§7toward boss persistent coin reward). §cThis destroys the item!");
+                lines.add(Lang(p, "ws.salvage.value", value));
+                lines.add(Lang(p, "ws.salvage.destroy"));
             }
             default -> {}
         }
@@ -324,13 +317,14 @@ public final class WorkstationUI implements Listener {
 
         boolean destructive = state.type == WorkstationType.PRESERVE || state.type == WorkstationType.SALVAGE;
         String confirmName = (destructive && state.confirmed)
-                ? "§cCONFIRM AGAIN" : "§aCONFIRM";
+                ? Lang(p, "ws.confirmAgain") : Lang(p, "ws.confirm");
         List<String> confirmLore = (destructive && state.confirmed)
-                ? List.of("§cClick once more to destroy/remove the item.")
-                : List.of("§7Apply the operation to the selected item");
+                ? List.of(Lang(p, "ws.confirmDestructive"))
+                : List.of(Lang(p, "ws.confirmApply"));
         inv.setItem(31, makeItem(Material.LIME_DYE, confirmName, confirmLore, ACTION_CONFIRM));
-        inv.setItem(41, makeItem(Material.ARROW, "§7← Back", List.of("§7Back to the item list"), ACTION_BACK));
-        inv.setItem(32, makeInfo(state.type, floor)); // keep the info panel anchored
+        inv.setItem(41, makeItem(Material.ARROW, Lang(p, "ws.back.name"),
+                List.of(Lang(p, "ws.back.lore")), ACTION_BACK));
+        inv.setItem(32, makeInfo(p, state.type, floor)); // keep the info panel anchored
     }
 
     private ItemStack currentItem(Player p, State state, int playerSlot) {
@@ -358,7 +352,7 @@ public final class WorkstationUI implements Listener {
             // prevents a rearranged inventory from upgrading/salvaging a *different* item than was shown.
             ItemStack now = currentItem(p, state, playerSlot);
             if (now == null || !fingerprint(now).equals(state.selectedFp)) {
-                p.sendMessage("§cThe selected item changed; please reselect it.");
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "workstation.changed"));
                 return;
             }
             switch (state.type) {
@@ -409,6 +403,30 @@ public final class WorkstationUI implements Listener {
             sb.append(r.affix().label).append(" ").append(r.affix().stat.color).append("+").append(r.value());
         }
         return sb.toString();
+    }
+
+    private static String Lang(Player p, String key, Object... args) {
+        return com.lieyabull.dung.lang.Lang.forPlayer(p, key, args);
+    }
+
+    private static String wsLabel(Player p, WorkstationType type) {
+        return switch (type) {
+            case UPGRADE -> Lang(p, "ws.label.upgrade");
+            case REFORGE -> Lang(p, "ws.label.reforge");
+            case PRESERVE -> Lang(p, "ws.label.preserve");
+            case SALVAGE -> Lang(p, "ws.label.salvage");
+            case STORAGE -> Lang(p, "ws.label.storage");
+        };
+    }
+
+    private static String wsDesc(Player p, WorkstationType type) {
+        return switch (type) {
+            case UPGRADE -> Lang(p, "ws.desc.upgrade");
+            case REFORGE -> Lang(p, "ws.desc.reforge");
+            case PRESERVE -> Lang(p, "ws.desc.preserve");
+            case SALVAGE -> Lang(p, "ws.desc.salvage");
+            case STORAGE -> Lang(p, "ws.desc.storage");
+        };
     }
 
     @EventHandler

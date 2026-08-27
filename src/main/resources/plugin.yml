@@ -55,6 +55,9 @@ commands:
   flyspeed:
     description: Set your creative fly speed (1-10, admin)
     usage: /flyspeed [1-10|reset]
+  language:
+    description: Choose your UI language (english or magyar)
+    usage: /language [english|magyar]
 permissions:
   dung.admin:
     description: Admin debug commands

@@ -29,48 +29,51 @@ public final class TabUI {
             o.setDisplaySlot(DisplaySlot.PLAYER_LIST);
         }
         // header
-        o.setDisplayName("§cDUNG §7— §fFloor " + (run == null ? 0 : run.floorIndex + 1)
-                + (st == null ? "" : " §8Class §f" + TextUtil.capital(st.classId)));
+        String titleClass = st == null ? "" : com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.titleClass", className(p, st.classId));
+        o.setDisplayName(com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.title", (run == null ? 0 : run.floorIndex + 1), titleClass));
         // fill player list rows with detailed info via teams
         int i = 0;
         if (st != null) {
-            team(o, i++, "§cDMG §f" + TextUtil.fmt(st.damage)
-                    + "§7/§b" + TextUtil.fmt(st.magicDamage)
-                    + "   §aDEF §f" + (int) st.defense
-                    + "   §fCRIT §f" + (int) (st.critChance * 100) + "%§fx" + TextUtil.fmt(st.critMult));
-            team(o, i++, "§bMana §f" + TextUtil.fmt(st.mana) + "/" + (int) st.maxMana
-                    + "   §6Speed §f" + TextUtil.fmt(st.speedMult) + "   §7FireRate §f" + st.fireRateTicks + "t");
-            team(o, i++, "§eCoins " + st.coins + "   §9Keys " + st.keys + "   §4Bombs " + st.bombs);
+            team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.build",
+                    TextUtil.fmt(st.damage), TextUtil.fmt(st.magicDamage), (int) st.defense,
+                    (int) (st.critChance * 100), TextUtil.fmt(st.critMult)));
+            team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.mana",
+                    TextUtil.fmt(st.mana), (int) st.maxMana, TextUtil.fmt(st.speedMult), st.fireRateTicks));
+            team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.consumables", st.coins, st.keys, st.bombs));
             team(o, i++, "");
-            team(o, i++, "§6Equipment");
-            team(o, i++, "   §fMainhand: " + itemName(p.getInventory().getItemInMainHand()));
-            for (int a = 0; a < 4; a++) team(o, i++, "   §f" + armorSlot(a) + ": " + itemName(p.getInventory().getArmorContents()[a]));
+            team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.equipment"));
+            team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.mainhand", itemName(p.getInventory().getItemInMainHand())));
+            for (int a = 0; a < 4; a++) team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.armorSlot", armorSlot(p, a), itemName(p.getInventory().getArmorContents()[a])));
             // Durability summary for persistent gear
             String durSummary = durabilitySummary(p);
             if (!durSummary.isEmpty()) team(o, i++, "   " + durSummary);
             team(o, i++, "");
-            team(o, i++, "§6Dungeon  §7(F" + (run == null ? 0 : run.floorIndex + 1) + ")");
+            team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.dungeon", (run == null ? 0 : run.floorIndex + 1)));
             if (run != null && run.floor != null) {
                 int total = run.floor.roomCount();
                 int vis = run.floor.visited.size();
                 int cleared = countCleared(run.floor);
-                team(o, i++, "   §fRooms explored §7" + vis + "/" + total + "   §aCleared §7" + cleared);
-                team(o, i++, "   §cBoss: " + (di.boss() != null ? "§4ENGAGED" : (di.curRoom() != null && di.curRoom().type.name().equals("BOSS") ? "§6AWAITING" : "§8hidden")));
+                team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.roomsExplored", vis, total, cleared));
+                String bossState;
+                if (di.boss() != null) bossState = com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.boss.engaged");
+                else if (di.curRoom() != null && di.curRoom().type.name().equals("BOSS")) bossState = com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.boss.awaiting");
+                else bossState = com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.boss.hidden");
+                team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.boss", bossState));
             }
             // Class ability info
-            String classAbilityLabel = switch (st.classId) {
-                case "warrior" -> "War Cry";
-                case "mage" -> "Arcane Nova";
-                case "ranger" -> "Shadow Step";
-                default -> "Class Ability";
-            };
+            String classAbilityLabel = classAbilityName(p, st.classId);
             String classKey = "class_" + st.classId;
             Long classCd = st.cooldowns.get(classKey);
             long classRem = classCd == null ? 0 : classCd - System.currentTimeMillis();
-            String cdStr = classRem > 0 ? String.format("%.1fs", classRem / 1000.0) : "§aReady";
-            team(o, i++, "§6" + classAbilityLabel + " §7" + cdStr);
+            String cdStr;
+            if (classRem > 0) {
+                cdStr = String.format("%.1fs", classRem / 1000.0);
+            } else {
+                cdStr = com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.readyText");
+            }
+            team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.abilityCd", classAbilityLabel, cdStr));
             team(o, i++, "");
-            team(o, i++, "§8Sneak+Q=Class  Sneak+RMB=Weapon  Click=Attack");
+            team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.controls"));
         }
         // hide real player name rows (single player)
     }
@@ -81,8 +84,25 @@ public final class TabUI {
         return c;
     }
 
-    private String armorSlot(int a) {
-        return new String[]{"Boots", "Legs", "Chest", "Helmet"}[a];
+    private String armorSlot(Player p, int a) {
+        return com.lieyabull.dung.lang.Lang.forPlayer(p, new String[]{
+                "tab.armor.boots", "tab.armor.legs", "tab.armor.chest", "tab.armor.helmet"}[a]);
+    }
+
+    private String className(Player p, String classId) {
+        String key = "class." + classId;
+        String localized = com.lieyabull.dung.lang.Lang.get(com.lieyabull.dung.lang.Lang.languageOf(p), key);
+        if (!localized.equals(key)) return localized;
+        return TextUtil.capital(classId);
+    }
+
+    private String classAbilityName(Player p, String classId) {
+        return switch (classId) {
+            case "warrior" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.warrior");
+            case "mage" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.mage");
+            case "ranger" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.ranger");
+            default -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.class");
+        };
     }
 
     private String itemName(org.bukkit.inventory.ItemStack s) {

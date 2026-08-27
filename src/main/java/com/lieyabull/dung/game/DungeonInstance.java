@@ -58,6 +58,8 @@ public final class DungeonInstance {
     public static final int MIN_SPACING = 22;
     public static final int MAX_SPACING = 28;
     private int spacing = 25;
+    /** Corridor side-wall half-width for this floor, derived from the party tier and room sizes. */
+    private int corridorHalf = RoomGen.LONG / 2;
 
     private final Dung plugin;
     private final UUID instanceId;
@@ -278,6 +280,7 @@ public final class DungeonInstance {
         for (Player p : party.onlineMembers()) {
             if (!hasDungGear(p)) {
                 ItemStack[] kit = com.lieyabull.dung.items.GearFactory.starter();
+                for (ItemStack s : kit) com.lieyabull.dung.items.GearFactory.localizeFor(s, p);
                 PlayerInventory inv = p.getInventory();
                 inv.addItem(kit[0]);
                 org.bukkit.inventory.EquipmentSlot[] slots = {
@@ -290,18 +293,20 @@ public final class DungeonInstance {
                     ItemStack cur = inv.getItem(slots[i]);
                     if (cur == null || cur.getType().isAir()) inv.setItem(slots[i], kit[i + 1]);
                 }
-                p.sendMessage("§7You were given a starter kit: §fFrayed Blade§7 + cloth armor.");
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "tutorial.starterKit"));
             }
             MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
             if (!prof.hasSeenTutorial) {
                 prof.hasSeenTutorial = true;
-                p.sendTitle("§cDUNGEON", "§7Clear every room. Find the Warden. Descend deeper.", 10, 70, 10);
-                p.sendMessage("§6Clear rooms to earn coins and gear. Find the boss room to go deeper.");
-                p.sendMessage("§7Attack: §fLeft-Click    §7Weapon Ability: §fSneak + Right-Click");
-                p.sendMessage("§7Class Ability: §fSneak + Drop (Q)    §7Heal: pick up §c♥§7 hearts");
-                p.sendMessage("§7Keys & Bombs appear in hotbar slots 7-8. Right-click locked doors with a key, cracked walls with a bomb.");
-                p.sendMessage("§7Equip a Mana Shield in slot 9 — hold it and sneak to charge it with mana.");
-                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Salvage spare armor: §f/salvage§7. Exit: §f/dung leave"));
+                p.sendTitle(com.lieyabull.dung.lang.Lang.forPlayer(p, "tutorial.title"),
+                        com.lieyabull.dung.lang.Lang.forPlayer(p, "tutorial.subtitle"), 10, 70, 10);
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "tutorial.clearRooms"));
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "tutorial.attack"));
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "tutorial.classAbility"));
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "tutorial.keys"));
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "tutorial.shield"));
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(
+                        com.lieyabull.dung.lang.Lang.forPlayer(p, "tutorial.exit")));
             }
         }
         plugin.meta().save();
@@ -529,7 +534,13 @@ public final class DungeonInstance {
         run.floorIndex = floorIndex;
         descendVotes.clear();
         clearRoomEntities();
-        spacing = ThreadLocalRandom.current().nextInt(MIN_SPACING, MAX_SPACING + 1);
+        // Larger parties get bigger rooms AND more room-to-room spacing so the room footprints
+        // (which grow with tier) never overlap. Tier 0 (solo) keeps the original layout.
+        int tier = Math.max(0, Math.min(party.onlineMembers().size() - 1, 3));
+        corridorHalf = RoomGen.corridorHalfFor(tier);
+        int spacingMin = MIN_SPACING + 2 * tier;
+        int spacingMax = MAX_SPACING + 2 * tier;
+        spacing = ThreadLocalRandom.current().nextInt(spacingMin, spacingMax + 1);
         FloorGenerator gen = new FloorGenerator(new java.util.Random(run.rng.nextLong()), 9, 9,
                 plugin.getConfig().getInt("rooms-per-floor", 7), floorIndex);
         run.floor = gen.generate();
@@ -541,6 +552,11 @@ public final class DungeonInstance {
         if (plugin.getConfig().getBoolean("custom-rooms", true)) {
             resolveStructures(run.floor);
         }
+        // Scale room sizes up to the party tier. Structure rooms keep their fixed template footprint
+        // (they are not size-scalable); only procedural rooms are resized for the extra elbow room.
+        for (Floor.RoomNode n : run.floor.rooms()) {
+            if (n.structure == null) RoomGen.scaleToTier(n, tier);
+        }
         for (Floor.RoomNode n : run.floor.rooms()) {
             if (n.structure != null) {
                 StructureDefinition s = n.structure;
@@ -550,7 +566,7 @@ public final class DungeonInstance {
                 int oz = baseZ(n) - tot.minZ;
                 StructureWorldEdit.paste(world, n.clipboard, ox, oy, oz, n.rotationSteps);
             } else {
-                RoomGen.build(world, n, BASE_Y, spacing, offsetX, offsetZ);
+                RoomGen.build(world, n, BASE_Y, spacing, corridorHalf, offsetX, offsetZ);
             }
         }
         // Structure rooms: carve doorway openings + corridors procedurally on the shared corridor line
@@ -828,7 +844,7 @@ public final class DungeonInstance {
                 }
             } else {
                 for (Player p : party.onlineMembers()) {
-                    setStatus(p, "§cThe room won't seal until everyone is inside.");
+                    setStatus(p, com.lieyabull.dung.lang.Lang.forPlayer(p, "room.seal.wait"));
                 }
             }
         }
@@ -865,7 +881,7 @@ public final class DungeonInstance {
         // LOCKED room check: if the target is a LOCKED room that hasn't been cleared,
         // block entry. The player must right-click the IRON_BLOCK barrier with a key item to unlock it.
         if (target.type == RoomType.LOCKED && !target.cleared) {
-            p.sendMessage("§cThis room is locked — right-click the iron door with a key to unlock it!");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.doorLocked"));
             // Teleport the player back to the center of the current room
             Location back = RoomGen.center(world, prev != null ? prev : curRoom, BASE_Y, spacing, offsetX, offsetZ);
             p.teleport(back);
@@ -1190,7 +1206,7 @@ public final class DungeonInstance {
         world.playSound(c, org.bukkit.Sound.BLOCK_IRON_DOOR_CLOSE, 1.0f, 0.9f);
         world.spawnParticle(org.bukkit.Particle.CRIT, c.clone().add(0, 1.5, 0), 24, 1.5, 1.5, 8);
         for (Player p : party.onlineMembers()) {
-            setStatus(p, "§cRoom locked — defeat all enemies!");
+            setStatus(p, com.lieyabull.dung.lang.Lang.forPlayer(p, "room.locked"));
         }
     }
 
@@ -1436,7 +1452,7 @@ public final class DungeonInstance {
             // Tick enemies against the nearest alive party member
             for (Enemy e : list) {
                 Player nearest = nearestPlayer(e.entity.getLocation());
-                if (nearest != null) e.tick(nearest, 50);
+                if (nearest != null) e.tick(nearest, 50, deadPlayers);
             }
         }
 
@@ -1514,7 +1530,7 @@ public final class DungeonInstance {
         if (world != null && tickCounter % 2 == 0) {
             for (UUID spectatorId : deadPlayers) {
                 Player spec = Bukkit.getPlayer(spectatorId);
-                if (spec == null || !spec.isOnline() || spec.getGameMode() != org.bukkit.GameMode.SPECTATOR) continue;
+                if (spec == null || !spec.isOnline()) continue;
                 world.spawnParticle(org.bukkit.Particle.WHITE_SMOKE,
                         spec.getLocation().add(0, 1.8, 0), 3, 0.25, 0.15, 0.25, 0.01);
             }
@@ -1579,7 +1595,7 @@ public final class DungeonInstance {
         Player nearest = null;
         double best = Double.MAX_VALUE;
         for (Player p : party.onlineMembers()) {
-            if (p.getGameMode() == org.bukkit.GameMode.SPECTATOR) continue;
+            if (deadPlayers.contains(p.getUniqueId())) continue;
             double d = p.getLocation().distanceSquared(loc);
             if (d < best) { best = d; nearest = p; }
         }
@@ -1599,7 +1615,7 @@ public final class DungeonInstance {
         ItemStack held = p.getInventory().getItemInMainHand();
         // A broken weapon can't be used to attack until it is repaired (but it stays in the inventory).
         if (GearFactory.isPersistent(held) && GearFactory.isBroken(held)) {
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour weapon is broken — repair it at §6/shop§7 before attacking."));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.weaponBroken")));
             return;
         }
         boolean isLifeDrain = held != null && !held.getType().isAir()
@@ -1613,7 +1629,7 @@ public final class DungeonInstance {
 
         // A full Soul Siphon is unusable — it deals no damage until its stored health is spent.
         if (isLifeDrain && GearFactory.getStoredHealth(held) >= GearFactory.getStoredHealthMax(held)) {
-            p.sendMessage("§cSoul Siphon is full! Shift+left-click to heal yourself with its stored health.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.soulSiphonFull"));
             return;
         }
 
@@ -1724,7 +1740,7 @@ public final class DungeonInstance {
         var pdc = item.getItemMeta() == null ? null : item.getItemMeta().getPersistentDataContainer();
         if (pdc == null || !pdc.has(org.bukkit.NamespacedKey.minecraft("dung.ability"),
                 org.bukkit.persistence.PersistentDataType.STRING)) {
-            p.sendMessage("§cYour hand item has no ability.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.noAbility"));
             return;
         }
         String id = pdc.get(org.bukkit.NamespacedKey.minecraft("dung.ability"),
@@ -1736,16 +1752,16 @@ public final class DungeonInstance {
         double cost = costI != null ? costI : cfg[0];
         long cd = cfg[1];
         if (!st.canCast(id, cost, cd)) {
-            p.sendMessage("§cNot enough mana or on cooldown.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.noManaCd"));
             return;
         }
         if (!st.canCast(PlayerState.GCD_KEY, 0, PlayerState.GCD_MS)) {
-            p.sendMessage("§cToo fast!");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.tooFast"));
             return;
         }
         // A broken weapon cannot be used (its ability is unusable) until it is repaired.
         if (GearFactory.isPersistent(item) && GearFactory.isBroken(item)) {
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cThis item is broken — repair it at §6/shop§7 before using its ability."));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.itemBroken")));
             return;
         }
         st.spendMana(cost);
@@ -1759,7 +1775,7 @@ public final class DungeonInstance {
             if (broken) {
                 // Keep the broken item in the inventory (it can be repaired at the shop); it is no
                 // longer usable until repaired.
-                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour " + item.getItemMeta().getDisplayName() + " §cbroke and can no longer be used! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.itemBroke", item.getItemMeta().getDisplayName())));
             }
         }
     }
@@ -1776,18 +1792,18 @@ public final class DungeonInstance {
         String classId = st.classId;
         long[] cfg = CLASS_ABILITY_COST_CD.get(classId);
         if (cfg == null) {
-            p.sendMessage("§cYour class has no active ability.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.noClass"));
             return;
         }
         double cost = cfg[0];
         long cd = cfg[1];
         String abilityKey = "class_" + classId;
         if (!st.canCast(abilityKey, cost, cd)) {
-            p.sendMessage("§cNot enough mana or on cooldown.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.noManaCd"));
             return;
         }
         if (!st.canCast(PlayerState.GCD_KEY, 0, PlayerState.GCD_MS)) {
-            p.sendMessage("§cToo fast!");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.tooFast"));
             return;
         }
         st.spendMana(cost);
@@ -1815,13 +1831,13 @@ public final class DungeonInstance {
                     if (pst != null) {
                         pst.damageBoostUntil = warCryUntil;
                         pst.damageBoostMult = 1.3;
-                        pm.sendMessage("§6War Cry! Damage boosted by 30% for 5s!");
+                        pm.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(pm, "ability.warCryBoost"));
                     }
                 }
                 st.invulnUntil = Math.max(st.invulnUntil, System.currentTimeMillis() + 1000);
                 world.spawnParticle(org.bukkit.Particle.FLASH, caster.getLocation().add(0, 1, 0), 1, 0, 0, 0);
                 world.spawnParticle(org.bukkit.Particle.CRIT, caster.getLocation().add(0, 1, 0), 20, 1.5, 1, 1.5);
-                caster.sendMessage("§6§lWAR CRY!");
+                caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.warCry"));
                 break;
 
             case "mage":
@@ -1845,7 +1861,7 @@ public final class DungeonInstance {
                 world.spawnParticle(org.bukkit.Particle.CRIT, caster.getLocation().add(0, 1, 0), 40, 2, 1, 2);
                 world.spawnParticle(org.bukkit.Particle.PORTAL, caster.getLocation().add(0, 1, 0), 20, 2, 1, 2);
                 world.playSound(caster.getLocation(), org.bukkit.Sound.ENTITY_FIREWORK_ROCKET_BLAST, 1.0f, 0.7f);
-                caster.sendMessage("§d§lARCANE NOVA!");
+                caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.arcaneNova"));
                 break;
 
             case "ranger":
@@ -1865,7 +1881,7 @@ public final class DungeonInstance {
                     behind.setYaw(caster.getLocation().getYaw());
                     behind.setPitch(caster.getLocation().getPitch());
                     caster.teleport(behind);
-                    caster.sendMessage("§aShadow Stepped behind " + target.type.name + "!");
+                    caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.shadowSteppedBehind", target.type.name));
                 } else if (boss != null && boss.isActive()) {
                     Location bl = boss.location();
                     org.bukkit.util.Vector away = bl.toVector().subtract(caster.getLocation().toVector()).setY(0).normalize();
@@ -1874,18 +1890,18 @@ public final class DungeonInstance {
                     behind.setYaw(caster.getLocation().getYaw());
                     behind.setPitch(caster.getLocation().getPitch());
                     caster.teleport(behind);
-                    caster.sendMessage("§aShadow Stepped behind the Warden!");
+                    caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.shadowStepWarden"));
                 } else {
                     // No enemies — short forward dash
                     caster.setVelocity(dir.clone().multiply(1.0).setY(0.3));
-                    caster.sendMessage("§aShadow Step — no enemies nearby.");
+                    caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.shadowStepNoEnemies"));
                 }
                 // Guarantee next crit within 1.5 seconds
                 st.guaranteedCritUntil = System.currentTimeMillis() + 1500;
                 world.spawnParticle(org.bukkit.Particle.SMOKE, caster.getLocation().add(0, 1, 0), 15, 0.5, 0.5, 0.5);
                 world.spawnParticle(org.bukkit.Particle.CRIT, caster.getLocation().add(0, 1, 0), 10, 0.5, 0.5, 0.5);
                 world.playSound(caster.getLocation(), org.bukkit.Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.2f);
-                caster.sendMessage("§b§lSHADOW STEP!");
+                caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.shadowStep"));
                 break;
         }
     }
@@ -1914,7 +1930,7 @@ public final class DungeonInstance {
             case "Rush":
                 caster.setVelocity(dir.clone().multiply(1.2).setY(0.4));
                 st.invulnUntil = Math.max(st.invulnUntil, System.currentTimeMillis() + 600);
-                caster.sendMessage("§6Rush!");
+                caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.rush"));
                 break;
             case "Slash":
                 // "a quick, heavy strike ahead" — single target
@@ -1922,14 +1938,14 @@ public final class DungeonInstance {
                 hitTargets(roomList, caster, 1, dmg * 2.0, dir.getX(), dir.getZ(),
                         e -> inCone(e, caster, dir, 2.5, 0.4));
                 caster.getWorld().spawnParticle(org.bukkit.Particle.SWEEP_ATTACK, caster.getEyeLocation().add(dir.clone().multiply(1.5)), 4, 0.5, 0, 0.5);
-                caster.sendMessage("§6Slash!");
+                caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.slash"));
                 break;
             case "Cleave":
                 // "slash everything in a cone ahead" — up to a few in front
                 hitBoss.accept(3.0);
                 hitTargets(roomList, caster, 3, dmg * 1.5, dir.getX(), dir.getZ(),
                         e -> inCone(e, caster, dir, 3.0, 0.5));
-                caster.sendMessage("§6Cleave!");
+                caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.cleave"));
                 break;
             case "Smash":
                 // "blast all nearby enemies" — a few around you
@@ -1937,7 +1953,7 @@ public final class DungeonInstance {
                 hitTargets(roomList, caster, 3, dmg * 1.8, 0, 0,
                         e -> e.entity.getLocation().distance(caster.getLocation()) < 4);
                 world.spawnParticle(org.bukkit.Particle.EXPLOSION, caster.getLocation().add(0, 1, 0), 1, 1, 0, 1);
-                caster.sendMessage("§6Smash!");
+                caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.smash"));
                 break;
             case "Blade Storm":
                 // "spin, damaging around you" — hits more of the surrounding mobs
@@ -1949,7 +1965,7 @@ public final class DungeonInstance {
                     caster.getWorld().spawnParticle(org.bukkit.Particle.SWEEP_ATTACK,
                             caster.getLocation().clone().add(Math.cos(a) * 2, 1, Math.sin(a) * 2), 0);
                 }
-                caster.sendMessage("§6Blade Storm!");
+                caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.bladeStorm"));
                 break;
             case "Arcane Bolt":
                 // "mage strike in a line" — up to a few along the line
@@ -1957,13 +1973,13 @@ public final class DungeonInstance {
                 hitTargets(roomList, caster, 3, dmg * 2.2, dir.getX(), dir.getZ(),
                         e -> inCone(e, caster, dir, 8.0, 0.6));
                 caster.getWorld().spawnParticle(org.bukkit.Particle.CRIT, caster.getEyeLocation().add(dir.clone().multiply(1.5)), 8, 0.2, 0.2, 0.2);
-                caster.sendMessage("§6Arcane Bolt!");
+                caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.arcaneBolt"));
                 break;
             case "Ravage":
                 // "devastate every enemy in the room" — truly every enemy
                 hitBoss.accept(99.0);
                 hitTargets(roomList, caster, Integer.MAX_VALUE, dmg * 1.5, dir.getX(), dir.getZ(), e -> true);
-                caster.sendMessage("§6Ravage!");
+                caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.ravage"));
                 break;
             case "Chain Lightning": {
                 // Single-enemy selection: raycast the caster's view direction, pick the nearest
@@ -2019,9 +2035,9 @@ public final class DungeonInstance {
                         drawLightningArcLinger(world, src.clone().add(0, 1, 0), dst.clone().add(0, 1, 0));
                     }
                     world.playSound(caster.getLocation(), org.bukkit.Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 0.6f, 1.2f);
-                    caster.sendMessage("§6Chain Lightning!");
+                    caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.chainLightning"));
                 } else {
-                    caster.sendMessage("§cNo target in range!");
+                    caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.noTarget"));
                 }
                 break;
             }
@@ -2035,7 +2051,7 @@ public final class DungeonInstance {
                 // Store the damage value so the projectile hit handler can use it
                 fireball.setMetadata("dung.damage", new org.bukkit.metadata.FixedMetadataValue(plugin, dmg * 2.0));
                 world.playSound(caster.getLocation(), org.bukkit.Sound.ENTITY_BLAZE_SHOOT, 1.0f, 1.0f);
-                caster.sendMessage("§6Fireball!");
+                caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.fireball"));
                 break;
             }
             case "Life Drain": {
@@ -2098,14 +2114,13 @@ public final class DungeonInstance {
                         ? GearFactory.getStoredHealth(siphonHeld) : 0;
                 int maxStored = siphonHeld != null && !siphonHeld.getType().isAir()
                         ? GearFactory.getStoredHealthMax(siphonHeld) : 0;
-                caster.sendMessage("§6Life Drain! §7Siphoned §c" + totalSiphoned + "❤ §7→ Stored §c"
-                        + newStored + "§7/§f" + maxStored + "§7❤");
+                caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.lifeDrain", totalSiphoned, newStored, maxStored));
                 break;
             }
             default:
                 hitTargets(roomList, caster, 3, dmg * 1.2, 0, 0,
                         e -> e.entity.getLocation().distance(caster.getLocation()) < 3.5);
-                caster.sendMessage("§6Ability!");
+                caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.generic"));
                 break;
         }
     }
@@ -2241,12 +2256,12 @@ public final class DungeonInstance {
 
         ItemStack item = p.getInventory().getItem(slot);
         if (item == null || !isWorkstationOrPersistentGear(item)) {
-            p.sendMessage("§cThat item can't be upgraded.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.cantUpgrade"));
             return false;
         }
         int level = GearFactory.getUpgradeLevel(item);
         if (!WorkstationRules.canUpgrade(level)) {
-            p.sendMessage("§5This item is already at max upgrade level.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.maxUpgrade"));
             return false;
         }
         boolean isPersistent = GearFactory.isPersistent(item);
@@ -2258,21 +2273,22 @@ public final class DungeonInstance {
             shardCost *= 2;
         }
         if (st.coins < coinCost) {
-            p.sendMessage("§cYou need §e" + coinCost + " run coins§c (have §e" + st.coins + "§c).");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.needRunCoins", coinCost, st.coins));
             return false;
         }
         if (prof.shards < shardCost) {
-            p.sendMessage("§cYou need §3" + shardCost + " shards§c (have §b" + prof.shards + "§c).");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.needShards", shardCost, prof.shards));
             return false;
         }
         st.coins -= coinCost;
         prof.shards -= shardCost;
         plugin.meta().save();
         GearFactory.setUpgradeLevel(item, level + 1);
+        com.lieyabull.dung.items.GearFactory.localizeFor(item, p);
         recomputeStats(); // the equipped item's tags changed in place — refresh live combat stats
         world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_SMITHING_TABLE_USE, 1.0f, 1.2f);
-        String persistNote = isPersistent ? " §7(§6persistent§7, 2x cost)" : "";
-        p.sendMessage("§aUpgraded to §5Lv " + (level + 1) + "§a! §7(-§e" + coinCost + " coins§7, §3-" + shardCost + " shards§7)" + persistNote);
+        String persistNote = isPersistent ? com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.persistNote") : "";
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.upgraded", level + 1, coinCost, shardCost, persistNote));
         return true;
     }
 
@@ -2290,7 +2306,7 @@ public final class DungeonInstance {
 
         ItemStack item = p.getInventory().getItem(slot);
         if (item == null || !isWorkstationOrPersistentGear(item)) {
-            p.sendMessage("§cThat item can't be reforged.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.cantReforge"));
             return false;
         }
         boolean isPersistent = GearFactory.isPersistent(item);
@@ -2299,7 +2315,7 @@ public final class DungeonInstance {
         int shardCost = WorkstationRules.scaledCost(WorkstationRules.reforgeShardCost(reforgeCount), floor);
         if (isPersistent) shardCost *= 2;
         if (prof.shards < shardCost) {
-            p.sendMessage("§cYou need §3" + shardCost + " shards§c (have §b" + prof.shards + "§c).");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.needShards", shardCost, prof.shards));
             return false;
         }
         prof.shards -= shardCost;
@@ -2307,11 +2323,11 @@ public final class DungeonInstance {
         List<Affix.AffixRoll> rolled = Affix.roll(GearFactory.getRarity(item), kindOf(item), new java.util.Random());
         GearFactory.setReforgeCount(item, reforgeCount + 1);
         GearFactory.reforge(item, rolled, GearFactory.getUpgradeLevel(item));
+        com.lieyabull.dung.items.GearFactory.localizeFor(item, p);
         recomputeStats(); // equipped item's affixes changed in place — refresh live combat stats
         world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_GRINDSTONE_USE, 1.0f, 1.0f);
-        String persistNote = isPersistent ? " §7(§6persistent§7, 2x cost)" : "";
-        p.sendMessage("§bReforged! §7New affixes: "
-                + affixSummary(rolled) + " §7(-§3" + shardCost + " shards§7)" + persistNote);
+        String persistNote = isPersistent ? com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.persistNote") : "";
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.reforged", affixSummary(rolled), shardCost, persistNote));
         return true;
     }
 
@@ -2345,23 +2361,22 @@ public final class DungeonInstance {
 
         ItemStack item = p.getInventory().getItem(slot);
         if (item == null || !WorkstationRules.isWorkstationGear(item)) {
-            p.sendMessage("§cThat item can't be preserved.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.cantPreserve"));
             return false;
         }
         int coinCost = WorkstationRules.PRESERVE_COIN_COST;
         int pcCost = WorkstationRules.PRESERVE_PERSISTENT_COIN_COST;
         int shardCost = WorkstationRules.PRESERVE_SHARD_COST;
         if (st.coins < coinCost) {
-            p.sendMessage("§cYou need §e" + coinCost + " run coins§c (have §e" + st.coins + "§c).");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.needRunCoins", coinCost, st.coins));
             return false;
         }
         if (prof.persistentCoins < pcCost) {
-            p.sendMessage("§dYou need §b" + pcCost + " persistent coins§d (have §b"
-                    + prof.persistentCoins + "§d).");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.needPersistentCoins", pcCost, prof.persistentCoins));
             return false;
         }
         if (prof.shards < shardCost) {
-            p.sendMessage("§cYou need §3" + shardCost + " shards§c (have §b" + prof.shards + "§c).");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.needShards", shardCost, prof.shards));
             return false;
         }
         // Charge ALL THREE currencies (run coins + persistent coins + shards), not either/or.
@@ -2378,9 +2393,9 @@ public final class DungeonInstance {
             p.getInventory().setItem(slot, null);
             pendingPersists.computeIfAbsent(pid, k -> new ArrayList<>()).add(GearFactory.persistize(item));
             world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_BEACON_ACTIVATE, 1.0f, 1.5f);
-            String pityMsg = guaranteed ? " §6§l✦ PITY! §7Guaranteed after " + WorkstationRules.PRESERVE_PITY + " fails!" : "";
-            p.sendMessage("§d§l✦ PRESERVED! §dYour item will persist past this run (at half durability)." + pityMsg);
-            p.sendMessage("§7  You'll receive it when the run ends.");
+            String pityMsg = guaranteed ? com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.preservedPity", WorkstationRules.PRESERVE_PITY) : "";
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.preserved", pityMsg));
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.preservedDeliver"));
         } else {
             // Failed: increment consecutive fails for pity tracking
             preserveFails.put(pid, fails + 1);
@@ -2389,8 +2404,8 @@ public final class DungeonInstance {
             p.getInventory().setItem(slot, downgraded);
             world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_ANVIL_LAND, 1.0f, 1.0f);
             int remaining = WorkstationRules.PRESERVE_PITY - (fails + 1);
-            p.sendMessage("§cThe preserve failed. Your item was returned, §lone rarity worse§r§c."
-                    + " §7(Pity: §e" + remaining + "§7 more fail" + (remaining == 1 ? "" : "s") + " → guaranteed)");
+            String pityLeft = com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.preservePityLeft", remaining, remaining == 1 ? "" : "s");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.preserveFailed", pityLeft));
         }
         recomputeStats(); // equipped slot changed (removed or downgraded) — refresh live combat stats
         return true;
@@ -2405,7 +2420,7 @@ public final class DungeonInstance {
         if (st == null) return 0;
         ItemStack item = p.getInventory().getItem(slot);
         if (item == null || !WorkstationRules.isWorkstationGear(item)) {
-            p.sendMessage("§cThat item can't be salvaged.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.cantSalvage"));
             return 0;
         }
         Rarity r = GearFactory.getRarity(item);
@@ -2414,7 +2429,7 @@ public final class DungeonInstance {
         recomputeStats(); // item removed from (possibly) equipped slot — refresh live combat stats
         st.coins += value;
         world.playSound(p.getLocation(), org.bukkit.Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f);
-        p.sendMessage("§aSalvaged the item §e→ +" + value + " run coins§7 (total §e" + st.coins + "§7).");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.salvaged", value, st.coins));
         return value;
     }
 
@@ -2431,7 +2446,7 @@ public final class DungeonInstance {
                 st.coins += coins;
                 run.runCoinsEarned += coins;
                 st.heal(st.maxHearts * 0.15);
-                p.sendMessage("§aRoom cleared! §7(+§e" + coins + " coins§7)");
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.cleared", coins));
             }
         }
         List<ItemStack> loot = ItemPool.roomReward(run.floorIndex, n.type.kind);
@@ -2447,7 +2462,7 @@ public final class DungeonInstance {
         world.playSound(c, org.bukkit.Sound.BLOCK_IRON_DOOR_OPEN, 1.0f, 1.2f);
         world.spawnParticle(org.bukkit.Particle.CRIT, c.clone().add(0, 1.5, 0), 12, 8, 1.5, 8);
         for (Player p : party.onlineMembers()) {
-            setStatus(p, "§aDoors opened!");
+            setStatus(p, com.lieyabull.dung.lang.Lang.forPlayer(p, "room.doorsOpened"));
         }
     }
 
@@ -2457,7 +2472,7 @@ public final class DungeonInstance {
         if (curRoom != null && curRoom.type == RoomType.BOSS && !curRoom.cleared && boss == null) {
             if (!allMembersInRoom(curRoom)) {
                 for (Player p : party.onlineMembers()) {
-                    setStatus(p, "§cThe Warden awaits until everyone is inside.");
+                    setStatus(p, com.lieyabull.dung.lang.Lang.forPlayer(p, "room.wardenWait"));
                 }
                 return;
             }
@@ -2475,7 +2490,7 @@ public final class DungeonInstance {
             }
             lockDoors(curRoom);
             for (Player p : party.onlineMembers()) {
-                p.sendMessage("§4The Warden of Floor " + (run.floorIndex + 1) + " awakens!");
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.bossAwaken", run.floorIndex + 1));
             }
         }
     }
@@ -2487,7 +2502,7 @@ public final class DungeonInstance {
         defeated.cleared = true;
         openDoors(defeated);
         for (Player p : party.onlineMembers()) {
-            p.sendMessage("§6Boss slain!");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.bossSlain"));
         }
         int coins = 8 + run.floorIndex * 4;
         for (Player p : party.onlineMembers()) {
@@ -2507,7 +2522,7 @@ public final class DungeonInstance {
             prof.clears++;
             prof.bestFloor = Math.max(prof.bestFloor, run.floorIndex + 1);
             plugin.meta().addPersistentCoins(p.getUniqueId(), bank);
-            p.sendMessage("§dYou banked §6" + bank + "§d coins into your persistent coins.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "boss.bankedCoins", bank));
         }
         // Bank each player's salvage shards earned this floor into their persistent balance
         for (Player p : party.onlineMembers()) {
@@ -2515,7 +2530,7 @@ public final class DungeonInstance {
             if (shardsEarned != null && shardsEarned > 0) {
                 MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
                 prof.shards += shardsEarned;
-                p.sendMessage("§dYou banked §b" + shardsEarned + "§d shards from salvaged gear.");
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "boss.bankedShards", shardsEarned));
             }
         }
         plugin.meta().save();
@@ -2526,12 +2541,12 @@ public final class DungeonInstance {
         // Show a clickable descend button. In a party, clicking starts a vote where >50% must agree.
         for (Player p : party.onlineMembers()) {
             var legacy = LegacyComponentSerializer.legacySection();
-            net.kyori.adventure.text.Component msg = legacy.deserialize("§dA crack opens below... ");
-            net.kyori.adventure.text.Component btn = net.kyori.adventure.text.Component.text("[Descend]", net.kyori.adventure.text.format.NamedTextColor.GREEN, net.kyori.adventure.text.format.TextDecoration.BOLD)
-                    .hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(net.kyori.adventure.text.Component.text("Click to descend to the next floor", net.kyori.adventure.text.format.NamedTextColor.GRAY)))
+            net.kyori.adventure.text.Component msg = legacy.deserialize(com.lieyabull.dung.lang.Lang.forPlayer(p, "boss.crackOpens"));
+            net.kyori.adventure.text.Component btn = net.kyori.adventure.text.Component.text(com.lieyabull.dung.lang.Lang.forPlayer(p, "boss.descendBtn"), net.kyori.adventure.text.format.NamedTextColor.GREEN, net.kyori.adventure.text.format.TextDecoration.BOLD)
+                    .hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(net.kyori.adventure.text.Component.text(com.lieyabull.dung.lang.Lang.forPlayer(p, "boss.descendHover"), net.kyori.adventure.text.format.NamedTextColor.GRAY)))
                     .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/dung descend"));
-            net.kyori.adventure.text.Component endBtn = net.kyori.adventure.text.Component.text(" [End Run]", net.kyori.adventure.text.format.NamedTextColor.RED, net.kyori.adventure.text.format.TextDecoration.BOLD)
-                    .hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(net.kyori.adventure.text.Component.text("Leave the run and return to the hub", net.kyori.adventure.text.format.NamedTextColor.GRAY)))
+            net.kyori.adventure.text.Component endBtn = net.kyori.adventure.text.Component.text(com.lieyabull.dung.lang.Lang.forPlayer(p, "boss.endBtn"), net.kyori.adventure.text.format.NamedTextColor.RED, net.kyori.adventure.text.format.TextDecoration.BOLD)
+                    .hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(net.kyori.adventure.text.Component.text(com.lieyabull.dung.lang.Lang.forPlayer(p, "boss.endHover"), net.kyori.adventure.text.format.NamedTextColor.GRAY)))
                     .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/dung leave"));
             p.sendMessage(msg.append(btn).append(endBtn));
         }
@@ -2549,6 +2564,10 @@ public final class DungeonInstance {
             // Reset PlayerState.dead so the tick loop doesn't re-trigger onPlayerDeath
             PlayerState st = run.playerStateOf(pid);
             if (st != null) st.dead = false;
+            // Restore visibility, remove invulnerability, and remove spectator head
+            p.setInvisible(false);
+            p.setInvulnerable(false);
+            p.getInventory().setHelmet(null);
             p.setGameMode(org.bukkit.GameMode.SURVIVAL);
             p.setHealth(20);
             p.setFoodLevel(20);
@@ -2575,7 +2594,7 @@ public final class DungeonInstance {
                 Location spawn = roomSpawn(curRoom);
                 p.teleport(spawn);
             }
-            p.sendMessage("§a§lYou have been revived by the boss's defeat!");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "boss.revived"));
         }
     }
 
@@ -2644,7 +2663,7 @@ public final class DungeonInstance {
     public void descend(Player caller) {
         Floor.RoomNode bossNode = run != null && run.floor != null ? run.floor.boss : null;
         if (bossNode == null || !bossNode.cleared) {
-            caller.sendMessage("§cDefeat the boss first!");
+            caller.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caller, "descend.bossFirst"));
             return;
         }
         List<Player> online = party.onlineMembers();
@@ -2662,7 +2681,7 @@ public final class DungeonInstance {
         }
         // Party: record this player's vote
         if (!descendVotes.add(caller.getUniqueId())) {
-            caller.sendMessage("§7You already voted to descend.");
+            caller.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caller, "descend.alreadyVoted"));
             return;
         }
         // Count votes among alive players only
@@ -2672,7 +2691,7 @@ public final class DungeonInstance {
         if (yes >= needed) {
             // Majority reached — descend!
             for (Player p : online) {
-                p.sendMessage("§a§lDescend vote passed! (§e" + yes + "/" + needed + "§a)");
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "descend.passed", yes, needed));
             }
             descendVotes.clear();
             // Revive any dead players before descending so they come along
@@ -2681,7 +2700,7 @@ public final class DungeonInstance {
         } else {
             // Not enough votes yet
             for (Player p : online) {
-                p.sendMessage("§e" + caller.getName() + "§7 voted to descend (§e" + yes + "/" + needed + "§7 needed)");
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "descend.voted", caller.getName(), yes, needed));
             }
         }
     }
@@ -2739,6 +2758,7 @@ public final class DungeonInstance {
         // Remove the slab block
         world.getBlockAt(key).setType(Material.AIR);
         // Give the item to the player
+        com.lieyabull.dung.items.GearFactory.localizeFor(item, p);
         p.getInventory().addItem(item).values().forEach(drop ->
                 world.dropItem(p.getLocation(), drop));
         // Play effects
@@ -2814,7 +2834,7 @@ public final class DungeonInstance {
         // Build a proper walled corridor between the secret's wall face and the parent's wall face
         // (3-wide tunnel with solid side walls), instead of punching a bare tunnel through every
         // block for `spacing` tiles (which carved through floors and unrelated walls).
-        int COW = RoomGen.LONG / 2;
+        int COW = corridorHalf;
         for (int t = sWallT; t <= pWallT; t++) {
             for (int off = -COW; off <= COW; off++) {
                 boolean passage = Math.abs(off) <= 1;
@@ -2881,7 +2901,7 @@ public final class DungeonInstance {
         if (!running || run == null || run.floor == null) return;
         PlayerState st = run.playerStateOf(p.getUniqueId());
         if (st == null || st.keys <= 0) {
-            p.sendMessage("§cYou need a key to unlock this door!");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "door.needKey"));
             return;
         }
         // Find which LOCKED room this barrier belongs to
@@ -2925,12 +2945,12 @@ public final class DungeonInstance {
 
         // Failure chance increases with floor depth, capped at 80%
         if (failureRoll()) {
-            p.sendMessage("§cThe key snaps in the lock! §7(-1 key)");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "door.keySnaps"));
             world.playSound(doorLoc, org.bukkit.Sound.BLOCK_CHEST_LOCKED, 1.0f, 0.5f);
             world.spawnParticle(org.bukkit.Particle.SMOKE, doorLoc.clone().add(0, 1.5, 0), 10, 0.3, 0.3, 0.3, 0.02);
             return;
         }
-        p.sendMessage("§aYou unlock the door! §7(§e" + st.keys + " keys remaining§7)");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "door.unlocked", st.keys));
 
         // Play unlock effects
         world.playSound(doorLoc, org.bukkit.Sound.BLOCK_CHEST_OPEN, 1.0f, 1.0f);
@@ -2971,7 +2991,7 @@ public final class DungeonInstance {
         if (!running || run == null || run.floor == null) return;
         PlayerState st = run.playerStateOf(p.getUniqueId());
         if (st == null || st.bombs <= 0) {
-            p.sendMessage("§cYou need a bomb to destroy this wall!");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "door.needBomb"));
             return;
         }
 
@@ -3006,12 +3026,12 @@ public final class DungeonInstance {
 
         // Failure chance increases with floor depth, capped at 80%
         if (failureRoll()) {
-            p.sendMessage("§cThe bomb fizzles out! §7(-1 bomb)");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "door.bombFizzle"));
             world.playSound(blockLocation, org.bukkit.Sound.ENTITY_CREEPER_HURT, 0.5f, 0.5f);
             world.spawnParticle(org.bukkit.Particle.SMOKE, blockLocation.clone().add(0.5, 0.5, 0.5), 10, 0.3, 0.3, 0.3, 0.02);
             return;
         }
-        p.sendMessage("§aYou detonate a bomb! §7(-1 bomb)");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "door.bombDetonate"));
 
         // Destroy the wall blocks in a 3x3 area centered on the clicked block
         Location center = secretRoom.destructibleWallLoc;
@@ -3042,7 +3062,7 @@ public final class DungeonInstance {
         if (!secretRoom.looted) {
             secretRoom.looted = true;
             for (Player pm : party.onlineMembers()) {
-                pm.sendMessage("§dYou found a hidden room!");
+                pm.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(pm, "room.hiddenFound"));
             }
             Location c = RoomGen.center(world, secretRoom, BASE_Y, spacing, offsetX, offsetZ);
             spawnPedestal(c.clone().add(1, 0, 0), ItemPool.randomWeapon(run.floorIndex));
@@ -3264,10 +3284,9 @@ public final class DungeonInstance {
         String betterName = itemDisplayName(better);
         net.kyori.adventure.text.Component msg = net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
                 .legacySection().deserialize(
-                        "§7A better shield (§b" + betterName + "§7) is in your inventory. Your §e" + curName
-                                + "§7 is persistent — keep it or switch? ")
-                .append(com.lieyabull.dung.ui.ChatUI.command("§a[Switch]", "/dung shieldswitch",
-                        "Swap in the better shield"));
+                        com.lieyabull.dung.lang.Lang.forPlayer(p, "shield.prompt", betterName, curName))
+                .append(com.lieyabull.dung.ui.ChatUI.command(com.lieyabull.dung.lang.Lang.forPlayer(p, "shield.switchBtn"), "/dung shieldswitch",
+                        com.lieyabull.dung.lang.Lang.forPlayer(p, "shield.switchHover")));
         p.sendMessage(msg);
     }
 
@@ -3278,12 +3297,12 @@ public final class DungeonInstance {
         ItemStack current = inv.getItem(SHIELD_SLOT);
         if (current == null || current.getType().isAir()
                 || !GearFactory.isShield(current) || !GearFactory.isPersistent(current)) {
-            p.sendMessage("§7No persistent shield equipped to switch.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "shield.noneEquipped"));
             return;
         }
         ItemStack better = bestBetterShield(inv, current);
         if (better == null) {
-            p.sendMessage("§7No better shield available.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "shield.noBetter"));
             return;
         }
         int curMax = GearFactory.getShieldMax(current);
@@ -3307,7 +3326,7 @@ public final class DungeonInstance {
             if (m > bestMax) { bestMax = m; bestLoc = slot; }
         }
         if (bestLoc == Integer.MIN_VALUE) {
-            p.sendMessage("§7No better shield available.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "shield.noBetter"));
             return;
         }
         // Swap: slot 9 gets the better shield; the previous persistent shield moves to its old spot.
@@ -3316,7 +3335,7 @@ public final class DungeonInstance {
         else if (bestLoc == -2) inv.setItemInOffHand(current);
         else inv.setItem(bestLoc, current);
         lastShieldSwitchPrompt.remove(p.getUniqueId());
-        p.sendMessage("§aSwitched to §b" + itemDisplayName(better) + "§a.");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "shield.switched", itemDisplayName(better)));
     }
 
     private static String itemDisplayName(ItemStack s) {
@@ -3488,27 +3507,29 @@ public final class DungeonInstance {
         if (cls != null && !cls.isEmpty() && Character.isLowerCase(cls.charAt(0))) {
             cls = Character.toUpperCase(cls.charAt(0)) + cls.substring(1);
         }
-        p.sendMessage("§c§lYOU DIED §8— Floor " + floorReached);
-        if (kills > 0) p.sendMessage("§7  Kills this run: §f" + kills);
-        if (runCoins > 0) p.sendMessage("§7  Run coins: §e" + runCoins + " §7(gone unless revived by defeating the boss)");
-        p.sendMessage("§7  Persistent gear durability reduced by 10%");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "death.title", floorReached));
+        if (kills > 0) p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "death.kills", kills));
+        if (runCoins > 0) p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "death.runCoins", runCoins));
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "death.durability"));
         p.sendMessage("");
-        p.sendMessage("§7Unlocks you keep:");
-        p.sendMessage("§7  Class: §f" + cls);
-        p.sendMessage("§7  Persistent coins: §6" + prof.persistentCoins);
-        p.sendMessage("§7  Progress: §f" + prof.clears + "§7 floors cleared, best §f" + prof.bestFloor + "§7, §f" + prof.kills + "§7 kills");
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "death.unlocks"));
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "death.class", cls));
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "death.persistentCoins", prof.persistentCoins));
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "death.progress", prof.clears, prof.bestFloor, prof.kills));
         if (prof.persistentCoins >= 20) {
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§a  You have enough for: §f/shop weapon"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "death.enoughForWeapon")));
         } else {
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§8  Need §6" + (20 - prof.persistentCoins) + "§8 more coins for a weapon (/shop weapon)"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "death.needForWeapon", 20 - prof.persistentCoins)));
         }
-        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7  Try /shop, /upgrades, or /dung start to go again."));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "death.tryAgain")));
 
-        // Set player to spectator mode — they stay in the instance and can be revived
-        // if the boss is defeated. They remain at their death location as a spectator.
+        // Make player invisible, give them their own head, and disable targeting
+        // They stay in the instance and can be revived if the boss is defeated.
         p.setHealth(20);
-        p.setGameMode(org.bukkit.GameMode.SPECTATOR);
+        p.setInvisible(true);
         p.setWalkSpeed(0.2f);
+        p.setInvulnerable(true);
+        p.getInventory().setHelmet(createPlayerHead(p));
         removeHeadHp(p); // spectators don't carry an HP readout
 
         HUD hud = huds.get(p.getUniqueId());
@@ -3527,7 +3548,7 @@ public final class DungeonInstance {
         // Check if all party members are now dead — if so, end the run
         if (allMembersDead()) {
             for (Player member : party.onlineMembers()) {
-                member.sendMessage("§c§lAll party members have fallen! The run is over.");
+                member.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(member, "party.allFallen"));
             }
             endRun();
         }
@@ -3585,7 +3606,7 @@ public final class DungeonInstance {
         // to avoid a double loss when they leave while dead.
         if (!deadPlayers.contains(pid)) {
             damagePersistentGear(p, LEAVE_DURABILITY_DIVISOR);
-            p.sendMessage("§7  Left the run early: persistent gear durability reduced by 5%");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "leave.early"));
         }
         p.setWalkSpeed(0.2f);
         p.setFoodLevel(20);
@@ -3603,14 +3624,14 @@ public final class DungeonInstance {
         List<ItemStack> pending = pendingPersists.remove(pid);
         if (pending == null || pending.isEmpty()) return;
         for (ItemStack item : pending) {
+            com.lieyabull.dung.items.GearFactory.localizeFor(item, p);
             HashMap<Integer, ItemStack> leftover = p.getInventory().addItem(item);
             if (!leftover.isEmpty()) {
                 for (ItemStack ls : leftover.values()) {
                     p.getWorld().dropItemNaturally(p.getLocation(), ls);
                 }
             }
-            p.sendMessage("§d§l✦ §dPERSISTED! §7Your " + item.getItemMeta().getDisplayName()
-                    + " §7arrived safe and sound.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.persistedDelivery", item.getItemMeta().getDisplayName()));
         }
         plugin.meta().save();
     }
@@ -3777,6 +3798,16 @@ public final class DungeonInstance {
         }
     }
 
+    /** Create a player head item for the given player (their own skull). */
+    public org.bukkit.inventory.ItemStack createPlayerHead(Player p) {
+        org.bukkit.inventory.ItemStack head = new org.bukkit.inventory.ItemStack(org.bukkit.Material.PLAYER_HEAD);
+        org.bukkit.inventory.meta.SkullMeta meta = (org.bukkit.inventory.meta.SkullMeta) head.getItemMeta();
+        meta.setOwningPlayer(p);
+        meta.setDisplayName("§7" + p.getName());
+        head.setItemMeta(meta);
+        return head;
+    }
+
     /** Handle a persistent gear item reaching 0 durability: if it is actually equipped (an armor
      *  slot or the offhand) unequip it and move it into a free main-inventory slot. If the bag is
      *  full it goes into the player's /stash (takeout-only container) instead of the ground. A
@@ -3814,7 +3845,12 @@ public final class DungeonInstance {
             com.lieyabull.dung.ui.StashUI.placeOrStash(p, item);
         }
         String name = item.getItemMeta() != null ? item.getItemMeta().getDisplayName() : item.getType().name();
-        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour " + name + " §cbroke" + reason + "! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.armorBroke", name, reasonKey(p, reason))));
+    }
+
+    private static String reasonKey(Player p, String reason) {
+        if (reason == null || reason.isEmpty()) return "";
+        return com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.fromDescent");
     }
 
     /** Set a transient status message for a player, shown in the action bar alongside HP/mana.
@@ -3859,7 +3895,13 @@ public final class DungeonInstance {
             if (!deadPlayers.contains(p.getUniqueId())) {
                 damagePersistentGear(p, DEATH_DURABILITY_DIVISOR);
             }
-            // Restore game mode, health, and hunger — players may be in SPECTATOR mode if they died
+            // Restore visibility, remove invulnerability, and remove spectator head for dead players
+            if (deadPlayers.contains(p.getUniqueId())) {
+                p.setInvisible(false);
+                p.setInvulnerable(false);
+                p.getInventory().setHelmet(null);
+            }
+            // Restore game mode, health, and hunger
             p.setGameMode(org.bukkit.GameMode.SURVIVAL);
             p.setHealth(p.getMaxHealth());
             p.setFoodLevel(20);
@@ -3973,6 +4015,17 @@ public final class DungeonInstance {
     }
 
     // ---------- UI ----------
+
+    /** Force an immediate HUD/tab repaint for one player — used when that player changes language
+     *  mid-run, so the sidebar and tab menu re-render in the new language instead of waiting. */
+    public void repaintPlayer(Player p) {
+        HUD hud = huds.get(p.getUniqueId());
+        org.bukkit.scoreboard.Scoreboard sb = playerBoards.get(p.getUniqueId());
+        if (hud != null) hud.resetLastText();
+        if (hud != null && sb != null) hud.update(p, this, sb);
+        TabUI tab = tabs.get(p.getUniqueId());
+        if (tab != null && sb != null) tab.refresh(p, this, sb);
+    }
 
     private void refreshUI() {
         tabTickCounter++;

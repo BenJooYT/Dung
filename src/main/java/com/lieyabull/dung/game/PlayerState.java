@@ -279,7 +279,7 @@ public final class PlayerState {
                     boolean broken = com.lieyabull.dung.items.GearFactory.damageItem(active, wear);
                     if (broken) {
                         inv.setItem(com.lieyabull.dung.game.DungeonInstance.SHIELD_SLOT, null);
-                        player.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cYour mana shield broke! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability)."));
+                        player.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(player, "gear.manaShieldBroke")));
                     }
                 }
             }

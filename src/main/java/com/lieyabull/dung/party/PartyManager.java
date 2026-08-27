@@ -55,14 +55,14 @@ public final class PartyManager {
         UUID inviterId = pendingInvites.remove(invitee.getUniqueId());
         if (inviterId == null) return false;
         if (partyOf(invitee) != null) {
-            invitee.sendMessage("§cYou are already in a party.");
+            invitee.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(invitee, "party.alreadyIn"));
             return false;
         }
         Party p = partyOf(inviterId);
         if (p == null || p.size() >= Party.MAX_SIZE) return false;
         if (!p.addMember(invitee)) return false;
         playerParties.put(invitee.getUniqueId(), p);
-        p.broadcast("§a" + invitee.getName() + " joined the party.");
+        p.broadcastLocalized("party.joined", invitee.getName());
         return true;
     }
 
@@ -81,12 +81,12 @@ public final class PartyManager {
         if (party.isEmpty()) {
             partyById.remove(party.id());
         } else {
-            party.broadcast("§e" + p.getName() + " left the party.");
+            party.broadcastLocalized("party.left", p.getName());
             if (wasLeader) {
                 try {
                     Player newLeader = org.bukkit.Bukkit.getPlayer(party.leader());
                     if (newLeader != null) {
-                        party.broadcast("§e" + newLeader.getName() + " is now the party leader.");
+                        party.broadcastLocalized("party.newLeader", newLeader.getName());
                     }
                 } catch (Exception ignored) {
                     // Bukkit not initialized (e.g. during testing)
@@ -103,15 +103,15 @@ public final class PartyManager {
         boolean leaderWasKicked = p.leader().equals(target.getUniqueId());
         p.removeMember(target.getUniqueId());
         playerParties.remove(target.getUniqueId());
-        target.sendMessage("§cYou were kicked from the party.");
-        p.broadcast("§e" + target.getName() + " was kicked from the party.");
+        target.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(target, "party.kicked"));
+        p.broadcastLocalized("party.kickedBroadcast", target.getName());
         if (p.isEmpty()) {
             partyById.remove(p.id());
         } else if (leaderWasKicked) {
             try {
                 Player newLeader = org.bukkit.Bukkit.getPlayer(p.leader());
                 if (newLeader != null) {
-                    p.broadcast("§e" + newLeader.getName() + " is now the party leader.");
+                    p.broadcastLocalized("party.newLeader", newLeader.getName());
                 }
             } catch (Exception ignored) {
                 // Bukkit not initialized (e.g. during testing)
@@ -125,7 +125,7 @@ public final class PartyManager {
     public boolean disband(Player leader) {
         Party p = partyOf(leader);
         if (p == null || !p.isLeader(leader.getUniqueId())) return false;
-        p.broadcast("§cThe party has been disbanded.");
+        p.broadcastLocalized("party.disbanded");
         for (UUID uid : p.members()) {
             playerParties.remove(uid);
         }

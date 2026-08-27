@@ -1,6 +1,7 @@
 package com.lieyabull.dung.listener;
 
 import com.lieyabull.dung.Dung;
+import com.lieyabull.dung.lang.Lang;
 import com.lieyabull.dung.game.DungeonInstance;
 import com.lieyabull.dung.game.GameManager;
 import com.lieyabull.dung.game.PlayerState;
@@ -215,7 +216,7 @@ public final class GameListener implements Listener {
             e.setKeepInventory(true);
             e.setKeepLevel(true);
             e.setDeathMessage(null);
-            p.sendMessage("§cYou died.");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "death.youDied"));
             org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
                 // Guard: the player may have quit (or the run ended) between the death event and
                 // this scheduled tick. In that case removePlayer already restored their inventory
@@ -239,12 +240,12 @@ public final class GameListener implements Listener {
         }
     }
 
-    /** Handle respawn for a run player. Since dead players are now set to SPECTATOR mode
+    /** Handle respawn for a run player. Dead players are made invisible with their own head
      *  (not removed from the instance), a vanilla respawn event should only trigger if the
-     *  player somehow bypassed the spectator path. Set them to spectator and keep them in
-     *  the instance so they can be revived on boss defeat.
+     *  player somehow bypassed the death path. Restore invisibility, invulnerability, and head
+     *  and keep them in the instance so they can be revived on boss defeat.
      *  If the player has already been revived (not in deadPlayers), restore SURVIVAL mode
-     *  instead of overriding it back to SPECTATOR. */
+     *  instead. */
     @EventHandler(priority = EventPriority.HIGH)
     public void onRespawn(org.bukkit.event.player.PlayerRespawnEvent e) {
         Player p = e.getPlayer();
@@ -252,7 +253,9 @@ public final class GameListener implements Listener {
         if (di != null) {
             e.setRespawnLocation(e.getPlayer().getWorld().getSpawnLocation());
             if (di.isDead(p.getUniqueId())) {
-                p.setGameMode(GameMode.SPECTATOR);
+                p.setInvisible(true);
+                p.setInvulnerable(true);
+                p.getInventory().setHelmet(di.createPlayerHead(p));
             } else {
                 p.setGameMode(GameMode.SURVIVAL);
             }
@@ -320,14 +323,14 @@ public final class GameListener implements Listener {
                 e.setCancelled(true);
                 e.setCursor(null);
                 StashUI.placeOrStash(p, cursor);
-                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cThat armor is broken — repair it at §6/shop§7 before equipping."));
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.armorBrokenEquip")));
                 return;
             }
         }
         if (e.isShiftClick() && e.getClickedInventory() instanceof PlayerInventory
                 && e.getSlot() < 36 && isBrokenEquippable(e.getCurrentItem())) {
             e.setCancelled(true);
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cThat armor is broken — repair it at §6/shop§7 before equipping."));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.armorBrokenEquip")));
             return;
         }
         // Shift-clicking a mana shield equips it into the slot-9 equip slot. If another shield is
@@ -423,7 +426,7 @@ public final class GameListener implements Listener {
         if (e.getNewItems().entrySet().stream().anyMatch(en ->
                 en.getKey() >= 36 && en.getKey() <= 39 && isBrokenEquippable(en.getValue()))) {
             e.setCancelled(true);
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cThat armor is broken — repair it at §6/shop§7 before equipping."));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.armorBrokenEquip")));
             return;
         }
         // The offhand slot is disabled. If a drag targets it (raw slot 45), cancel the drag and route
@@ -665,7 +668,7 @@ public final class GameListener implements Listener {
             e.setCancelled(true);
             p.getInventory().setItemInMainHand(null);
             StashUI.placeOrStash(p, handItem);
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§cThat armor is broken — repair it at §6/shop§7 before equipping."));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.armorBrokenEquip")));
             return;
         }
         ItemStack held = p.getInventory().getItemInMainHand();
@@ -702,7 +705,7 @@ public final class GameListener implements Listener {
                     if (st != null && !st.dead) {
                         st.heal(stored);
                         GearFactory.setStoredHealth(held, 0);
-                        p.sendMessage("§aYou healed yourself for §c" + stored + "❤");
+                        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.self", stored));
                         // Spawn damage_indicator particles exploding outward from the player
                         Location pLoc = p.getLocation().add(0, 1, 0);
                         for (int i = 0; i < 12; i++) {
@@ -713,10 +716,10 @@ public final class GameListener implements Listener {
                             p.getWorld().spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
                         }
                     } else {
-                        p.sendMessage("§cYou have no health to heal!");
+                        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.noHealth"));
                     }
                 } else {
-                    p.sendMessage("§cNo stored health to spend! Attack enemies to charge it.");
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.noStored"));
                 }
                 return;
             }
@@ -792,8 +795,8 @@ public final class GameListener implements Listener {
                             if (targetSt != null && !targetSt.dead) {
                                 targetSt.heal(stored);
                                 GearFactory.setStoredHealth(held, 0);
-                                p.sendMessage("§aHealed " + target.getName() + " for §c" + stored + "❤");
-                                target.sendMessage("§a" + p.getName() + " healed you for §c" + stored + "❤");
+                                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.other", target.getName(), stored));
+                                target.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(target, "heal.otherTarget", p.getName(), stored));
                                 // Play the heal sound for both the healer and the healed player
                                 org.bukkit.Sound healSound = org.bukkit.Sound.ENTITY_WITCH_DRINK;
                                 p.getWorld().playSound(p.getLocation(), healSound, 0.8f, 1.0f);
@@ -814,7 +817,7 @@ public final class GameListener implements Listener {
                             }
                         }
                     } else {
-                        p.sendMessage("§cNo stored health to transfer! Attack enemies to charge it.");
+                        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.noStoredTransfer"));
                         e.setCancelled(true);
                         return;
                     }
@@ -851,7 +854,7 @@ public final class GameListener implements Listener {
                 PlayerState st = di.playerStateOf(p);
                 if (st != null && Pickup.apply(m, st)) {
                     it.remove();
-                    ChatUI.notify(p, pickupMsg(m, st));
+                    ChatUI.notify(p, pickupMsg(p, m, st));
                     if (Pickup.typeOf(m) == com.lieyabull.dung.pickup.Pickup.Type.HEART) {
                         // Heart pickup feedback: same chime as the Soul Siphon heal + red burst.
                         p.playSound(p.getLocation(), org.bukkit.Sound.ENTITY_WITCH_DRINK, 0.8f, 1.0f);
@@ -862,7 +865,7 @@ public final class GameListener implements Listener {
                 } else if (canWarnFull(p)) {
                     // Pickup no-op (e.g. hearts already full): say why instead of silently ignoring.
                     // Throttled — the pickup event re-fires every tick while standing on the item.
-                    ChatUI.notify(p, "§7" + pickupName(m) + " is full — left on the ground.");
+                    ChatUI.notify(p, Lang.forPlayer(p, "pickup.full", pickupName(p, m)));
                 }
             }
         }
@@ -880,23 +883,23 @@ public final class GameListener implements Listener {
         return true;
     }
 
-    private String pickupMsg(Material m, PlayerState st) {
+    private String pickupMsg(Player p, Material m, PlayerState st) {
         switch (Pickup.typeOf(m)) {
-            case HEART: return "§c+1 Red Heart §7(" + (int) st.hearts + "/" + st.maxHearts + ")";
-            case COIN: return "§e+1 Coin §7(" + st.coins + ")";
-            case KEY: return "§9+1 Key §7(" + st.keys + ")";
-            case BOMB: return "§4+1 Bomb §7(" + st.bombs + ")";
+            case HEART: return Lang.forPlayer(p, "pickup.heart", (int) st.hearts, st.maxHearts);
+            case COIN: return Lang.forPlayer(p, "pickup.coin", st.coins);
+            case KEY: return Lang.forPlayer(p, "pickup.key", st.keys);
+            case BOMB: return Lang.forPlayer(p, "pickup.bomb", st.bombs);
         }
         return "";
     }
 
     /** Friendly name of a pickup material for the "already full" feedback. */
-    private String pickupName(Material m) {
+    private String pickupName(Player p, Material m) {
         return switch (Pickup.typeOf(m)) {
-            case HEART -> "§cHearts";
-            case COIN -> "§eCoins";
-            case KEY -> "§9Keys";
-            case BOMB -> "§4Bombs";
+            case HEART -> Lang.forPlayer(p, "pickup.name.heart");
+            case COIN -> Lang.forPlayer(p, "pickup.name.coin");
+            case KEY -> Lang.forPlayer(p, "pickup.name.key");
+            case BOMB -> Lang.forPlayer(p, "pickup.name.bomb");
         };
     }
 }

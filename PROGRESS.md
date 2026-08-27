@@ -1071,6 +1071,25 @@ tab = detailed build/run/progression).
       `PropagationEngine.resolveTransformation` (family-preserving forest, weighted stone, custom
       definitions). All tests passing.
 
+### Iteration 48 — full EN/Magyar localization (/language + gear lore)
+- [x] **Language system:** per-player UI language (`english` / `magyar`) stored in `MetaManager`
+      (persisted across restarts), selected with `/language`. Catalog in `com.lieyabull.dung.lang.Lang`
+      of `key → {EN, HU}` pairs; `Lang.get(lang, key, args...)` / `Lang.forPlayer(player, ...)` /
+      `Lang.languageOf(player)` resolve per-language with English fallback.
+- [x] **Coverage:** tutorial, menu, pickups, room/descend/death messages, all chat surfaces, HUD /
+      tab menu, and the three GUIs (`ShopUI`, `StashUI`, `WorkstationUI`) fully localized.
+- [x] **Gear lore localized on acquire** (the approved design): ground drops are rewritten in the
+      picker's language the moment they enter the inventory via the new `GearLoreListener`
+      (`EntityPickupItemEvent`); direct-add paths (shop roll, starter kit, pedestal claim, persisted
+      delivery, workstation upgrade/reforge, debug `give`) localize at grant. Unpicked items stay English.
+- [x] **`/language` re-localizes** everything already held (inventory + armor) and the stash contents.
+- [x] **Combat rewrites stay localized:** durability bar (`addDurabilityLore`) and the Life Drain
+      "Stored" line (`setStoredHealth`) detect the item's current lore language so they don't revert
+      to English mid-fight.
+- [x] **Not translated:** command tokens and proper-noun ability names (`Rush`, `Life Drain`, …) kept
+      verbatim; only surrounding prose translated.
+- [x] `gradlew build` green (only the pre-existing `FakePlayerRenderer` deprecation warning); tests pass.
+
 ## Build / run
 ```
 gradlew build            # compiles + jars
