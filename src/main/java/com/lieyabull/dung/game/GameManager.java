@@ -4,6 +4,7 @@ import com.lieyabull.dung.Dung;
 import com.lieyabull.dung.party.Party;
 import com.lieyabull.dung.party.PartyManager;
 import org.bukkit.Bukkit;
+import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitRunnable;
 
@@ -44,6 +45,14 @@ public final class GameManager {
     /** Get a dungeon instance by its ID. */
     public DungeonInstance instanceById(UUID id) {
         return instances.get(id);
+    }
+
+    /** Find a dungeon instance by its run world. */
+    public DungeonInstance instanceByWorld(World w) {
+        for (DungeonInstance di : instances.values()) {
+            if (di.world() != null && di.world().equals(w)) return di;
+        }
+        return null;
     }
 
     /** Get all active dungeon instances. */

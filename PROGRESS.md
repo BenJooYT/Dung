@@ -1,4 +1,4 @@
-# Dung — Room-Based Dungeon Roguelite + MMORPG Combat
+ # Dung — Room-Based Dungeon Roguelite + MMORPG Combat
 
 Live progress page.
 - **Dungeon quality bar:** The Binding of Isaac (room flow, pacing, exploration, room types).
@@ -1100,6 +1100,13 @@ tab = detailed build/run/progression).
 - [x] **`aliveCoinAward` reused for boss defeat:** the same living-only split logic applied to boss clear coins (previously awarded coins equally to all members regardless of death state).
 - [x] **`restoreSavedInventory` preserves mid-run durability loss:** when restoring persistent items, the mid-run damaged version is kept instead of the undamaged snapshot (so ability-use wear on persistent gear isn't rolled back on run end).
 
+### Iteration 50 — dungeon start freeze eliminated (~4s → near-instant)
+- [x] **WorldEdit EditSession batching for floor block operations:** All procedural room building, corridor carving, secret passages, and locked-door barrier placement now batch through a single WorldEdit `EditSession` instead of ~40,000 individual `world.getBlockAt().setType()` calls. Each per-block call previously triggered synchronous lighting, physics, and neighbour updates in NMS — the main cause of the ~4s server freeze when starting/descending a run.
+- [x] **BlockBatcher utility:** New `BlockBatcher` class wraps the session in/out lifecycle. `setBlock()` routes through WorldEdit's `EditSession.setBlock()` (batch API, no per-block overhead) with a static `EnumMap<Material, BlockState>` cache to avoid re-adapting Material→BlockState on every call. Falls back to the direct Bukkit API when no session is active, so the method is safe to use anywhere.
+- [x] **RoomGen.java migrated:** All `w.getBlockAt(x,y,z).setType(m)` calls replaced with `BlockBatcher.setBlock(w, x, y, z, m)` — rooms, corridors, shapes (L/Pillar/Split), and lighting.
+- [x] **DungeonInstance.java migrated:** `carveStructureDoors`, `carveStructureCorridors`, `carveSecretPassage`, and `setLockedBarrier` now all use `BlockBatcher.setBlock` and are wrapped inside the single outer EditSession.
+- [x] **No API changes:** All carving/build methods keep the same signatures. Existing `StructureWorldEdit.paste()` continues to use its own EditSession (independent). The Batcher's fallback path means any block-setting code works identically with or without an active session — zero risk for other callers.
+
 ### Iteration 48 — full EN/Magyar localization (/language + gear lore)
 - [x] **Language system:** per-player UI language (`english` / `magyar`) stored in `MetaManager`
       (persisted across restarts), selected with `/language`. Catalog in `com.lieyabull.dung.lang.Lang`
@@ -1118,6 +1125,24 @@ tab = detailed build/run/progression).
 - [x] **Not translated:** command tokens and proper-noun ability names (`Rush`, `Life Drain`, …) kept
       verbatim; only surrounding prose translated.
 - [x] `gradlew build` green (only the pre-existing `FakePlayerRenderer` deprecation warning); tests pass.
+
+### Iteration 51 — The Grovekeeper (forest-themed boss, 20% chance per floor)
+- [x] **New boss: The Grovekeeper** — a forest-themed boss that replaces The Warden with a 20% chance per floor. Uses a Ravager entity with a green boss bar and 3 attacks:
+  - **Root Burst (beam):** Telegraphs a directional lane with vine particles for 18 ticks (14 when enraged), then fires a root burst dealing 45+floor×15 damage (55+floor×15 when enraged) in a 2-block-wide, 12-block-long lane.
+  - **Timber Walls (slam):** Expanding ring telegraph with oak log/leaf particles, deals 30+floor×10 damage to players within 3 blocks.
+  - **Poisonous Roots (radial):** Unlocked below 50% HP. Expanding ring telegraph with moss/spore blossom particles, deals 35+floor×12 damage within 5 blocks plus 3 ticks of poison DoT (5+floor×3 each tick).
+- [x] **Enrage phase:** Below 50% HP, attack patterns are faster (14-tick telegraphs, 25-tick cooldown vs 18/40 normal) and Poisonous Roots is added to the rotation.
+- [x] **Flanking dash:** On taking damage, The Grovekeeper teleports behind the attacker in 4 steps with leaf particles and an enderman sound, so melee fighters can't just stand still and trade hits.
+- [x] **Boss room height increased:** `RoomGen.BOSS_ROOM_HEIGHT = 7` (was 4) — boss rooms are taller to accommodate the larger Ravager entity and give an imposing feel. `sealDoors`, `setLockedBarrier`, and `tearDownDungeon` all use the correct height per room type.
+- [x] **Forest Transmutation Elixir reward:** The Grovekeeper drops a Forest Transmutation Elixir on defeat as a special reward (alongside the normal boss loot/coins). The potion is the same item available from the persistent shop.
+- [x] **Full ability integration:** All weapon abilities (Rush, Slash, Cleave, Smash, Blade Storm, Arcane Bolt, Chain Lightning, Fireball, Life Drain) and class abilities (War Cry, Arcane Nova, Shadow Step) work against The Grovekeeper via the shared `damageBoss`/`bossLocation()`/`bossActiveEntity()` helpers.
+- [x] **New `GrovekeeperController`** in `com.lieyabull.dung.boss` package — standalone controller with its own boss bar, attack state machine, and lifecycle (spawn/tick/damage/despawn). Party-size HP scaling: `(60 + floor × 25) × partySize`.
+
+### Iteration 52 — `/dung forceboss` admin command
+- [x] **`/dung forceboss <warden|grovekeeper|random>`** — admin command that forces a specific boss type for the next floor in the dungeon world the player is standing in. Requires `dung.admin`. The forced type is consumed after the boss is spawned, so it only affects the immediate next floor.
+- [x] **`DungeonInstance.forcedBossType`** — new field (null = random, `"warden"`/`"grovekeeper"` = forced) with `setForcedBossType()`/`forcedBossType()` accessors. `onRoomEnterBossCheck()` uses the forced type instead of the random 20% roll when set.
+- [x] **`GameManager.instanceByWorld(World)`** — lookup method to find a dungeon instance by its run world, used by the command to target the correct instance.
+- [x] **Tab completion:** `forceboss` subcommand completes `warden`/`grovekeeper`/`random`.
 
 ## Build / run
 ```

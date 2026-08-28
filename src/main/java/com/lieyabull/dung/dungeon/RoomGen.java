@@ -4,6 +4,8 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 
+import static com.lieyabull.dung.dungeon.BlockBatcher.setBlock;
+
 /**
  * Builds an enclosed, lit room in the world at a base position. Doors open only in the
  * directions the graph says. Room interior is a flat floor with a ceiling and walls.
@@ -13,6 +15,8 @@ public final class RoomGen {
     public static final int LONG = 17;   // base elongated axis interior dimension at party size 1
     public static final int WALL = 1;
     public static final int ROOM_HEIGHT = 4; // interior air blocks above the floor
+    /** Boss rooms are taller to accommodate the larger Ravager entity and give an imposing feel. */
+    public static final int BOSS_ROOM_HEIGHT = 7; // interior air blocks above the floor for boss rooms
     /** Fixed off-axis line (from a room's base) that EVERY door/corridor is centered on, anchored
      *  to the widest room so square + long neighbours carve on the SAME line. Any code that seals
      *  or references a doorway must use this, not the room's own geometric center. */
@@ -72,7 +76,9 @@ public final class RoomGen {
         int wl = n.sizeW + 2 * WALL;       // footprint including walls
         int wh = n.sizeH + 2 * WALL;
         // hollow out + floor; ceiling sits one row above the tallest air block
-        int ceilY = baseY + ROOM_HEIGHT + 1;
+        // Boss rooms are taller (BOSS_ROOM_HEIGHT) to accommodate the larger Ravager entity
+        int roomHeight = n.type == RoomType.BOSS ? BOSS_ROOM_HEIGHT : ROOM_HEIGHT;
+        int ceilY = baseY + roomHeight + 1;
         // Visual themes per room type
         boolean boss = n.type == RoomType.BOSS;
         Material wallMat;
@@ -131,11 +137,11 @@ public final class RoomGen {
                     boolean wall = x == 0 || x == wl - 1 || z == 0 || z == wh - 1;
                     boolean ceiling = y == ceilY;
                     if (wall || ceiling) {
-                        w.getBlockAt(sx + x, y, sz + z).setType(wallMat);
+                        setBlock(w, sx + x, y, sz + z, wallMat);
                     } else if (y == baseY) {
-                        w.getBlockAt(sx + x, y, sz + z).setType(floorMat);
+                        setBlock(w, sx + x, y, sz + z, floorMat);
                     } else {
-                        w.getBlockAt(sx + x, y, sz + z).setType(Material.AIR);
+                        setBlock(w, sx + x, y, sz + z, Material.AIR);
                     }
                 }
             }
@@ -189,12 +195,12 @@ public final class RoomGen {
                     for (int off = -1; off <= 1; off++) {    // exactly 3 wide
                         int px = horiz ? (axC + asg * t) : (perpC + off);
                         int pz = horiz ? (perpC + off) : (axC + asg * t);
-                        w.getBlockAt(px, baseY, pz).setType(Material.POLISHED_ANDESITE);
-                        for (int y = baseY + 1; y <= baseY + ROOM_HEIGHT; y++) {
-                            w.getBlockAt(px, y, pz).setType(Material.AIR);
+                        setBlock(w, px, baseY, pz, Material.POLISHED_ANDESITE);
+                        for (int y = baseY + 1; y <= baseY + roomHeight; y++) {
+                            setBlock(w, px, y, pz, Material.AIR);
                         }
                         // roof the corridor
-                        w.getBlockAt(px, baseY + ROOM_HEIGHT + 1, pz).setType(Material.STONE_BRICKS);
+                        setBlock(w, px, baseY + roomHeight + 1, pz, Material.STONE_BRICKS);
                     }
                 }
                 // Build a NARROW corridor: the gap between the two room walls is a solid stone mass
@@ -207,8 +213,8 @@ public final class RoomGen {
                         if (Math.abs(off) <= 1) continue; // the 3-wide passage is already carved
                         int px = horiz ? (axC + asg * t) : (perpC + off);
                         int pz = horiz ? (perpC + off) : (axC + asg * t);
-                        for (int y = baseY; y <= baseY + ROOM_HEIGHT + 1; y++) {
-                            w.getBlockAt(px, y, pz).setType(Material.STONE_BRICKS);
+                        for (int y = baseY; y <= baseY + roomHeight + 1; y++) {
+                            setBlock(w, px, y, pz, Material.STONE_BRICKS);
                         }
                     }
                 }
@@ -218,15 +224,15 @@ public final class RoomGen {
                     int mid = innerWallT + corridorLen / 2;
                     int lx = horiz ? (axC + asg * mid) : (perpC);
                     int lz = horiz ? (perpC) : (axC + asg * mid);
-                    w.getBlockAt(lx, baseY + ROOM_HEIGHT, lz).setType(Material.LANTERN);
+                    setBlock(w, lx, baseY + roomHeight, lz, Material.LANTERN);
                 }
                 // Boss doorway warning: a red floor tile + red overhead glow sit right at the door
                 // opening so the danger reads from the corridor BEFORE the player steps inside.
                 if (boss) {
                     int px = horiz ? (axC + asg * innerWallT) : perpC;
                     int pz = horiz ? perpC : (axC + asg * innerWallT);
-                    w.getBlockAt(px, baseY, pz).setType(Material.REDSTONE_BLOCK);
-                    w.getBlockAt(px, baseY + ROOM_HEIGHT + 1, pz).setType(Material.SHROOMLIGHT);
+                    setBlock(w, px, baseY, pz, Material.REDSTONE_BLOCK);
+                    setBlock(w, px, baseY + roomHeight + 1, pz, Material.SHROOMLIGHT);
                 }
             }
         }
@@ -237,7 +243,7 @@ public final class RoomGen {
         // light up because the ceiling sits one row above the tallest air block.
         for (int x = WALL + 1; x < wl - 1; x += 3) {
             for (int z = WALL + 1; z < wh - 1; z += 3) {
-                w.getBlockAt(sx + x, ceilY, sz + z).setType(lightMat);
+                setBlock(w, sx + x, ceilY, sz + z, lightMat);
             }
         }
     }
@@ -278,9 +284,9 @@ public final class RoomGen {
             for (int z = cz; z < cz + lh; z++) {
                 for (int y = baseY; y <= ceilY; y++) {
                     if (y == baseY) {
-                        w.getBlockAt(x, y, z).setType(floorMat);
+                        setBlock(w, x, y, z, floorMat);
                     } else {
-                        w.getBlockAt(x, y, z).setType(wallMat);
+                        setBlock(w, x, y, z, wallMat);
                     }
                 }
             }
@@ -313,7 +319,7 @@ public final class RoomGen {
         for (int[] p : positions) {
             int px = p[0], pz = p[1];
             for (int y = baseY; y <= ceilY; y++) {
-                w.getBlockAt(px, y, pz).setType(y == baseY ? floorMat : wallMat);
+                setBlock(w, px, y, pz, y == baseY ? floorMat : wallMat);
             }
         }
     }
@@ -334,7 +340,7 @@ public final class RoomGen {
                 int xStart = ix + gap;
                 for (int x = xStart; x < xStart + wallLen && x < ix + iw; x++) {
                     for (int y = baseY + 1; y <= ceilY; y++) {
-                        w.getBlockAt(x, y, z).setType(wallMat);
+                        setBlock(w, x, y, z, wallMat);
                     }
                 }
             }
@@ -343,7 +349,7 @@ public final class RoomGen {
                 int zStart = iz + gap;
                 for (int z = zStart; z < zStart + wallLen && z < iz + ih; z++) {
                     for (int y = baseY + 1; y <= ceilY; y++) {
-                        w.getBlockAt(x, y, z).setType(wallMat);
+                        setBlock(w, x, y, z, wallMat);
                     }
                 }
             }
@@ -352,7 +358,7 @@ public final class RoomGen {
                 int xStart = ix + gap;
                 for (int x = xStart; x < xStart + wallLen && x < ix + iw; x++) {
                     for (int y = baseY + 1; y <= ceilY; y++) {
-                        w.getBlockAt(x, y, z).setType(wallMat);
+                        setBlock(w, x, y, z, wallMat);
                     }
                 }
             }
@@ -361,7 +367,7 @@ public final class RoomGen {
                 int zStart = iz + gap;
                 for (int z = zStart; z < zStart + wallLen && z < iz + ih; z++) {
                     for (int y = baseY + 1; y <= ceilY; y++) {
-                        w.getBlockAt(x, y, z).setType(wallMat);
+                        setBlock(w, x, y, z, wallMat);
                     }
                 }
             }

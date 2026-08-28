@@ -762,8 +762,7 @@ public final class GameListener implements Listener {
             di.tryCastAbility(p, held);
             return;
         }
-        // Life Drain: shift + left-click heals the user with the weapon's stored health.
-        // If looking at another player within 100 blocks, heal them instead (infinite-range).
+        // Life Drain: shift + left-click heals the user with the weapon's stored health (self-heal only).
         if (hasAbility && (e.getAction() == Action.LEFT_CLICK_AIR || e.getAction() == Action.LEFT_CLICK_BLOCK)
                 && p.isSneaking()) {
             String ability = held.getItemMeta().getPersistentDataContainer()
@@ -780,7 +779,38 @@ public final class GameListener implements Listener {
                 lastSoulSiphonHeal.put(p.getUniqueId(), now);
                 int stored = GearFactory.getStoredHealth(held);
                 if (stored > 0) {
-                    // Check if looking at another player within 100 blocks (infinite-range heal)
+                    PlayerState st = di.run().playerStateOf(p.getUniqueId());
+                    if (st != null && !st.dead) {
+                        st.heal(stored);
+                        GearFactory.setStoredHealth(held, 0);
+                        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.self", stored));
+                        // Spawn damage_indicator particles exploding outward from the player
+                        Location pLoc = p.getLocation().add(0, 1, 0);
+                        for (int i = 0; i < 12; i++) {
+                            double angle = i * Math.PI * 2 / 12;
+                            double dx = Math.cos(angle) * 0.5;
+                            double dz = Math.sin(angle) * 0.5;
+                            Location pt = pLoc.clone().add(dx, 0, dz);
+                            p.getWorld().spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
+                        }
+                    } else {
+                        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.noHealth"));
+                    }
+                } else {
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.noStored"));
+                }
+                return;
+            }
+        }
+        // Life Drain: non-sneaking right-click on air heals the looked-at player with infinite range (100 blocks).
+        if (hasAbility && e.getAction() == Action.RIGHT_CLICK_AIR && !p.isSneaking()) {
+            String ability = held.getItemMeta().getPersistentDataContainer()
+                    .get(org.bukkit.NamespacedKey.minecraft(ItemTags.ABILITY),
+                         org.bukkit.persistence.PersistentDataType.STRING);
+            if ("Life Drain".equals(ability)) {
+                e.setCancelled(true);
+                int stored = GearFactory.getStoredHealth(held);
+                if (stored > 0) {
                     Player target = targetedPlayer(p, 100.0);
                     if (target != null) {
                         DungeonInstance targetDi = instanceOf(target);
@@ -808,26 +838,9 @@ public final class GameListener implements Listener {
                             }
                         }
                     }
-                    // Fallback: heal self if no valid player target in sight
-                    PlayerState st = di.run().playerStateOf(p.getUniqueId());
-                    if (st != null && !st.dead) {
-                        st.heal(stored);
-                        GearFactory.setStoredHealth(held, 0);
-                        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.self", stored));
-                        // Spawn damage_indicator particles exploding outward from the player
-                        Location pLoc = p.getLocation().add(0, 1, 0);
-                        for (int i = 0; i < 12; i++) {
-                            double angle = i * Math.PI * 2 / 12;
-                            double dx = Math.cos(angle) * 0.5;
-                            double dz = Math.sin(angle) * 0.5;
-                            Location pt = pLoc.clone().add(dx, 0, dz);
-                            p.getWorld().spawnParticle(org.bukkit.Particle.DAMAGE_INDICATOR, pt, 1, 0, 0, 0, 0);
-                        }
-                    } else {
-                        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.noHealth"));
-                    }
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.noHealth"));
                 } else {
-                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.noStored"));
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "heal.noStoredTransfer"));
                 }
                 return;
             }

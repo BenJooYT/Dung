@@ -2,6 +2,8 @@ package com.lieyabull.dung.game;
 
 import com.lieyabull.dung.Dung;
 import com.lieyabull.dung.boss.BossController;
+import com.lieyabull.dung.boss.GrovekeeperController;
+import com.lieyabull.dung.dungeon.BlockBatcher;
 import com.lieyabull.dung.dungeon.Floor;
 import com.lieyabull.dung.dungeon.FloorGenerator;
 import com.lieyabull.dung.dungeon.RoomGen;
@@ -30,6 +32,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemFrame;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
@@ -48,6 +51,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+
+import com.sk89q.worldedit.EditSession;
+import com.sk89q.worldedit.WorldEdit;
+import com.sk89q.worldedit.bukkit.BukkitAdapter;
+
+import static com.lieyabull.dung.dungeon.BlockBatcher.setBlock;
 
 /**
  * A single dungeon instance shared by a party of players. Each instance has its own floor,
@@ -88,6 +97,12 @@ public final class DungeonInstance {
     private final Map<UUID, org.bukkit.entity.TextDisplay> hpTags = new HashMap<>();
     private final Map<UUID, ItemStack[]> lastGear = new HashMap<>();
     private BossController boss;
+    /** The Grovekeeper — a forest-themed boss that replaces The Warden with a 20% chance per floor. */
+    private GrovekeeperController grovekeeper;
+    /** Whether this floor's boss is The Grovekeeper instead of The Warden. */
+    private boolean isGrovekeeperFloor;
+    /** Forced boss type for the next floor (admin override). null = random, "warden" = always Warden, "grovekeeper" = always Grovekeeper. */
+    private String forcedBossType;
     private Floor.RoomNode bossRoom;
     private final Map<UUID, HUD> huds = new HashMap<>();
     private final Map<UUID, TabUI> tabs = new HashMap<>();
@@ -173,6 +188,14 @@ public final class DungeonInstance {
         }
         return null;
     }
+    /** Set the forced boss type for the next floor. Pass null to reset to random. */
+    public void setForcedBossType(String type) {
+        this.forcedBossType = type;
+    }
+
+    /** Get the current forced boss type, or null if random. */
+    public String forcedBossType() { return forcedBossType; }
+
     public BossController boss() { return boss; }
     public Map<Long, List<Enemy>> roomEnemies() { return roomEnemies; }
     public boolean isRunning() { return running; }
@@ -536,6 +559,7 @@ public final class DungeonInstance {
         if (run == null) return;
         run.floorIndex = floorIndex;
         descendVotes.clear();
+        isGrovekeeperFloor = false;
         clearRoomEntities();
         // Larger parties get bigger rooms AND more room-to-room spacing so the room footprints
         // (which grow with tier) never overlap. Tier 0 (solo) keeps the original layout.
@@ -560,36 +584,47 @@ public final class DungeonInstance {
         for (Floor.RoomNode n : run.floor.rooms()) {
             if (n.structure == null) RoomGen.scaleToTier(n, tier);
         }
-        for (Floor.RoomNode n : run.floor.rooms()) {
-            if (n.structure != null) {
-                StructureDefinition s = n.structure;
-                RoomBounds tot = s.total();
-                int ox = baseX(n) - tot.minX;
-                int oy = BASE_Y - tot.minY;
-                int oz = baseZ(n) - tot.minZ;
-                StructureWorldEdit.paste(world, n.clipboard, ox, oy, oz, n.rotationSteps);
-            } else {
-                RoomGen.build(world, n, BASE_Y, spacing, corridorHalf, offsetX, offsetZ);
+        // Batch ALL floor block operations through a single WorldEdit EditSession so changes
+        // commit atomically with no per-block lighting/physics overhead (the #1 cause of the ~4s
+        // server freeze when starting a run). StructureWorldEdit.paste() already uses its own
+        // EditSession internally (opened/closed per call), so we only batch the procedural room
+        // build + carving methods here; the two sessions are independent and can run consecutively.
+        try (EditSession editSession = WorldEdit.getInstance().newEditSessionBuilder()
+                .world(BukkitAdapter.adapt(world))
+                .build()) {
+            BlockBatcher.begin(editSession);
+            for (Floor.RoomNode n : run.floor.rooms()) {
+                if (n.structure != null) {
+                    StructureDefinition s = n.structure;
+                    RoomBounds tot = s.total();
+                    int ox = baseX(n) - tot.minX;
+                    int oy = BASE_Y - tot.minY;
+                    int oz = baseZ(n) - tot.minZ;
+                    StructureWorldEdit.paste(world, n.clipboard, ox, oy, oz, n.rotationSteps);
+                } else {
+                    RoomGen.build(world, n, BASE_Y, spacing, corridorHalf, offsetX, offsetZ);
+                }
             }
-        }
-        // Structure rooms: carve doorway openings + corridors procedurally on the shared corridor line
-        // (PERP_CENTER), so each structure room opens only the door directions the floor graph needs
-        // and connects to its neighbours without leaving a hole between the room wall and the corridor.
-        carveStructureDoors(run.floor);
-        carveStructureCorridors(run.floor);
-        // Register destructible wall locations for SECRET rooms and carve passages
-        destructibleWalls.clear();
-        revealedSecrets.clear();
-        for (Floor.RoomNode n : run.floor.rooms()) {
-            if (n.type == RoomType.SECRET && n.destructibleWallLoc != null) {
-                carveSecretPassage(n);
-                registerDestructibleWall(n);
+            // Structure rooms: carve doorway openings + corridors procedurally on the shared corridor line
+            // (PERP_CENTER), so each structure room opens only the door directions the floor graph needs
+            // and connects to its neighbours without leaving a hole between the room wall and the corridor.
+            carveStructureDoors(run.floor);
+            carveStructureCorridors(run.floor);
+            // Register destructible wall locations for SECRET rooms and carve passages
+            destructibleWalls.clear();
+            revealedSecrets.clear();
+            for (Floor.RoomNode n : run.floor.rooms()) {
+                if (n.type == RoomType.SECRET && n.destructibleWallLoc != null) {
+                    carveSecretPassage(n);
+                    registerDestructibleWall(n);
+                }
             }
-        }
-        // Post-pass LOCKED doors: place every barrier AFTER all rooms are built so a neighbour
-        // room's corridor carve can never overwrite the locked door away.
-        for (Floor.RoomNode n : run.floor.rooms()) {
-            if (n.type == RoomType.LOCKED) placeLockedDoorBarrier(n);
+            // Post-pass LOCKED doors: place every barrier AFTER all rooms are built so a neighbour
+            // room's corridor carve can never overwrite the locked door away.
+            for (Floor.RoomNode n : run.floor.rooms()) {
+                if (n.type == RoomType.LOCKED) placeLockedDoorBarrier(n);
+            }
+            BlockBatcher.end();
         }
         curRoom = run.floor.start;
         enterRoom(curRoom);
@@ -678,12 +713,12 @@ public final class DungeonInstance {
                     for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
                         int px = horiz ? wallAlong : (perpC + off);
                         int pz = horiz ? (perpC + off) : wallAlong;
-                        world.getBlockAt(px, y, pz).setType(Material.AIR);
+                        setBlock(world, px, y, pz, Material.AIR);
                     }
                     int fx = horiz ? wallAlong : perpC;
                     int fz = horiz ? perpC : wallAlong;
-                    world.getBlockAt(fx, BASE_Y, fz).setType(Material.POLISHED_ANDESITE);
-                    world.getBlockAt(fx, BASE_Y + RoomGen.ROOM_HEIGHT + 1, fz).setType(Material.STONE_BRICKS);
+                    setBlock(world, fx, BASE_Y, fz, Material.POLISHED_ANDESITE);
+                    setBlock(world, fx, BASE_Y + RoomGen.ROOM_HEIGHT + 1, fz, Material.STONE_BRICKS);
                 }
             }
         }
@@ -719,11 +754,11 @@ public final class DungeonInstance {
                     for (int off = -1; off <= 1; off++) {
                         int px = horiz ? t : (perpC + off);
                         int pz = horiz ? (perpC + off) : t;
-                        world.getBlockAt(px, BASE_Y, pz).setType(Material.POLISHED_ANDESITE);
+                        setBlock(world, px, BASE_Y, pz, Material.POLISHED_ANDESITE);
                         for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
-                            world.getBlockAt(px, y, pz).setType(Material.AIR);
+                            setBlock(world, px, y, pz, Material.AIR);
                         }
-                        world.getBlockAt(px, BASE_Y + RoomGen.ROOM_HEIGHT + 1, pz).setType(Material.STONE_BRICKS);
+                        setBlock(world, px, BASE_Y + RoomGen.ROOM_HEIGHT + 1, pz, Material.STONE_BRICKS);
                     }
                 }
             }
@@ -858,7 +893,7 @@ public final class DungeonInstance {
         if (n.type == RoomType.UPGRADE) {
             setupUpgradeRoom(n);
         }
-        if (n.type == RoomType.BOSS && !n.cleared && boss == null) {
+        if (n.type == RoomType.BOSS && !n.cleared && boss == null && grovekeeper == null) {
             onRoomEnterBossCheck();
         }
     }
@@ -912,6 +947,7 @@ public final class DungeonInstance {
         int[] DZ = {-1, 0, 1, 0};
         Location c = RoomGen.center(world, n, BASE_Y, spacing, offsetX, offsetZ);
         int bx = baseX(n), bz = baseZ(n);
+        int roomHeight = n.type == RoomType.BOSS ? RoomGen.BOSS_ROOM_HEIGHT : RoomGen.ROOM_HEIGHT;
         for (int d = 0; d < 4; d++) {
             if (!n.doors[d]) continue;
             boolean horiz = d == 1 || d == 3;
@@ -920,10 +956,10 @@ public final class DungeonInstance {
             int wallZ = c.getBlockZ() + DZ[d] * (half + RoomGen.WALL);
             int perpC = horiz ? (bz + RoomGen.PERP_CENTER) : (bx + RoomGen.PERP_CENTER);
             for (int off = -1; off <= 1; off++) {
-                for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
+                for (int y = BASE_Y + 1; y <= BASE_Y + roomHeight; y++) {
                     int px = horiz ? wallX : (perpC + off);
                     int pz = horiz ? (perpC + off) : wallZ;
-                    world.getBlockAt(px, y, pz).setType(mat);
+                    setBlock(world, px, y, pz, mat);
                 }
             }
         }
@@ -1248,6 +1284,7 @@ public final class DungeonInstance {
     private void sealDoors(Floor.RoomNode n, boolean close) {
         int[] DX = {0, 1, 0, -1};
         int[] DZ = {-1, 0, 1, 0};
+        int roomHeight = n.type == RoomType.BOSS ? RoomGen.BOSS_ROOM_HEIGHT : RoomGen.ROOM_HEIGHT;
         if (n.structure != null) {
             // Structure room: seal the doorway opening itself, on the shared corridor line (same
             // position carveStructureDoors carved it), so the bars line up with the opening.
@@ -1258,7 +1295,7 @@ public final class DungeonInstance {
                 int wallAlong = facingWallAlong(n, d, t);
                 int perpC = horiz ? (baseZ(n) + RoomGen.PERP_CENTER) : (baseX(n) + RoomGen.PERP_CENTER);
                 for (int off = -1; off <= 1; off++) {
-                    for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
+                    for (int y = BASE_Y + 1; y <= BASE_Y + roomHeight; y++) {
                         int px = horiz ? wallAlong : (perpC + off);
                         int pz = horiz ? (perpC + off) : wallAlong;
                         if (close) {
@@ -1281,7 +1318,7 @@ public final class DungeonInstance {
             int wallZ = c.getBlockZ() + DZ[d] * (half + RoomGen.WALL);
             int perpC = horiz ? (bz + RoomGen.PERP_CENTER) : (bx + RoomGen.PERP_CENTER);
             for (int off = -1; off <= 1; off++) {
-                for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
+                for (int y = BASE_Y + 1; y <= BASE_Y + roomHeight; y++) {
                     int px = horiz ? wallX : (perpC + off);
                     int pz = horiz ? (perpC + off) : wallZ;
                     if (close) {
@@ -1495,6 +1532,10 @@ public final class DungeonInstance {
             Player nearest = nearestPlayer(boss.location());
             if (nearest != null) boss.tick(nearest);
         }
+        if (grovekeeper != null) {
+            Player nearest = nearestPlayer(grovekeeper.location());
+            if (nearest != null) grovekeeper.tick(nearest);
+        }
 
         // Make each shopkeeper look at the nearest party member so the villager faces players
         // on every client's side (no-AI villagers don't naturally track players).
@@ -1625,6 +1666,29 @@ public final class DungeonInstance {
         }
     }
 
+    /** Damage whichever boss is active (The Warden or The Grovekeeper). */
+    private void damageBoss(double dmg, Player attacker) {
+        if (grovekeeper != null && grovekeeper.isActive()) {
+            grovekeeper.damage(dmg, attacker);
+        } else if (boss != null && boss.isActive()) {
+            boss.damage(dmg, attacker);
+        }
+    }
+
+    /** Location of whichever boss is active, or null if none. */
+    private Location bossLocation() {
+        if (grovekeeper != null && grovekeeper.isActive()) return grovekeeper.location();
+        if (boss != null && boss.isActive()) return boss.location();
+        return null;
+    }
+
+    /** Entity of whichever boss is active, or null if none. */
+    private Entity bossActiveEntity() {
+        if (grovekeeper != null && grovekeeper.isActive()) return grovekeeper.entity();
+        if (boss != null && boss.isActive()) return boss.entity();
+        return null;
+    }
+
     /** Find the nearest online, alive (non-spectator) party member to a location. */
     private Player nearestPlayer(Location loc) {
         Player nearest = null;
@@ -1720,7 +1784,7 @@ public final class DungeonInstance {
             if (horiz < ps.reach + 0.5 && vert < 3.0) {
                 boolean crit = guaranteeCrit || Math.random() < ps.critChance;
                 double dmg = baseDmg * (crit ? ps.critMult : 1.0);
-                boss.damage(dmg, p);
+                damageBoss(dmg, p);
                 bossDmg = dmg;
             }
         }
@@ -1917,8 +1981,8 @@ public final class DungeonInstance {
             case "mage":
                 // Arcane Nova: AoE damage (2x) divided among all enemies within 5 blocks
                 java.util.function.DoubleConsumer hitBossNova = (radius) -> {
-                    if (boss != null && boss.isActive() && boss.location().distance(caster.getLocation()) < radius) {
-                        boss.damage(dmg * 2.0, caster);
+                    if ((boss != null && boss.isActive() || grovekeeper != null && grovekeeper.isActive()) && bossLocation().distance(caster.getLocation()) < radius) {
+                        damageBoss(dmg * 2.0, caster);
                     }
                 };
                 hitBossNova.accept(5.0);
@@ -1995,8 +2059,8 @@ public final class DungeonInstance {
         org.bukkit.util.Vector dir = caster.getEyeLocation().getDirection().normalize();
 
         java.util.function.DoubleConsumer hitBoss = (radius) -> {
-            if (boss != null && boss.isActive() && boss.location().distance(caster.getLocation()) < radius) {
-                boss.damage(dmg, caster);
+            if ((boss != null && boss.isActive() || grovekeeper != null && grovekeeper.isActive()) && bossLocation().distance(caster.getLocation()) < radius) {
+                damageBoss(dmg, caster);
             }
         };
 
@@ -2076,15 +2140,16 @@ public final class DungeonInstance {
                     }
                 }
                 // Also check boss as a valid primary target
-                if (primary == null && boss != null && boss.isActive()) {
-                    org.bukkit.util.Vector toBoss = boss.location().toVector().subtract(caster.getLocation().toVector());
+                if (primary == null && (boss != null && boss.isActive() || grovekeeper != null && grovekeeper.isActive())) {
+                    Location bl = bossLocation();
+                    org.bukkit.util.Vector toBoss = bl.toVector().subtract(caster.getLocation().toVector());
                     toBoss.setY(0);
                     if (toBoss.length() < 12.0 && toBoss.clone().normalize().dot(dir) > 0.7) {
                         // Treat boss as primary — damage it directly
-                        boss.damage(dmg * 2.0, caster);
+                        damageBoss(dmg * 2.0, caster);
                         // Draw the bolt from the caster's position to the boss
                         drawLightningArcLinger(world, caster.getLocation().clone().add(0, 1, 0),
-                                boss.location().clone().add(0, 1, 0));
+                                bl.clone().add(0, 1, 0));
                         primary = null; // skip chain from boss
                     }
                 }
@@ -2136,13 +2201,14 @@ public final class DungeonInstance {
                         primary = e;
                     }
                 }
-                if (primary == null && boss != null && boss.isActive()) {
-                    org.bukkit.util.Vector toBoss = boss.location().toVector().subtract(caster.getLocation().toVector());
+                if (primary == null && (boss != null && boss.isActive() || grovekeeper != null && grovekeeper.isActive())) {
+                    Location bl = bossLocation();
+                    org.bukkit.util.Vector toBoss = bl.toVector().subtract(caster.getLocation().toVector());
                     toBoss.setY(0);
                     if (toBoss.length() < 14.0 && toBoss.clone().normalize().dot(dir) > 0.7) {
-                        boss.damage(dmg * 3.0, caster);
-                        world.strikeLightningEffect(boss.location());
-                        world.playSound(boss.location(), org.bukkit.Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 1.0f, 1.0f);
+                        damageBoss(dmg * 3.0, caster);
+                        world.strikeLightningEffect(bl);
+                        world.playSound(bl, org.bukkit.Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 1.0f, 1.0f);
                         primary = null;
                     }
                 }
@@ -2219,11 +2285,11 @@ public final class DungeonInstance {
                     }
                 }
                 // Also drain the boss (same 8.5-block range + line-of-sight rules)
-                if (boss != null && boss.isActive()
-                        && boss.location().distance(caster.getLocation()) <= 8.5
-                        && caster.hasLineOfSight(boss.entity())) {
+                if ((boss != null && boss.isActive() || grovekeeper != null && grovekeeper.isActive())
+                        && bossLocation().distance(caster.getLocation()) <= 8.5
+                        && caster.hasLineOfSight(bossActiveEntity())) {
                     double bossDrain = dmg * 0.5;
-                    boss.damage(bossDrain, caster);
+                    damageBoss(bossDrain, caster);
                     int stored = (int) Math.round(bossDrain * 0.5);
                     if (stored > 0) {
                         ItemStack held = caster.getInventory().getItemInMainHand();
@@ -2233,7 +2299,7 @@ public final class DungeonInstance {
                             totalSiphoned += GearFactory.getStoredHealth(held) - before;
                         }
                     }
-                    Location bLoc = boss.location().add(0, 1, 0);
+                    Location bLoc = bossLocation().add(0, 1, 0);
                     org.bukkit.util.Vector step = bLoc.toVector().subtract(casterLoc.toVector()).multiply(0.1);
                     for (int t = 0; t < 10; t++) {
                         Location pt = casterLoc.clone().add(step.clone().multiply(t));
@@ -2602,7 +2668,7 @@ public final class DungeonInstance {
     // ---------- boss ----------
 
     public void onRoomEnterBossCheck() {
-        if (curRoom != null && curRoom.type == RoomType.BOSS && !curRoom.cleared && boss == null) {
+        if (curRoom != null && curRoom.type == RoomType.BOSS && !curRoom.cleared && boss == null && grovekeeper == null) {
             if (!allMembersInRoom(curRoom)) {
                 for (Player p : party.onlineMembers()) {
                     setStatus(p, com.lieyabull.dung.lang.Lang.forPlayer(p, "room.wardenWait"));
@@ -2615,22 +2681,43 @@ public final class DungeonInstance {
             // Scale boss HP by party size
             int partySize = Math.max(1, party.onlineMembers().size());
             bossRoom = curRoom;
-            boss = new BossController(world, roomSpawn(curRoom),
-                    run.floorIndex, leader, plugin, partySize, this::onBossDefeated);
-            // Add all party members as boss bar viewers
-            for (Player p : party.onlineMembers()) {
-                if (!p.equals(leader)) boss.addViewer(p);
+            // Admin-forced boss type overrides the random roll
+            if (forcedBossType != null) {
+                isGrovekeeperFloor = forcedBossType.equalsIgnoreCase("grovekeeper");
+            } else {
+                // 20% chance for The Grovekeeper (forest-themed boss) to replace The Warden
+                isGrovekeeperFloor = ThreadLocalRandom.current().nextDouble() < 0.20;
             }
-            lockDoors(curRoom);
-            for (Player p : party.onlineMembers()) {
-                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.bossAwaken", run.floorIndex + 1));
+            if (isGrovekeeperFloor) {
+                grovekeeper = new GrovekeeperController(world, roomSpawn(curRoom),
+                        run.floorIndex, leader, plugin, partySize, this::onBossDefeated);
+                for (Player p : party.onlineMembers()) {
+                    if (!p.equals(leader)) grovekeeper.addViewer(p);
+                }
+                lockDoors(curRoom);
+                for (Player p : party.onlineMembers()) {
+                    p.sendMessage("§2The Grovekeeper of Floor " + (run.floorIndex + 1) + " awakens!");
+                }
+            } else {
+                boss = new BossController(world, roomSpawn(curRoom),
+                        run.floorIndex, leader, plugin, partySize, this::onBossDefeated);
+                for (Player p : party.onlineMembers()) {
+                    if (!p.equals(leader)) boss.addViewer(p);
+                }
+                lockDoors(curRoom);
+                for (Player p : party.onlineMembers()) {
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.bossAwaken", run.floorIndex + 1));
+                }
             }
+            // Consume the forced boss type after it's been used for this floor's boss roll
+            forcedBossType = null;
         }
     }
 
     public void onBossDefeated() {
         Floor.RoomNode defeated = bossRoom != null ? bossRoom : curRoom;
         boss = null;
+        grovekeeper = null;
         bossRoom = null;
         defeated.cleared = true;
         openDoors(defeated);
@@ -2648,6 +2735,16 @@ public final class DungeonInstance {
             run.runCoinsEarned += en.getValue();
         }
         dropGear(roomSpawn(defeated), 2, 6);
+        // The Grovekeeper drops a Forest Transmutation Elixir as a special reward
+        if (isGrovekeeperFloor) {
+            ItemStack forestPotion = GrovekeeperController.createForestPotionReward();
+            Location potionLoc = roomSpawn(defeated).clone().add(0, 0.5, 0);
+            world.dropItem(potionLoc, forestPotion).setPickupDelay(10);
+            for (Player p : party.onlineMembers()) {
+                p.sendMessage("§aThe Grovekeeper drops a §2Forest Transmutation Elixir§a!");
+            }
+            isGrovekeeperFloor = false;
+        }
         // Bank coins for each player — calculate once, distribute to all
         int earned = run.runCoinsEarned - run.bankedCoins;
         int bank = Math.min(40, Math.max(0, earned)) / 2;
@@ -2983,11 +3080,11 @@ public final class DungeonInstance {
                 int pz = horiz ? (perpC + off) : ax;
                 for (int y = BASE_Y; y <= BASE_Y + RoomGen.ROOM_HEIGHT + 1; y++) {
                     if (y == BASE_Y) {
-                        world.getBlockAt(px, y, pz).setType(passage ? Material.POLISHED_ANDESITE : Material.STONE_BRICKS);
+                        setBlock(world, px, y, pz, passage ? Material.POLISHED_ANDESITE : Material.STONE_BRICKS);
                     } else if (y == BASE_Y + RoomGen.ROOM_HEIGHT + 1) {
-                        world.getBlockAt(px, y, pz).setType(Material.STONE_BRICKS);
+                        setBlock(world, px, y, pz, Material.STONE_BRICKS);
                     } else {
-                        world.getBlockAt(px, y, pz).setType(passage ? Material.AIR : Material.STONE_BRICKS);
+                        setBlock(world, px, y, pz, passage ? Material.AIR : Material.STONE_BRICKS);
                     }
                 }
             }
@@ -2998,7 +3095,7 @@ public final class DungeonInstance {
             for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
                 int px = horiz ? cx : (cx + off);
                 int pz = horiz ? (cz + off) : cz;
-                world.getBlockAt(px, y, pz).setType(Material.CRACKED_STONE_BRICKS);
+                setBlock(world, px, y, pz, Material.CRACKED_STONE_BRICKS);
             }
         }
     }
@@ -4145,6 +4242,7 @@ public final class DungeonInstance {
         clearShopkeepers();
         clearWorkstations();
         if (boss != null) { boss.despawn(); boss = null; }
+        if (grovekeeper != null) { grovekeeper.despawn(); grovekeeper = null; }
         bossRoom = null;
         clearPedestals();
         if (world != null && run != null && run.floor != null) {
@@ -4164,9 +4262,10 @@ public final class DungeonInstance {
             maxZ = Math.max(maxZ, baseZ(n) + RoomGen.WALL + n.sizeH);
         }
         maxX += spacing; maxZ += spacing;
+        int maxRoomHeight = Math.max(RoomGen.ROOM_HEIGHT, RoomGen.BOSS_ROOM_HEIGHT);
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) {
-                for (int y = BASE_Y; y <= BASE_Y + RoomGen.ROOM_HEIGHT + 1; y++) {
+                for (int y = BASE_Y; y <= BASE_Y + maxRoomHeight + 1; y++) {
                     world.getBlockAt(x, y, z).setType(Material.AIR, false);
                 }
             }

@@ -180,6 +180,9 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                 if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
                 resetCmd(p);
                 return true;
+            case "forceboss":
+                if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
+                return forceBossCmd(p, args);
             case "room":
                 if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
                 return roomCmd(p, args);
@@ -191,6 +194,40 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                 ChatUI.startPrompt(p);
                 return true;
         }
+    }
+
+    // ---------- /dung forceboss ----------
+
+    /** /dung forceboss <warden|grovekeeper|random> — force the boss type for the next floor
+     *  in the dungeon instance whose world the player is standing in. Requires dung.admin. */
+    private boolean forceBossCmd(Player p, String[] args) {
+        if (args.length < 2) {
+            p.sendMessage("§cUsage: /dung forceboss <warden|grovekeeper|random>");
+            return true;
+        }
+        String type = args[1].toLowerCase();
+        if (!type.equals("warden") && !type.equals("grovekeeper") && !type.equals("random")) {
+            p.sendMessage("§cInvalid boss type. Use: warden, grovekeeper, or random.");
+            return true;
+        }
+        // Find the dungeon instance for the world the player is in
+        DungeonInstance di = plugin.game().instanceByWorld(p.getWorld());
+        if (di == null) {
+            p.sendMessage("§cYou are not in a dungeon run world.");
+            return true;
+        }
+        if (!di.isRunning()) {
+            p.sendMessage("§cThe dungeon run in this world is not active.");
+            return true;
+        }
+        if (type.equals("random")) {
+            di.setForcedBossType(null);
+            p.sendMessage("§aBoss type reset to random for the next floor.");
+        } else {
+            di.setForcedBossType(type);
+            p.sendMessage("§aNext floor will spawn §2" + type.substring(0, 1).toUpperCase() + type.substring(1) + "§a.");
+        }
+        return true;
     }
 
     // ---------- /dung room ----------
@@ -577,7 +614,8 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
 
     private static final String[] DUNG_SUBS = {
             "start", "leave", "descend", "stats", "class", "give", "shieldswitch",
-            "party", "shop", "upgrades", "salvage", "balance", "bossbar", "stop", "reset", "room", "tutorial", "help"
+            "party", "shop", "upgrades", "salvage", "balance", "bossbar", "stop", "reset",
+            "forceboss", "room", "tutorial", "help"
     };
     private static final String[] ROOM_SUBS = {"list", "reload", "validate", "preview", "gen"};
     private static final String[] TUTORIAL_SUBS = {"start", "combat", "elite", "treasure", "shop", "upgrade", "secret", "locked", "boss"};
@@ -597,6 +635,7 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                     case "party" -> filter(PARTY_SUBS, args[1]);
                     case "room" -> filter(ROOM_SUBS, args[1]);
                     case "tutorial" -> filter(TUTORIAL_SUBS, args[1]);
+                    case "forceboss" -> filter(new String[]{"warden", "grovekeeper", "random"}, args[1]);
                     default -> List.of();
                 };
             }

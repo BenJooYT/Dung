@@ -199,6 +199,32 @@ public final class PlotListener implements Listener {
         }
     }
 
+    /** Mobs may only be killed on a plot by the owner, or by anyone if mobKill is enabled on the
+     *  plot, or by players granted mobKillTrust access. By default mob killing is off for everyone
+     *  except the owner (not even public plots grant it). Admins with dung.admin bypass the check. */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onMobDamage(EntityDamageByEntityEvent e) {
+        if (e.getEntity() instanceof Player) return; // handled by onPlayerDamage
+        if (!(e.getDamager() instanceof Player p)) return;
+        PlotManager pm = plugin.plotManager();
+        Location loc = e.getEntity().getLocation();
+        PlotManager.PlotCoord coord = pm.plotAt(loc);
+        if (coord == null) return;
+        PlotManager.PlotInfo info = pm.getInfo(coord);
+        if (info == null) return;
+        // Owner always allowed
+        UUID uid = p.getUniqueId();
+        if (info.owner.equals(uid)) return;
+        // Admin bypass
+        if (p.hasPermission("dung.admin")) return;
+        // mobKill flag on → anyone may kill mobs here
+        if (info.mobKill) return;
+        // mobKillTrust grants per-player access
+        if (info.mobKillTrust.contains(uid)) return;
+        e.setCancelled(true);
+        p.sendMessage("§cYou cannot kill mobs on this plot!");
+    }
+
     /** Fire may only burn blocks / spread on plots where fire spread is enabled. */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onBlockBurn(BlockBurnEvent e) {

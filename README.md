@@ -3,7 +3,7 @@
 A **room-based dungeon roguelite** for Paper 1.21.x, built in the spirit of *The Binding of
 Isaac* but with **MMORPG-style combat, loot, and progression**. Each run generates a branching
 floor of rooms, spawns enemies you fight with a melee arc + weapon abilities, and ends with a
-telegraphed boss ("The Warden") that opens the way down to the next floor. Defeating bosses and
+telegraphed boss (The Warden or The Grovekeeper) that opens the way down to the next floor. Defeating bosses and
 clearing rooms banks persistent coins and kill/full-clear stats that survive death.
 
 - **Language / platform:** Java 21, Paper API `1.21.11-R0.1-SNAPSHOT`
@@ -91,7 +91,8 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
   │       ├─ RoomGen      projects rooms/corridors into the world
   │       ├─ structure    WorldEdit schematic library (structure package)
   │       ├─ Enemy        runtime mob + AI
-  │       └─ BossController  the Warden (HP scales with party size)
+  │       ├─ BossController  the Warden (HP scales with party size)
+  │       └─ GrovekeeperController  The Grovekeeper (20% chance per floor, drops Forest Potion)
   ├─ GameListener         Paper events -> GameManager -> correct DungeonInstance
   ├─ DungCommand          /dung, /dungeon, /shop, /upgrades, /salvage, /party
   ├─ Upgrades             permanent stat-upgrade tracks (shards)
@@ -147,6 +148,7 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/plot unclaim` | all | Unclaim the plot you're standing on (frees it for re-claiming). |
 | `/leaderboard [category] [page]` | all | Top players by `persistent_coins`/`shards`/`kills`/`clears`/`max_floor`, including offline players. |
 | `/dung bossbar` | `dung.admin` | Remove any stuck boss bars from the server. |
+| `/dung forceboss <warden\|grovekeeper\|random>` | `dung.admin` | Force the boss type for the next floor in the dungeon world you're standing in. |
 | `/troll` | OP only | Opens the OP-only troll item menu giving a Lightning Wand (call down lightning) or a Fling Wand (fling looked-at players). |
 | `/dung room gen <id> [types]` | `dung.admin` | Auto-write `<id>.yml`+`<id>.schem` from your WorldEdit `//copy`. The id is the schematic name; reads marker signs for spawn/markers. Doors are carved procedurally at generation. |
 | `/dung room list` | `dung.admin` | List registered room structures. |
@@ -609,7 +611,7 @@ Utilities:
 - `playerHurt(p, dmg)` (static) — applies `PlayerState.hurt` + red-hurt animation/sound.
 - `clearRoomEntities()` / `tearDownDungeon()` — despawn mobs, unseal barriers, reset blocks.
 
-### `boss` — the Warden
+### `boss` — the Warden & The Grovekeeper
 
 **`BossController`** — a large, telegraphed floor boss with a `KeyedBossBar`. Spawns a Zoglin
 tagged `dung.entity`, anchored in the boss room. `tick()` runs an attack state machine: the boss
@@ -622,6 +624,19 @@ holds still while warning, then fires:
 A contact sting damages if you walk into the boss. `enraged()` past 50% HP speeds up patterns and
 raises damage. `damage(dmg)` updates the boss bar, plays hit feedback (`ENTITY_PLAYER_HURT`
 sound + `CRIT` particles), and at 0, despawns + calls `GameManager.onBossDefeated()`.
+
+**`GrovekeeperController`** — a forest-themed boss that has a **20% chance per floor** to replace
+The Warden. Uses a Ravager entity with a green boss bar and 3 attacks:
+
+- **Root Burst (beam)** — telegraphs a directional lane with vine particles, then fires a root
+  burst dealing heavy damage in a 2-block-wide, 12-block-long lane.
+- **Timber Walls (slam)** — expanding ring telegraph with oak log/leaf particles, damages players
+  within 3 blocks.
+- **Poisonous Roots (radial)** — unlocked below 50% HP. Expanding ring telegraph with moss/spore
+  blossom particles, deals damage within 5 blocks plus poison DoT.
+
+Below 50% HP the Grovekeeper enrages (faster telegraphs, shorter cooldowns). On taking damage it
+teleports behind the attacker (flanking dash). Drops a **Forest Transmutation Elixir** on defeat.
 
 ### `listener` — Paper event wiring
 

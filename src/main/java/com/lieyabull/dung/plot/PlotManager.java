@@ -172,9 +172,11 @@ public final class PlotManager {
         public boolean pvp;         // PVP allowed on this plot (default off)
         public boolean fireSpread;  // fire may spread/burn on this plot (default off)
         public boolean isPublic;    // anyone may build & open containers (default off)
+        public boolean mobKill;     // anyone may kill mobs on this plot (default off — only owner)
         public final Set<UUID> buildTrust = new LinkedHashSet<>();      // may build
         public final Set<UUID> containerTrust = new LinkedHashSet<>();  // may open containers
         public final Set<UUID> pickupTrust = new LinkedHashSet<>();     // may pick up dropped items
+        public final Set<UUID> mobKillTrust = new LinkedHashSet<>();    // may kill mobs even with mobKill off
 
         public PlotInfo(UUID owner, long claimedAt) {
             this.owner = owner;
@@ -673,11 +675,13 @@ public final class PlotManager {
             p.sendMessage("  §7PVP: " + (info.pvp ? ON : OFF));
             p.sendMessage("  §7Fire spread: " + (info.fireSpread ? ON : OFF));
             p.sendMessage("  §7Public: " + (info.isPublic ? ON : OFF));
+            p.sendMessage("  §7Mob kill: " + (info.mobKill ? ON : OFF));
             p.sendMessage("  §7Build access: " + namesOf(info.buildTrust));
             p.sendMessage("  §7Container access: " + namesOf(info.containerTrust));
             p.sendMessage("  §7Item pickup access: " + namesOf(info.pickupTrust));
+            p.sendMessage("  §7Mob kill access: " + namesOf(info.mobKillTrust));
         }
-        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Set these with §f/plot pvp|fire|public on|off§7, §f/plot trust|untrust <name>§7, §f/plot container|uncontainer <name>§7, §f/plot pickup|unpickup <name>§7."));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Set these with §f/plot pvp|fire|public|mobkill on|off§7, §f/plot trust|untrust <name>§7, §f/plot container|uncontainer <name>§7, §f/plot pickup|unpickup <name>§7, §f/plot mobkill|unmobkill <name>§7."));
         return null;
     }
 
@@ -691,12 +695,14 @@ public final class PlotManager {
             case "pvp" -> label = "PVP";
             case "fire" -> label = "Fire spread";
             case "public" -> label = "Public";
+            case "mobkill" -> label = "Mob kill";
             default -> { return "§cUnknown setting §f" + setting; }
         }
         for (PlotCoord c : coords) {
             PlotInfo info = plots.get(c);
             if (setting.equals("pvp")) info.pvp = value;
             else if (setting.equals("fire")) info.fireSpread = value;
+            else if (setting.equals("mobkill")) info.mobKill = value;
             else info.isPublic = value;
         }
         save();
@@ -715,12 +721,14 @@ public final class PlotManager {
         String access;
         if (k.contains("container")) access = "container";
         else if (k.contains("pickup")) access = "pickup";
+        else if (k.contains("mobkill") || k.contains("mob_kill")) access = "mobkill";
         else access = "build";
         for (PlotCoord c : coords) {
             PlotInfo info = plots.get(c);
             Set<UUID> set = switch (access) {
                 case "container" -> info.containerTrust;
                 case "pickup" -> info.pickupTrust;
+                case "mobkill" -> info.mobKillTrust;
                 default -> info.buildTrust;
             };
             if (add) set.add(id); else set.remove(id);
@@ -970,6 +978,7 @@ public final class PlotManager {
                 info.pvp = plotsData.getBoolean(key + ".pvp", false);
                 info.fireSpread = plotsData.getBoolean(key + ".fireSpread", false);
                 info.isPublic = plotsData.getBoolean(key + ".public", false);
+                info.mobKill = plotsData.getBoolean(key + ".mobKill", false);
                 info.id = plotsData.getLong(key + ".id", 0);
                 for (String u : plotsData.getStringList(key + ".buildTrust")) {
                     try { info.buildTrust.add(UUID.fromString(u)); } catch (IllegalArgumentException ignored) {}
@@ -979,6 +988,9 @@ public final class PlotManager {
                 }
                 for (String u : plotsData.getStringList(key + ".pickupTrust")) {
                     try { info.pickupTrust.add(UUID.fromString(u)); } catch (IllegalArgumentException ignored) {}
+                }
+                for (String u : plotsData.getStringList(key + ".mobKillTrust")) {
+                    try { info.mobKillTrust.add(UUID.fromString(u)); } catch (IllegalArgumentException ignored) {}
                 }
                 plots.put(coord, info);
                 if (info.name != null) {
@@ -1026,9 +1038,11 @@ public final class PlotManager {
                 plotsData.set(key + ".pvp", e.getValue().pvp);
                 plotsData.set(key + ".fireSpread", e.getValue().fireSpread);
                 plotsData.set(key + ".public", e.getValue().isPublic);
+                plotsData.set(key + ".mobKill", e.getValue().mobKill);
                 plotsData.set(key + ".buildTrust", e.getValue().buildTrust.stream().map(UUID::toString).collect(Collectors.toList()));
                 plotsData.set(key + ".containerTrust", e.getValue().containerTrust.stream().map(UUID::toString).collect(Collectors.toList()));
                 plotsData.set(key + ".pickupTrust", e.getValue().pickupTrust.stream().map(UUID::toString).collect(Collectors.toList()));
+                plotsData.set(key + ".mobKillTrust", e.getValue().mobKillTrust.stream().map(UUID::toString).collect(Collectors.toList()));
             }
             plotsFile.getParentFile().mkdirs();
             File tmp = new File(plotsFile.getParentFile(), plotsFile.getName() + ".tmp");

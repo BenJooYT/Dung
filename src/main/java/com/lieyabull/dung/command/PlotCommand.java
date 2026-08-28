@@ -188,7 +188,8 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
             }
             case "pvp":
             case "fire":
-            case "public": {
+            case "public":
+            case "mobkill": {
                 if (args.length < 2) {
                     p.sendMessage("§cUsage: §f/plot " + args[0].toLowerCase() + " on|off§c.");
                     return true;
@@ -213,13 +214,13 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
                     return true;
                 }
                 boolean add = args[0].equalsIgnoreCase("trust") || args[0].equalsIgnoreCase("container")
-                        || args[0].equalsIgnoreCase("pickup");
+                        || args[0].equalsIgnoreCase("pickup") || args[0].equalsIgnoreCase("mobkill");
                 String err = pm.setPlotTrust(p, args[0].toLowerCase(), add, args[1]);
                 if (err != null) p.sendMessage(err);
                 return true;
             }
             default:
-                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Unknown subcommand. Use §f/plot claim§7, §f/plot home§7, §f/plot name§7, §f/plot warp§7, §f/plot settings§7, §f/plot pvp|fire|public on|off§7, §f/plot trust|untrust <name>§7, §f/plot container|uncontainer <name>§7, §f/plot pickup|unpickup <name>§7, or §f/plot unclaim§7."));
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Unknown subcommand. Use §f/plot claim§7, §f/plot home§7, §f/plot name§7, §f/plot warp§7, §f/plot settings§7, §f/plot pvp|fire|public|mobkill on|off§7, §f/plot trust|untrust <name>§7, §f/plot container|uncontainer <name>§7, §f/plot pickup|unpickup <name>§7, §f/plot mobkill|unmobkill <name>§7, or §f/plot unclaim§7."));
                 return true;
         }
     }
@@ -241,8 +242,8 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
         // /plot tab completion
         if (args.length == 1) {
             List<String> subs = new ArrayList<>(List.of("claim", "home", "name", "warp", "unclaim",
-                    "settings", "pvp", "fire", "public", "trust", "untrust", "container", "uncontainer",
-                    "pickup", "unpickup", "convert", "filllayers"));
+                    "settings", "pvp", "fire", "public", "mobkill", "trust", "untrust", "container", "uncontainer",
+                    "pickup", "unpickup", "unmobkill", "convert", "filllayers"));
             return subs.stream().filter(s -> s.startsWith(args[0].toLowerCase())).toList();
         }
         if (args.length == 2) {
@@ -250,12 +251,13 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
                 return plugin.plotManager().getPlayerPlotNames(p);
             }
             if (args[0].equalsIgnoreCase("pvp") || args[0].equalsIgnoreCase("fire")
-                    || args[0].equalsIgnoreCase("public")) {
+                    || args[0].equalsIgnoreCase("public") || args[0].equalsIgnoreCase("mobkill")) {
                 return List.of("on", "off").stream().filter(s -> s.startsWith(args[1].toLowerCase())).toList();
             }
             if (args[0].equalsIgnoreCase("trust") || args[0].equalsIgnoreCase("untrust")
                     || args[0].equalsIgnoreCase("container") || args[0].equalsIgnoreCase("uncontainer")
-                    || args[0].equalsIgnoreCase("pickup") || args[0].equalsIgnoreCase("unpickup")) {
+                    || args[0].equalsIgnoreCase("pickup") || args[0].equalsIgnoreCase("unpickup")
+                    || args[0].equalsIgnoreCase("mobkill") || args[0].equalsIgnoreCase("unmobkill")) {
                 return playerNames(args[1]);
             }
         }
