@@ -64,7 +64,10 @@ import static com.lieyabull.dung.dungeon.BlockBatcher.setBlock;
  */
 public final class DungeonInstance {
     public static final int BASE_Y = 130;
-    public static final int MIN_SPACING = 22;
+    // Min spacing must be at least the widest room footprint so two adjacent rooms never overlap.
+    // The boss arena is the widest: BOSS_INTERIOR (23) + 2 wall blocks = 25, and its footprint is
+    // fixed regardless of party tier, so every floor's spacing must leave room for it.
+    public static final int MIN_SPACING = 25;
     public static final int MAX_SPACING = 28;
     private int spacing = 25;
     /** Corridor side-wall half-width for this floor, derived from the party tier and room sizes. */
@@ -200,6 +203,12 @@ public final class DungeonInstance {
     public Map<Long, List<Enemy>> roomEnemies() { return roomEnemies; }
     public boolean isRunning() { return running; }
     public Map<UUID, Integer> preserveFails() { return preserveFails; }
+
+    /** True when either boss type (Warden or Grovekeeper) is alive — used by the Blaze Staff and
+     *  other ranged AoE handlers that need to hit whichever boss spawned this floor. */
+    public boolean bossActive() {
+        return (boss != null && boss.isActive()) || (grovekeeper != null && grovekeeper.isActive());
+    }
 
     /** Check if a player is currently dead (in the deadPlayers set). Used by GameListener
      *  to decide whether to set a respawning player to SPECTATOR or SURVIVAL mode. */
@@ -602,7 +611,7 @@ public final class DungeonInstance {
                     int oz = baseZ(n) - tot.minZ;
                     StructureWorldEdit.paste(world, n.clipboard, ox, oy, oz, n.rotationSteps);
                 } else {
-                    RoomGen.build(world, n, BASE_Y, spacing, corridorHalf, offsetX, offsetZ);
+                    RoomGen.build(world, n, BASE_Y, spacing, corridorHalf, run.floor, offsetX, offsetZ);
                 }
             }
             // Structure rooms: carve doorway openings + corridors procedurally on the shared corridor line
@@ -922,6 +931,16 @@ public final class DungeonInstance {
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.doorLocked"));
             // Teleport the player back to the center of the current room
             Location back = RoomGen.center(world, prev != null ? prev : curRoom, BASE_Y, spacing, offsetX, offsetZ);
+            p.teleport(back);
+            return;
+        }
+        // Room-skipping guard: a player may not cross OUT of a combat/elite room that hasn't
+        // been cleared yet. This stops a single runner from dashing through rooms straight to
+        // the boss while the rest of the party follows behind. The room ahead is effectively
+        // locked until the room the player is leaving has been cleared.
+        if (prev != null && !prev.cleared && (prev.type == RoomType.COMBAT || prev.type == RoomType.ELITE)) {
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.prevNotCleared"));
+            Location back = RoomGen.center(world, prev, BASE_Y, spacing, offsetX, offsetZ);
             p.teleport(back);
             return;
         }
@@ -1502,7 +1521,6 @@ public final class DungeonInstance {
             // doors are currently sealed, so a re-entered combat room still clears when the last
             // enemy dies. Gating the clear on roomLocked let a re-entered room (whose locked flag
             // was reset by enterRoom) sit forever with dead mobs never removed from the list.
-            int before = list.size();
             // An enemy that has strayed well outside the room (escaped through a wall/door) is
             // despawned and dropped so it can't leave the room without ever dying and permanently
             // block the clear.
@@ -1513,10 +1531,19 @@ public final class DungeonInstance {
                     boolean died = e.dead || !e.alive(); // stray escapes despawn without dying
                     if (!e.dead && e.alive()) e.despawn();
                     it.remove();
-                    if (died && e.type.isElite()) scatterEliteHearts(e.entity.getLocation(), rn);
+                    if (died) {
+                        if (run != null) {
+                            UUID who = e.killer;
+                            if (who == null) {
+                                Player fb = nearestPlayer(e.entity.getLocation());
+                                if (fb != null) who = fb.getUniqueId();
+                            }
+                            if (who != null) run.addKill(who);
+                        }
+                        if (e.type.isElite()) scatterEliteHearts(e.entity.getLocation(), rn);
+                    }
                 }
             }
-            if (list.size() < before && run != null) run.kills += (before - list.size());
             if (list.isEmpty()) {
                 onRoomClear(rn, k);
                 continue;
@@ -1667,7 +1694,7 @@ public final class DungeonInstance {
     }
 
     /** Damage whichever boss is active (The Warden or The Grovekeeper). */
-    private void damageBoss(double dmg, Player attacker) {
+    public void damageBoss(double dmg, Player attacker) {
         if (grovekeeper != null && grovekeeper.isActive()) {
             grovekeeper.damage(dmg, attacker);
         } else if (boss != null && boss.isActive()) {
@@ -1676,7 +1703,7 @@ public final class DungeonInstance {
     }
 
     /** Location of whichever boss is active, or null if none. */
-    private Location bossLocation() {
+    public Location bossLocation() {
         if (grovekeeper != null && grovekeeper.isActive()) return grovekeeper.location();
         if (boss != null && boss.isActive()) return boss.location();
         return null;
@@ -1707,22 +1734,14 @@ public final class DungeonInstance {
         // Dead players are spectators during a run — they can observe but never attack.
         if (deadPlayers.contains(p.getUniqueId())) return;
 
-        // A weapon deals full damage on a charged strike, but a swing made during the attack
-        // cooldown still lands and deals reduced damage instead of being ignored. The reduction
-        // scales with the cooldown's remaining progress (vanilla-style), flooring at 20% damage
-        // at the very start of the cooldown and approaching full damage as the weapon recharges.
-        boolean charged = ps.fireCd <= 0;
-        double dmgMult;
-        if (charged) {
-            dmgMult = 1.0;
-            ps.fireCd = ps.fireRateTicks;
-        } else {
-            double progress = 1.0 - ((double) ps.fireCd / Math.max(1, ps.fireRateTicks));
-            dmgMult = 0.2 + 0.8 * progress;
-        }
+        // Melee hits (a weapon swing OR an empty-handed punch) are not spammable: a strike only
+        // lands once the per-player attack has recharged, and a swing made during the cooldown is
+        // ignored entirely (deals no damage) instead of a reduced-damage spam of the button.
+        if (ps.fireCd > 0) return; // still cooling down — no damage
+        ps.fireCd = ps.fireRateTicks; // start the cooldown for the hit about to land
 
         // Apply damage boost (War Cry) and guaranteed crit (Shadow Step)
-        double baseDmg = ps.damage * dmgMult;
+        double baseDmg = ps.damage;
         if (ps.hasDamageBoost()) baseDmg *= ps.damageBoostMult;
         boolean guaranteeCrit = ps.hasGuaranteedCrit();
 
@@ -1777,10 +1796,10 @@ public final class DungeonInstance {
             enemyDmg[i] = dmg;
         }
         double bossDmg = 0;
-        if (boss != null && boss.isActive()) {
-            Location bl = boss.location();
-            double horiz = Math.hypot(bl.getX() - eyeBase.getX(), bl.getZ() - eyeBase.getZ());
-            double vert = Math.abs(bl.getY() - eyeBase.getY());
+        Location bossLoc = bossLocation();
+        if (bossLoc != null) {
+            double horiz = Math.hypot(bossLoc.getX() - eyeBase.getX(), bossLoc.getZ() - eyeBase.getZ());
+            double vert = Math.abs(bossLoc.getY() - eyeBase.getY());
             if (horiz < ps.reach + 0.5 && vert < 3.0) {
                 boolean crit = guaranteeCrit || Math.random() < ps.critChance;
                 double dmg = baseDmg * (crit ? ps.critMult : 1.0);
@@ -1810,7 +1829,7 @@ public final class DungeonInstance {
             }
             // Also from boss if hit
             if (bossDmg > 0) {
-                Location bl = boss.location().add(0, 1, 0);
+                Location bl = bossLocation().add(0, 1, 0);
                 int stored = (int) Math.round(bossDmg * 0.5);
                 if (stored > 0) {
                     int current = GearFactory.getStoredHealth(held);
@@ -1893,15 +1912,18 @@ public final class DungeonInstance {
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.itemBroken")));
             return;
         }
-        if (inRun) {
+        boolean connected = dispatchAbility(id, st, p);
+        // If the ability couldn't find a target (whiffed), don't apply its cooldown — the player can
+        // re-cast immediately. Movement/projectile/Self casts always "connect". GCD + mana are only
+        // consumed by an actual cast, and a whiff doesn't wear the weapon either.
+        if (inRun && connected) {
             st.spendMana(cost);
             st.startCooldown(PlayerState.GCD_KEY, PlayerState.GCD_MS);
             st.startCooldown(id, cd);
             st.lastCastAt.put(id, System.currentTimeMillis());
         }
-        dispatchAbility(id, st, p);
         // Persistent weapons lose 1-2 durability when their ability is used
-        if (item != null && GearFactory.isPersistent(item)) {
+        if (connected && item != null && GearFactory.isPersistent(item)) {
             int dmg = ThreadLocalRandom.current().nextInt(1, 3); // 1 or 2
             boolean broken = GearFactory.damageItem(item, dmg);
             if (broken) {
@@ -1981,14 +2003,16 @@ public final class DungeonInstance {
             case "mage":
                 // Arcane Nova: AoE damage (2x) divided among all enemies within 5 blocks
                 java.util.function.DoubleConsumer hitBossNova = (radius) -> {
-                    if ((boss != null && boss.isActive() || grovekeeper != null && grovekeeper.isActive()) && bossLocation().distance(caster.getLocation()) < radius) {
+                    if ((boss != null && boss.isActive() || grovekeeper != null && grovekeeper.isActive())
+                            && bossLocation().distance(caster.getLocation()) < radius
+                            && !timberWallBetween(caster, bossLocation())) {
                         damageBoss(dmg * 2.0, caster);
                     }
                 };
                 hitBossNova.accept(5.0);
                 java.util.List<Enemy> novaTargets = new java.util.ArrayList<>();
                 for (Enemy e : roomList) {
-                    if (!e.dead && e.entity.getLocation().distance(caster.getLocation()) < 5) {
+                    if (!e.dead && e.entity.getLocation().distance(caster.getLocation()) < 5 && !timberWallBetween(caster, e.entity.getLocation())) {
                         novaTargets.add(e);
                     }
                 }
@@ -2020,8 +2044,8 @@ public final class DungeonInstance {
                     behind.setPitch(caster.getLocation().getPitch());
                     caster.teleport(behind);
                     caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.shadowSteppedBehind", target.type.name));
-                } else if (boss != null && boss.isActive()) {
-                    Location bl = boss.location();
+                } else if (bossActiveEntity() != null) {
+                    Location bl = bossLocation();
                     org.bukkit.util.Vector away = bl.toVector().subtract(caster.getLocation().toVector()).setY(0).normalize();
                     Location behind = bl.clone().add(away.clone().multiply(-3));
                     behind.setY(bl.getY());
@@ -2044,7 +2068,20 @@ public final class DungeonInstance {
         }
     }
 
-    private void dispatchAbility(String id, PlayerState st, Player caster) {
+    /** True when an active Grovekeeper timber wall (fence) blocks a straight line from the caster
+     *  to a target point. Only the boss's fence blocks — dungeon walls are never considered. */
+    private boolean timberWallBetween(Player caster, Location target) {
+        return GrovekeeperController.timberWallBlocks(world, caster.getLocation(), target);
+    }
+
+    /** Wrap an enemy filter so the ability's line of effect is blocked by a timber fence. */
+    private java.util.function.Predicate<Enemy> fenceSafe(Player caster, java.util.function.Predicate<Enemy> inner) {
+        return e -> !timberWallBetween(caster, e.entity.getLocation()) && inner.test(e);
+    }
+
+    /** Run an item ability. Returns true if the cast "connected" (hit a target / did something usable);
+     *  false when a targeted ability found no target, so the caller can skip the cooldown. */
+    private boolean dispatchAbility(String id, PlayerState st, Player caster) {
         Floor.RoomNode casterRoom = playerRoom.get(caster.getUniqueId());
         if (casterRoom == null) casterRoom = curRoom;
         long k = run.floor.key(casterRoom.x, casterRoom.z);
@@ -2058,46 +2095,54 @@ public final class DungeonInstance {
         double dmg = baseDmg * (Math.random() < st.critChance ? st.critMult : 1.0);
         org.bukkit.util.Vector dir = caster.getEyeLocation().getDirection().normalize();
 
+        // Tracks whether this cast actually hit a boss so the caller can skip the cooldown on a whiff.
+        // (Boss is a separate entity from the room's enemy list, so it can't share the hitTargets return.)
+        boolean[] hitBossFlag = {false};
         java.util.function.DoubleConsumer hitBoss = (radius) -> {
-            if ((boss != null && boss.isActive() || grovekeeper != null && grovekeeper.isActive()) && bossLocation().distance(caster.getLocation()) < radius) {
+            if ((boss != null && boss.isActive() || grovekeeper != null && grovekeeper.isActive())
+                    && bossLocation().distance(caster.getLocation()) < radius
+                    && !timberWallBetween(caster, bossLocation())) {
                 damageBoss(dmg, caster);
+                hitBossFlag[0] = true;
             }
         };
+        boolean connected = false;
 
         switch (id) {
             case "Rush":
                 caster.setVelocity(dir.clone().multiply(1.2).setY(0.4));
                 st.invulnUntil = Math.max(st.invulnUntil, System.currentTimeMillis() + 600);
+                connected = true; // movement/support casts always take effect
                 caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.rush"));
                 break;
             case "Slash":
                 // "a quick, heavy strike ahead" — single target
                 hitBoss.accept(2.5);
-                hitTargets(roomList, caster, 1, dmg * 2.0, dir.getX(), dir.getZ(),
-                        e -> inCone(e, caster, dir, 2.5, 0.4));
+                if (hitTargets(roomList, caster, 1, dmg * 2.0, dir.getX(), dir.getZ(),
+                        fenceSafe(caster, e -> inCone(e, caster, dir, 2.5, 0.4)))) connected = true;
                 caster.getWorld().spawnParticle(org.bukkit.Particle.SWEEP_ATTACK, caster.getEyeLocation().add(dir.clone().multiply(1.5)), 4, 0.5, 0, 0.5);
                 caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.slash"));
                 break;
             case "Cleave":
                 // "slash everything in a cone ahead" — up to a few in front
                 hitBoss.accept(3.0);
-                hitTargets(roomList, caster, 3, dmg * 1.5, dir.getX(), dir.getZ(),
-                        e -> inCone(e, caster, dir, 3.0, 0.5));
+                if (hitTargets(roomList, caster, 3, dmg * 1.5, dir.getX(), dir.getZ(),
+                        fenceSafe(caster, e -> inCone(e, caster, dir, 3.0, 0.5)))) connected = true;
                 caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.cleave"));
                 break;
             case "Smash":
                 // "blast all nearby enemies" — a few around you
                 hitBoss.accept(4.0);
-                hitTargets(roomList, caster, 3, dmg * 1.8, 0, 0,
-                        e -> e.entity.getLocation().distance(caster.getLocation()) < 4);
+                if (hitTargets(roomList, caster, 3, dmg * 1.8, 0, 0,
+                        fenceSafe(caster, e -> e.entity.getLocation().distance(caster.getLocation()) < 4))) connected = true;
                 world.spawnParticle(org.bukkit.Particle.EXPLOSION, caster.getLocation().add(0, 1, 0), 1, 1, 0, 1);
                 caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.smash"));
                 break;
             case "Blade Storm":
                 // "spin, damaging around you" — hits more of the surrounding mobs
                 hitBoss.accept(5.0);
-                hitTargets(roomList, caster, 4, dmg * 1.2, 0, 0,
-                        e -> e.entity.getLocation().distance(caster.getLocation()) < 5);
+                if (hitTargets(roomList, caster, 4, dmg * 1.2, 0, 0,
+                        fenceSafe(caster, e -> e.entity.getLocation().distance(caster.getLocation()) < 5))) connected = true;
                 for (int i = 0; i < 6; i++) {
                     double a = i * Math.PI / 3;
                     caster.getWorld().spawnParticle(org.bukkit.Particle.SWEEP_ATTACK,
@@ -2108,8 +2153,8 @@ public final class DungeonInstance {
             case "Arcane Bolt":
                 // "mage strike in a line" — up to a few along the line
                 hitBoss.accept(16.0);
-                hitTargets(roomList, caster, 3, dmg * 2.2, dir.getX(), dir.getZ(),
-                        e -> inCone(e, caster, dir, 16.0, 0.6));
+                if (hitTargets(roomList, caster, 3, dmg * 2.2, dir.getX(), dir.getZ(),
+                        fenceSafe(caster, e -> inCone(e, caster, dir, 16.0, 0.6)))) connected = true;
                 // Line of stationary end rod particles along the bolt path
                 org.bukkit.Location boltOrigin = caster.getEyeLocation().add(dir.clone().multiply(1.5));
                 for (int i = 0; i < 16; i++) {
@@ -2122,7 +2167,7 @@ public final class DungeonInstance {
             case "Ravage":
                 // "devastate every enemy in the room" — truly every enemy
                 hitBoss.accept(99.0);
-                hitTargets(roomList, caster, Integer.MAX_VALUE, dmg * 1.5, dir.getX(), dir.getZ(), e -> true);
+                if (hitTargets(roomList, caster, Integer.MAX_VALUE, dmg * 1.5, dir.getX(), dir.getZ(), fenceSafe(caster, e -> true))) connected = true;
                 caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.ravage"));
                 break;
             case "Chain Lightning": {
@@ -2132,6 +2177,7 @@ public final class DungeonInstance {
                 double bestDist = Double.MAX_VALUE;
                 for (Enemy e : roomList) {
                     if (e.dead) continue;
+                    if (timberWallBetween(caster, e.entity.getLocation())) continue;
                     if (!inCone(e, caster, dir, 12.0, 0.7)) continue;
                     double dist = e.entity.getLocation().distanceSquared(caster.getLocation());
                     if (dist < bestDist) {
@@ -2144,9 +2190,10 @@ public final class DungeonInstance {
                     Location bl = bossLocation();
                     org.bukkit.util.Vector toBoss = bl.toVector().subtract(caster.getLocation().toVector());
                     toBoss.setY(0);
-                    if (toBoss.length() < 12.0 && toBoss.clone().normalize().dot(dir) > 0.7) {
+                    if (toBoss.length() < 12.0 && toBoss.clone().normalize().dot(dir) > 0.7 && !timberWallBetween(caster, bl)) {
                         // Treat boss as primary — damage it directly
                         damageBoss(dmg * 2.0, caster);
+                        connected = true;
                         // Draw the bolt from the caster's position to the boss
                         drawLightningArcLinger(world, caster.getLocation().clone().add(0, 1, 0),
                                 bl.clone().add(0, 1, 0));
@@ -2157,6 +2204,7 @@ public final class DungeonInstance {
                     // Primary target takes dmg * 2.0
                     final Enemy primaryTarget = primary; // effectively final for lambda
                     primary.damage(dmg * 2.0, caster, 0, 0);
+                    connected = true;
                     // Draw the first bolt from the caster's position to the primary target, so the
                     // chain lightning visually originates from the player rather than appearing as a
                     // slash at the target cluster.
@@ -2194,6 +2242,7 @@ public final class DungeonInstance {
                 double bestDist = Double.MAX_VALUE;
                 for (Enemy e : roomList) {
                     if (e.dead) continue;
+                    if (timberWallBetween(caster, e.entity.getLocation())) continue;
                     if (!inCone(e, caster, dir, 14.0, 0.7)) continue;
                     double dist = e.entity.getLocation().distanceSquared(caster.getLocation());
                     if (dist < bestDist) {
@@ -2205,8 +2254,9 @@ public final class DungeonInstance {
                     Location bl = bossLocation();
                     org.bukkit.util.Vector toBoss = bl.toVector().subtract(caster.getLocation().toVector());
                     toBoss.setY(0);
-                    if (toBoss.length() < 14.0 && toBoss.clone().normalize().dot(dir) > 0.7) {
+                    if (toBoss.length() < 14.0 && toBoss.clone().normalize().dot(dir) > 0.7 && !timberWallBetween(caster, bl)) {
                         damageBoss(dmg * 3.0, caster);
+                        connected = true;
                         world.strikeLightningEffect(bl);
                         world.playSound(bl, org.bukkit.Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 1.0f, 1.0f);
                         primary = null;
@@ -2216,6 +2266,7 @@ public final class DungeonInstance {
                     final Enemy struck = primary;
                     org.bukkit.Location targetLoc = struck.entity.getLocation();
                     primary.damage(dmg * 3.0, caster, 0, 0);
+                    connected = true;
                     world.strikeLightningEffect(targetLoc);
                     world.playSound(targetLoc, org.bukkit.Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 1.0f, 1.0f);
                     // Arc a half-strength splash to the next nearest living enemy.
@@ -2249,6 +2300,7 @@ public final class DungeonInstance {
                 fireball.setShooter(caster);
                 // Store the damage value so the projectile hit handler can use it
                 fireball.setMetadata("dung.damage", new org.bukkit.metadata.FixedMetadataValue(plugin, dmg * 2.0));
+                connected = true; // a projectile was fired — the cast took effect even if it misses
                 world.playSound(caster.getLocation(), org.bukkit.Sound.ENTITY_BLAZE_SHOOT, 1.0f, 1.0f);
                 caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.fireball"));
                 break;
@@ -2265,8 +2317,10 @@ public final class DungeonInstance {
                     // Range cap + line-of-sight gate: drain only what you can see and reach.
                     if (e.entity.getLocation().distance(caster.getLocation()) > 8.5) continue;
                     if (!caster.hasLineOfSight(e.entity)) continue;
+                    if (timberWallBetween(caster, e.entity.getLocation())) continue;
                     double drainDmg = dmg * 0.5;
                     e.damage(drainDmg, caster, 0, 0);
+                    connected = true;
                     int stored = (int) Math.round(drainDmg * 0.5);
                     if (stored > 0) {
                         ItemStack held = caster.getInventory().getItemInMainHand();
@@ -2287,9 +2341,11 @@ public final class DungeonInstance {
                 // Also drain the boss (same 8.5-block range + line-of-sight rules)
                 if ((boss != null && boss.isActive() || grovekeeper != null && grovekeeper.isActive())
                         && bossLocation().distance(caster.getLocation()) <= 8.5
-                        && caster.hasLineOfSight(bossActiveEntity())) {
+                        && caster.hasLineOfSight(bossActiveEntity())
+                        && !timberWallBetween(caster, bossLocation())) {
                     double bossDrain = dmg * 0.5;
                     damageBoss(bossDrain, caster);
+                    connected = true;
                     int stored = (int) Math.round(bossDrain * 0.5);
                     if (stored > 0) {
                         ItemStack held = caster.getInventory().getItemInMainHand();
@@ -2317,11 +2373,12 @@ public final class DungeonInstance {
                 break;
             }
             default:
-                hitTargets(roomList, caster, 3, dmg * 1.2, 0, 0,
-                        e -> e.entity.getLocation().distance(caster.getLocation()) < 3.5);
+                if (hitTargets(roomList, caster, 3, dmg * 1.2, 0, 0,
+                        fenceSafe(caster, e -> e.entity.getLocation().distance(caster.getLocation()) < 3.5))) connected = true;
                 caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.generic"));
                 break;
         }
+        return connected;
     }
 
     /** True if the enemy lies within a cone of the given radius opening from the caster. */
@@ -2334,15 +2391,16 @@ public final class DungeonInstance {
     /** Damage all enemies from {@code roomList} matching {@code filter}, dividing the damage
      *  equally among them (nearest first for ordering). This replaces the old per-ability target
      *  limits — abilities now spread their damage across all valid targets instead of capping hits. */
-    private void hitTargets(List<Enemy> roomList, Player caster, int limit, double dmg,
-                            double kx, double kz, java.util.function.Predicate<Enemy> filter) {
+    private boolean hitTargets(List<Enemy> roomList, Player caster, int limit, double dmg,
+                               double kx, double kz, java.util.function.Predicate<Enemy> filter) {
         java.util.List<Enemy> cand = new java.util.ArrayList<>();
         for (Enemy e : roomList) if (!e.dead && filter.test(e)) cand.add(e);
-        if (cand.isEmpty()) return;
+        if (cand.isEmpty()) return false;
         cand.sort(java.util.Comparator.comparingDouble(
                 e -> e.entity.getLocation().distanceSquared(caster.getLocation())));
         double divided = dmg / cand.size();
         for (Enemy e : cand) e.damage(divided, caster, kx, kz);
+        return true;
     }
 
     /** In-room shop: open the chest GUI shop. Uses the player's individual room so that
@@ -2689,6 +2747,9 @@ public final class DungeonInstance {
                 isGrovekeeperFloor = ThreadLocalRandom.current().nextDouble() < 0.20;
             }
             if (isGrovekeeperFloor) {
+                // The Grovekeeper fights in a natural wood/grass/greenery arena of its own, not the
+                // Warden's deepslate lair.
+                rethemeGrovekeeperRoom(curRoom);
                 grovekeeper = new GrovekeeperController(world, roomSpawn(curRoom),
                         run.floorIndex, leader, plugin, partySize, this::onBossDefeated);
                 for (Player p : party.onlineMembers()) {
@@ -2735,13 +2796,15 @@ public final class DungeonInstance {
             run.runCoinsEarned += en.getValue();
         }
         dropGear(roomSpawn(defeated), 2, 6);
-        // The Grovekeeper drops a Forest Transmutation Elixir as a special reward
+        // The Grovekeeper may drop a Forest Transmutation Elixir as a special reward (50% chance per kill)
         if (isGrovekeeperFloor) {
-            ItemStack forestPotion = GrovekeeperController.createForestPotionReward();
-            Location potionLoc = roomSpawn(defeated).clone().add(0, 0.5, 0);
-            world.dropItem(potionLoc, forestPotion).setPickupDelay(10);
-            for (Player p : party.onlineMembers()) {
-                p.sendMessage("§aThe Grovekeeper drops a §2Forest Transmutation Elixir§a!");
+            if (Math.random() < 0.5) {
+                ItemStack forestPotion = GrovekeeperController.createForestPotionReward();
+                Location potionLoc = roomSpawn(defeated).clone().add(0, 0.5, 0);
+                world.dropItem(potionLoc, forestPotion).setPickupDelay(10);
+                for (Player p : party.onlineMembers()) {
+                    p.sendMessage("§aThe Grovekeeper drops a §2Forest Transmutation Elixir§a!");
+                }
             }
             isGrovekeeperFloor = false;
         }
@@ -2782,6 +2845,82 @@ public final class DungeonInstance {
                     .clickEvent(net.kyori.adventure.text.event.ClickEvent.runCommand("/dung leave"));
             p.sendMessage(msg.append(btn).append(endBtn));
         }
+    }
+
+    /**
+     * Repaint the boss room into a natural wood/grass/greenery arena for The Grovekeeper, instead of
+     * the Warden's deepslate lair. Runs once when the Grovekeeper awakens. Scans the room's full world
+     * bounding box (works for both procedural rooms and structure/template rooms) and:
+     * <ul>
+     *   <li>turns the floor into {@link Material#GRASS_BLOCK}</li>
+     *   <li>replaces the ceiling with a canopy of {@link Material#DARK_OAK_LEAVES}, keeping lamps lit</li>
+     *   <li>lays a solid layer of {@link Material#OAK_WOOD} directly above the leaf canopy</li>
+     *   <li>turns every solid wall/pillar/split block into {@link Material#OAK_WOOD}</li>
+     *   <li>scatters a few natural plants (grass, flowers, moss) across the floor interior</li>
+     * </ul>
+     */
+    private void rethemeGrovekeeperRoom(Floor.RoomNode n) {
+        int x0, x1, z0, z1, y0, y1;
+        if (n.structure != null) {
+            RoomBounds t = n.structure.total();
+            x0 = baseX(n); x1 = baseX(n) + (t.maxX - t.minX);
+            z0 = baseZ(n); z1 = baseZ(n) + (t.maxZ - t.minZ);
+            y0 = BASE_Y; y1 = BASE_Y + (t.maxY - t.minY);
+        } else {
+            x0 = baseX(n); x1 = baseX(n) + n.sizeW + 2 * RoomGen.WALL - 1;
+            z0 = baseZ(n); z1 = baseZ(n) + n.sizeH + 2 * RoomGen.WALL - 1;
+            y0 = BASE_Y; y1 = BASE_Y + RoomGen.BOSS_ROOM_HEIGHT + 1;
+        }
+        // floor interior bounds (excluding the outer wall ring) so plants scatter inside only
+        int innerX0 = x0 + RoomGen.WALL, innerX1 = x1 - RoomGen.WALL;
+        int innerZ0 = z0 + RoomGen.WALL, innerZ1 = z1 - RoomGen.WALL;
+        java.util.Random rng = new java.util.Random((long) n.x * 7919 + n.z * 104729);
+        Material[] plants = {
+                Material.TALL_GRASS, Material.FERN, Material.POPPY, Material.DANDELION,
+                Material.AZURE_BLUET, Material.CORNFLOWER, Material.OXEYE_DAISY,
+                Material.MOSS_CARPET, Material.TORCHFLOWER, Material.PINK_TULIP,
+                Material.ALLIUM, Material.PEONY
+        };
+        for (int y = y0; y <= y1; y++) {
+            boolean floorRow = y == y0;
+            boolean ceilRow = y == y1;
+            for (int x = x0; x <= x1; x++) {
+                for (int z = z0; z <= z1; z++) {
+                    Material m = world.getBlockAt(x, y, z).getType();
+                    if (m == Material.AIR || m == Material.CAVE_AIR) continue;
+                    if (floorRow) {
+                        setBlock(world, x, y, z, Material.GRASS_BLOCK);
+                        // scatter a few non-solid plants on the interior floor
+                        if (x >= innerX0 && x <= innerX1 && z >= innerZ0 && z <= innerZ1
+                                && rng.nextDouble() < 0.06) {
+                            setBlock(world, x, y + 1, z, plants[rng.nextInt(plants.length)]);
+                        }
+                    } else if (ceilRow) {
+                        if (isNaturalLight(m)) continue; // keep lamps lit in the canopy
+                        setBlock(world, x, y, z, Material.DARK_OAK_LEAVES);
+                    } else {
+                        if (m == Material.AIR || m == Material.CAVE_AIR) continue;
+                        if (m == Material.OAK_WOOD || m == Material.STRIPPED_OAK_LOG
+                                || m == Material.OAK_LOG || m == Material.MOSS_BLOCK) continue; // already natural
+                        if (isNaturalLight(m)) continue; // keep lamps
+                        setBlock(world, x, y, z, Material.OAK_WOOD);
+                    }
+                }
+            }
+        }
+        // A solid oak-wood layer (OAK_WOOD, the all-bark log variant) sits directly above the leaf canopy,
+        // so the Grovekeeper's arena reads as a timber-vaulted glade from within.
+        int plankY = y1 + 1;
+        for (int x = x0; x <= x1; x++) {
+            for (int z = z0; z <= z1; z++) {
+                setBlock(world, x, plankY, z, Material.OAK_WOOD);
+            }
+        }
+    }
+
+    private static boolean isNaturalLight(Material m) {
+        return m == Material.SHROOMLIGHT || m == Material.GLOWSTONE || m == Material.SEA_LANTERN
+                || m == Material.JACK_O_LANTERN || m == Material.LANTERN;
     }
 
     /** Revive all dead party members: restore them to SURVIVAL mode, heal them, re-create
@@ -3705,8 +3844,8 @@ public final class DungeonInstance {
                 }
             }
         }
-        if (away == null && boss != null && boss.location() != null) {
-            away = p.getLocation().toVector().subtract(boss.location().toVector());
+        if (away == null && bossLocation() != null) {
+            away = p.getLocation().toVector().subtract(bossLocation().toVector());
         }
         if (away == null) return;
         double y = away.getY();
@@ -3723,6 +3862,17 @@ public final class DungeonInstance {
         p.setVelocity(p.getVelocity().add(away));
     }
 
+    /** Credit a player's unsettled run kills into their persistent profile. Each kill is settled
+     *  exactly once per run (takeKills clears it), so repeated calls are idempotent. */
+    private void settleProfileKills(UUID pid) {
+        if (run == null) return;
+        int own = run.takeKills(pid);
+        if (own <= 0) return;
+        MetaManager.MetaProfile prof = plugin.meta().profile(pid);
+        prof.kills += own;
+        plugin.meta().save();
+    }
+
     public void onPlayerDeath(Player p) {
         if (!running) return;
         UUID pid = p.getUniqueId();
@@ -3735,7 +3885,7 @@ public final class DungeonInstance {
         // Damage persistent gear on death
         damagePersistentGear(p, DEATH_DURABILITY_DIVISOR);
         int floorReached = run.floorIndex + 1;
-        int kills = run.kills;
+        int kills = run.takeKills(p.getUniqueId());
         int runCoins = st.coins;
 
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
@@ -3830,6 +3980,7 @@ public final class DungeonInstance {
     public void removePlayer(Player p) {
         if (run == null) return;
         UUID pid = p.getUniqueId();
+        settleProfileKills(pid);
         // Drop any open shop/supplies GUI + session BEFORE restoring the inventory so a stale
         // session can never survive the player leaving the instance.
         plugin.shopUI().forceClose(p);
@@ -4174,6 +4325,7 @@ public final class DungeonInstance {
     public void endRun() {
         running = false;
         for (Player p : party.onlineMembers()) {
+            settleProfileKills(p.getUniqueId());
             HUD hud = huds.get(p.getUniqueId());
             TabUI tab = tabs.get(p.getUniqueId());
             org.bukkit.scoreboard.Scoreboard sb = playerBoards.get(p.getUniqueId());

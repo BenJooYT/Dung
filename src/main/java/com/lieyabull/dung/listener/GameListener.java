@@ -93,6 +93,16 @@ public final class GameListener implements Listener {
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
         plugin.meta().setName(p.getUniqueId(), p.getName());
+        // Offline-mode login migration: if this login uses a name-based (offline) UUID but a richer
+        // profile exists under the player's real (premium) UUID, move that progress onto this login
+        // so it loads once the player is in — and take their plots with them.
+        java.util.UUID migratedFrom = plugin.meta().migrateOfflineLogin(p.getUniqueId(), p.getName());
+        if (migratedFrom != null) {
+            plugin.plotManager().reassignPlotOwner(migratedFrom, p.getUniqueId());
+            plugin.getLogger().info("Restored saved progress for " + p.getName()
+                    + " (migrated profile from " + migratedFrom + " to " + p.getUniqueId() + ")");
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "login.restored"));
+        }
         // First join as an operator/admin: tell them the lobby is theirs to decorate
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
         if ((p.isOp() || p.hasPermission("dung.admin")) && !prof.lobbyEditNotified) {
@@ -659,18 +669,21 @@ public final class GameListener implements Listener {
                 if (dmg <= 0) return;
                 org.bukkit.Location impact = proj.getLocation();
                 org.bukkit.World w = impact.getWorld();
-                // AoE damage to all enemies within 3 blocks
+                // AoE damage to all enemies within 3.75 blocks (25% larger hitbox than the old 3.0)
                 long k = di.run().floor.key(di.curRoom().x, di.curRoom().z);
                 java.util.List<com.lieyabull.dung.entity.Enemy> roomList = di.roomEnemies().getOrDefault(k, java.util.List.of());
                 for (com.lieyabull.dung.entity.Enemy e2 : roomList) {
                     if (e2.dead) continue;
-                    if (e2.entity.getLocation().distance(impact) < 3.0) {
+                    if (e2.entity.getLocation().distance(impact) < 3.75) {
                         e2.damage(dmg, caster, 0, 0);
                     }
                 }
-                // Also damage boss if within range
-                if (di.boss() != null && di.boss().isActive() && di.boss().location().distance(impact) < 3.0) {
-                    di.boss().damage(dmg, caster);
+                // Also damage whichever boss is active (Warden OR Grovekeeper) if within range.
+                // The old check used di.boss() (Warden-only), so the Blaze Staff never hurt the
+                // Grovekeeper — its boss lives in a separate field.
+                Location bLoc = di.bossLocation();
+                if (bLoc != null && bLoc.distance(impact) < 3.75) {
+                    di.damageBoss(dmg, caster);
                 }
                 // Visual effects
                 w.spawnParticle(org.bukkit.Particle.FLAME, impact, 30, 1.5, 1.5, 1.5, 0.1);

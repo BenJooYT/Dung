@@ -72,6 +72,27 @@ public final class TabUI {
                 cdStr = com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.readyText");
             }
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.abilityCd", classAbilityLabel, cdStr));
+            // In-hand weapon ability: shows its cooldown, or a cast hint ("Shift + Right-click:
+            // <ability>") where the cooldown appears when it is ready to fire.
+            String weaponCdRow = "";
+            ItemStack hand = p.getInventory().getItemInMainHand();
+            if (hand != null && !hand.getType().isAir() && hand.getItemMeta() != null) {
+                var pdc = hand.getItemMeta().getPersistentDataContainer();
+                if (pdc.has(org.bukkit.NamespacedKey.minecraft("dung.ability"), org.bukkit.persistence.PersistentDataType.STRING)) {
+                    String weaponAbilityId = pdc.get(org.bukkit.NamespacedKey.minecraft("dung.ability"),
+                            org.bukkit.persistence.PersistentDataType.STRING);
+                    Long weaponCd = st.cooldowns.get(weaponAbilityId);
+                    long weaponRem = weaponCd == null ? 0 : weaponCd - System.currentTimeMillis();
+                    if (weaponRem > 0) {
+                        weaponCdRow = com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.abilityCd",
+                                itemAbilityName(p, weaponAbilityId), String.format("%.1fs", weaponRem / 1000.0));
+                    } else {
+                        weaponCdRow = com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.weaponReady",
+                                itemAbilityName(p, weaponAbilityId));
+                    }
+                }
+            }
+            team(o, i++, weaponCdRow);
             team(o, i++, "");
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.controls"));
         }
@@ -103,6 +124,27 @@ public final class TabUI {
             case "ranger" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.ranger");
             default -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.class");
         };
+    }
+
+    /** Localized friendly name for an item ability id (e.g. "Chain Lightning") for its cooldown row.
+     *  The shared "ability.*" keys end in a celebratory "!" that reads oddly in a cooldown label, so
+     *  the trailing exclamation mark is stripped here. */
+    private static String itemAbilityName(Player p, String id) {
+        String raw = switch (id) {
+            case "Rush" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.rush");
+            case "Slash" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.slash");
+            case "Cleave" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.cleave");
+            case "Smash" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.smash");
+            case "Blade Storm" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.bladeStorm");
+            case "Arcane Bolt" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.arcaneBolt");
+            case "Ravage" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.ravage");
+            case "Chain Lightning" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.chainLightning");
+            case "Fireball" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.fireball");
+            case "Life Drain" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.lifeDrain");
+            case "Lightning" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.lightning");
+            default -> "§f" + id;
+        };
+        return raw.endsWith("!") ? raw.substring(0, raw.length() - 1) : raw;
     }
 
     private String itemName(org.bukkit.inventory.ItemStack s) {

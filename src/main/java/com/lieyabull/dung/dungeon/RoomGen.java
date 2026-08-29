@@ -38,9 +38,17 @@ public final class RoomGen {
      *  (square / long-wide / long-deep / start). Structure rooms never call this (fixed templates). */
     public static void scaleToTier(Floor.RoomNode n, int tier) {
         int sq = squareFor(tier), ln = longFor(tier);
+        // Boss arenas are ~75% larger in width and length than a normal room (matches the enlarged
+        // boss template). The room node's shape constants (SQUARE/LONG) are just placeholders here —
+        // a boss room always becomes a square-ish arena.
+        if (n.type == RoomType.BOSS) { sq = BOSS_INTERIOR; ln = BOSS_INTERIOR; }
         if (n.sizeW == SQUARE) n.sizeW = sq; else if (n.sizeW == LONG) n.sizeW = ln;
         if (n.sizeH == SQUARE) n.sizeH = sq; else if (n.sizeH == LONG) n.sizeH = ln;
     }
+
+    /** Interior width/depth of a procedural boss arena: 13 -> 23, keeping the ~75% size increase and an
+     *  odd dimension so the room stays centered (also what the default BOSS template uses). */
+    public static final int BOSS_INTERIOR = 23;
     // shape constants
     public static final int SHAPE_RECTANGLE = 0;
     public static final int SHAPE_L = 1;
@@ -60,17 +68,18 @@ public final class RoomGen {
         return new RoomBase(n.x * spacing + offsetX, n.z * spacing + offsetZ);
     }
 
-    public static void build(World w, Floor.RoomNode n, int baseY, int spacing) {
-        build(w, n, baseY, spacing, LONG / 2, 0, 0);
+    public static void build(World w, Floor.RoomNode n, int baseY, int spacing, Floor floor) {
+        build(w, n, baseY, spacing, LONG / 2, floor, 0, 0);
     }
 
-    public static void build(World w, Floor.RoomNode n, int baseY, int spacing, int offsetX, int offsetZ) {
-        build(w, n, baseY, spacing, LONG / 2, offsetX, offsetZ);
+    public static void build(World w, Floor.RoomNode n, int baseY, int spacing, int offsetX, int offsetZ, Floor floor) {
+        build(w, n, baseY, spacing, LONG / 2, floor, offsetX, offsetZ);
     }
 
     /** {@code corridorHalf} is the shared half-width of the corridor side walls ({@link #corridorHalfFor}),
-     *  derived from the floor's party tier so larger rooms stay fully sealed. */
-    public static void build(World w, Floor.RoomNode n, int baseY, int spacing, int corridorHalf, int offsetX, int offsetZ) {
+     *  derived from the floor's party tier so larger rooms stay fully sealed. {@code floor} lets each room
+     *  find its neighbour so it can carve its doorway up to the neighbour's actual wall face. */
+    public static void build(World w, Floor.RoomNode n, int baseY, int spacing, int corridorHalf, Floor floor, int offsetX, int offsetZ) {
         RoomBase b = baseFor(n, spacing, offsetX, offsetZ);
         int sx = b.x, sz = b.z;
         int wl = n.sizeW + 2 * WALL;       // footprint including walls
@@ -182,15 +191,35 @@ public final class RoomGen {
                 int asg  = horiz ? DX[d] : DZ[d];            // along-axis direction sign
                 int half = horiz ? n.sizeW / 2 : n.sizeH / 2;
                 int innerWallT = WALL + half;        // this room's wall face (the doorway depth)
-                int nextWallT = spacing - innerWallT; // mirror: the neighbour seals its matching half
-                // guard: if spacing is ever too small the symmetric range would be empty/unsealed; keep
-                // at least the doorway block sealed so the tube can't open straight into the void
+                // Carve from THIS room's wall face exactly up to the neighbour's facing wall. Using a
+                // fixed mirror ("spacing - innerWallT") or a plain midpoint is only safe when the two
+                // rooms are identically sized: a small room sealing against a much bigger one (e.g.
+                // the boss arena) either punches its 3-wide passage INTO the big room's interior
+                // ("the corridor is inside the boss room") or, with the midpoint, leaves its wall mass
+                // short of the neighbour — a gap in the middle/floor of the corridor. By looking the
+                // neighbour up and carving up to ITS actual wall face, both carves meet at the same
+                // shared boundary: no overshoot into either interior and no gap between the walls.
+                int nbWallWorld;
+                Floor.RoomNode m = floor == null ? null : floor.at(n.x + DX[d], n.z + DZ[d]);
+                if (m == null) {
+                    nbWallWorld = axC + asg * spacing; // no neighbour: carve a short doorway stub
+                } else if (horiz) {
+                    int mw = (m.structure != null) ? m.structure.total().width() : (m.sizeW + 2 * WALL);
+                    int mbase = m.x * spacing + offsetX;
+                    nbWallWorld = mbase + (d == 1 ? 0 : mw);
+                } else {
+                    int mh = (m.structure != null) ? m.structure.total().depth() : (m.sizeH + 2 * WALL);
+                    int mbase = m.z * spacing + offsetZ;
+                    nbWallWorld = mbase + (d == 0 ? mh : 0);
+                }
+                int nextWallT = (nbWallWorld - axC) / asg;
+                // guard: if the two rooms are flush or the range would be empty, keep the doorway
+                // block sealed so the tube can't open straight into the void.
                 if (nextWallT <= innerWallT) nextWallT = innerWallT + 1;
-                // Carve ONLY the inter-room corridor: from this room's wall face to the neighbour's
-                // wall face. t ranges over [innerWallT, nextWallT] instead of the whole spacing, so
-                // the 3-wide passage and its floor never cut through either room's interior (the
-                // "corridor floor leaking into the room" bug). Because this room and the neighbour
-                // carve the SAME corridor, they still merge into one continuous tunnel.
+                // Carve the inter-room corridor: from this room's wall face to the neighbour's wall
+                // face. t ranges over [innerWallT, nextWallT], so the 3-wide passage and its floor
+                // cover the whole gap between the walls but never cut into either room's interior.
+                // This room and the neighbour carve the same boundary, so they merge into one tunnel.
                 for (int t = innerWallT; t <= nextWallT; t++) {
                     for (int off = -1; off <= 1; off++) {    // exactly 3 wide
                         int px = horiz ? (axC + asg * t) : (perpC + off);

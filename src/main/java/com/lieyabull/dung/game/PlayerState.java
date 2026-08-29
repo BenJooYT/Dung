@@ -41,7 +41,7 @@ public final class PlayerState {
     public double critChance = 0.05;
     public double critMult = 1.5;
     public double speedMult = 1.0;
-    public int fireRateTicks = 3;
+    public int fireRateTicks = 7;
     /** Per-player attack cooldown counter (ticks remaining before next swing). */
     public int fireCd = 0;
     /** True when the held mainhand weapon is a magic weapon (its basic melee stays negligible and
@@ -98,7 +98,7 @@ public final class PlayerState {
         reach = 3.0;
         critChance = 0.05;
         critMult = 1.5;
-        fireRateTicks = 3;
+        fireRateTicks = 7;
         speedMult = 1.0;
         int healthBonus = 0;
         // weapon damage from mainhand — only a real weapon counts. Holding an armor piece in-hand
@@ -210,7 +210,7 @@ public final class PlayerState {
                 break;
             case "ranger":
                 critChance += 0.10;
-                fireRateTicks = (int) Math.max(2, fireRateTicks - 2);
+                fireRateTicks = (int) Math.max(5, fireRateTicks - 2);
                 break;
         }
         // Mana clamp is now done in recomputeStats() after applyUpgrades(), so the upgrade

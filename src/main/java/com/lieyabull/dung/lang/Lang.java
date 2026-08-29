@@ -121,27 +121,29 @@ public final class Lang {
 
             // ---- /dung main menu (ChatUI.startPrompt) ----
             entry("menu.tagline", " — the dungeon awaits.", " — a Tömlöc rád vár."),
-            entry("menu.start.label", "[ Start a Run ]", "[ Futam Indítása ]"),
+            entry("menu.start.label", "[Start a Run]", "[Futam Indítása]"),
             entry("menu.start.hover", "Begin a fresh run", "Kezdj egy új futamot"),
-            entry("menu.shop.label", "[ Shop ]", "[ Bolt ]"),
+            entry("menu.shop.label", "[Shop]", "[Bolt]"),
             entry("menu.shop.hover", "Open the shop GUI — spend persistent coins on gear\n§cUnavailable during a run.", "Nyisd meg a bolt menüt — költsd el a maradandó érméidet felszerelésre\n§cFutam közben nem érhető el."),
-            entry("menu.upgrades.label", "[ Upgrades ]", "[ Fejlesztések ]"),
+            entry("menu.upgrades.label", "[Upgrades]", "[Fejlesztések]"),
             entry("menu.upgrades.hover", "Open the upgrades GUI — spend shards on permanent stat upgrades\n§cUnavailable during a run.", "Nyisd meg a fejlesztés menüt — használd a szilánkokat végleges tulajdonság-fejlesztésekre\n§cFutam közben nem érhető el."),
-            entry("menu.stats.label", "[ My Stats ]", "[ Statisztikáim ]"),
+            entry("menu.stats.label", "[My Stats]", "[Statisztikáim]"),
             entry("menu.stats.hover", "View your meta-progression", "Nézd meg a haladásodat"),
-            entry("menu.help.label", "[ Help ]", "[ Segítség ]"),
+            entry("menu.help.label", "[Help]", "[Segítség]"),
             entry("menu.help.hover", "List commands", "Parancsok listája"),
 
             // ---- dungeon room / door / boss feedback ----
             entry("room.seal.wait", "§cThe room won't seal until everyone is inside.", "§cA szoba addig nem záródik, amíg mindenki bent nincs."),
             entry("room.locked", "§cRoom locked — defeat all enemies!", "§cA szoba zárva — győzd le az összes ellenséget!"),
             entry("room.doorLocked", "§cThis room is locked — right-click the iron door with a key to unlock it!", "§cEz a szoba zárva van — jobb kattintás az acélajtón kulccsal a kinyitáshoz!"),
+            entry("room.prevNotCleared", "§cThe passage ahead stays locked until you clear this room!", "§cAz előttünk lévő átjáró zárva marad, amíg ki nem üríted ezt a szobát!"),
             entry("room.cleared", "§aRoom cleared! §7(+§e%s coins§7)", "§aTeljesítve! §7(+§e%s érme§7)"),
             entry("room.doorsOpened", "§aDoors opened!", "§aAz ajtók kinyíltak!"),
             entry("room.wardenWait", "§cThe Warden awaits until everyone is inside.", "§cA Warden addig vár, amíg mindenki bent nem lesz."),
             entry("room.bossAwaken", "§4The Warden of Floor %s awakens!", "§4A %s. szint Wardenje felébred!"),
             entry("room.bossSlain", "§6Boss slain!", "§6A főnök legyőzve!"),
             entry("room.hiddenFound", "§dYou found a hidden room!", "§dRejtett szobát találtál!"),
+            entry("login.restored", "§aYour saved progress was restored!", "§aA mentett haladásod visszaállítva!"),
 
             // ---- keys & bombs ----
             entry("door.needKey", "§cYou need a key to unlock this door!", "§cKulcs kell a zárt ajtó kinyitásához!"),
@@ -559,6 +561,7 @@ public final class Lang {
             entry("tab.boss.awaiting", "§6AWAITING", "§6VÁR"),
             entry("tab.boss.hidden", "§8hidden", "§8rejtve"),
             entry("tab.abilityCd", "§6%s §7%s", "§6%s §7%s"),
+            entry("tab.weaponReady", "§aShift + Right-click: §f%s", "§aShift + jobb kattintás: §f%s"),
             entry("tab.controls", "§8Sneak+Q=Class  Sneak+RMB=Weapon  Click=Attack", "§8Guggolás+Q=Osztály  Guggolás+JOBB EGÉR=Fegyver  Kattintás=Támadás"),
             entry("tab.durability", "§7Durability: ", "§7Tartósság: "),
 

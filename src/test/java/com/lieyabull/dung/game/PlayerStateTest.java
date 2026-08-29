@@ -50,7 +50,7 @@ public class PlayerStateTest {
         assertEquals(0.05, st.critChance, 0.001);
         assertEquals(1.5, st.critMult, 0.001);
         assertEquals(1.0, st.speedMult, 0.001);
-        assertEquals(3, st.fireRateTicks);
+        assertEquals(7, st.fireRateTicks);
         assertEquals("warrior", st.classId);
         assertFalse(st.dead);
         assertEquals(0, st.invulnUntil);
@@ -264,9 +264,9 @@ public class PlayerStateTest {
         PlayerState st = makeState();
         st.classId = "ranger";
         st.applyClassPassives();
-        // ranger: critChance += 0.10, fireRateTicks = max(2, 3-2) = 2
+        // ranger: critChance += 0.10, fireRateTicks = max(5, 7-2) = 5
         assertEquals(0.15, st.critChance, 0.001);
-        assertEquals(2, st.fireRateTicks);
+        assertEquals(5, st.fireRateTicks);
     }
 
     @Test

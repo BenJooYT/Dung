@@ -468,7 +468,7 @@ Gear lives in the inventory, not here.
 `maxHearts`/`hearts` (100 base), `mana`/`maxMana`, `manaRegen`, `coins`, `keys`, `bombs`,
 `shield`/`shieldMax` (mana-shield charge), `magicDamage`, `magicWeapon`,
 combat stats (`damage`, `defense`, `reach`, `critChance`, `critMult`, `speedMult`,
-`fireRateTicks` (default 3, reduced from 12)), `classId`, `cooldowns`, `invulnUntil`, `dead`.
+`fireRateTicks` (default 7, reduced from 12)), `classId`, `cooldowns`, `invulnUntil`, `dead`.
 
 - `recomputeStats()` — rebuilds combat stats from held weapon + 4 armor slots (SkyBlock style):
   damage from mainhand, reach override, rarity crit/knockback, defense/health from armor, then

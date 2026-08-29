@@ -579,6 +579,33 @@ tab = detailed build/run/progression).
       `shop/ShopPendingStore` (atomic disk persistence) and `shop/ShopType`/`shop/Category`. Added
       `ShopTransactionTest`, `ShopRulesTest`, `RollAnimationMathTest` — all pure JUnit, no Bukkit mocks.
 
+### Iteration 34 — room-skip guard + tab weapon-ability hint
+- [x] **No more room skipping:** a player may no longer exit a COMBAT/ELITE room that hasn't been
+      cleared yet. Previously a single runner could dash through rooms straight to the boss while the
+      rest of the party followed behind; `onPlayerMoved` now teleports anyone trying to cross out of an
+      uncleared combat/elite room back to its center with a "passage stays locked" notice, so every room
+      before the boss must actually be fought. The next room is effectively locked until the room before
+      it is cleared.
+- [x] **Tab weapon-ability hint:** the tab menu now shows the in-hand weapon ability directly under the
+      class cooldown row — its cooldown while charging, and **"Shift + Right-click: <ability>"** where the
+      cooldown sits once it is ready to fire (new `tab.weaponReady` key, EN+HU). Class abilities (Sneak+Q)
+      keep their existing row.
+
+### Iteration 35 — offline-mode login migration (paid players keep their progress)
+- [x] **Progress restored on login in offline mode:** running with `online-mode=false` gives every paid
+      player a different, name-derived (version-3) UUID, so they looked like brand-new accounts. On join,
+      `MetaManager.migrateOfflineLogin` now checks: if the login UUID is version-3 (offline) and a richer
+      profile is saved under the SAME name with a version-4 UUID, it migrates that profile onto the login
+      and deletes the stale v4 entry — idempotent, and it also reassigns the player's `plots.yml` plots and
+      trust entries (`PlotManager.reassignPlotOwner`). New `login.restored` notice (EN+HU); 6 new
+      `MetaManagerMigrationTest` tests (migration, disk persistence, idempotency, richer/boundary/no-op).
+- [x] **One-time data sync for BSmerrf (paid → offline):** the premium profile
+      (`5315907f-…474bac` — 403 coins, 206 clears, ranger, floor 10, 4 plots) was moved onto the offline
+      UUID (`a7032eb3-…9922`): `saves.yml` renamed + cracked block deleted, `plots.yml` ownership/trust
+      rewritten; the rich vanilla `playerdata` `.dat` replaced the fresh cracked one; stale duplicate
+      entries removed from `ops.json` and `usercache.json`. Originals backed up under
+      `D:\Games\run\backups\offline-sync-20260829-231347`.
+
 ### Remaining candidate work
 - [ ] **Status effects** — Poison (DoT), Slow, Weakness, Stun on both players and enemies. Weapons/
       abilities could apply them; enemies could apply them on hit. Adds strategic depth to combat.
@@ -1143,6 +1170,171 @@ tab = detailed build/run/progression).
 - [x] **`DungeonInstance.forcedBossType`** — new field (null = random, `"warden"`/`"grovekeeper"` = forced) with `setForcedBossType()`/`forcedBossType()` accessors. `onRoomEnterBossCheck()` uses the forced type instead of the random 20% roll when set.
 - [x] **`GameManager.instanceByWorld(World)`** — lookup method to find a dungeon instance by its run world, used by the command to target the correct instance.
 - [x] **Tab completion:** `forceboss` subcommand completes `warden`/`grovekeeper`/`random`.
+
+### Iteration 53 — Grovekeeper natural arena + reworked Root Burst
+- [x] **Grovekeeper's own greenery arena:** the Warden's deepslate boss room is re-painted into a natural
+      wood/grass arena the moment a Grovekeeper fight starts (`rethemeGrovekeeperRoom` in `DungeonInstance`).
+      Floor becomes grass, ceiling a dark-oak-leaf canopy (lamps kept lit), walls/pillars become oak planks,
+      and the interior is scattered with natural plants (grass, ferns, flowers, moss). Works for both
+      procedural and template boss rooms; the Warden keeps its original deepslate lair.
+- [x] **Root Burst reworked (was an instant beam):** now launches a **moving line of oak-log roots** aimed
+      along the telegraphed direction. It travels a **single-log-thick line** (exactly 1 block wide) across the
+      room; if it reaches the player it **explodes on impact** (AoE damage `(rage?55:45)+floor*15`); if it
+      misses it **collides with the wall, stays for 10 seconds, then fades** away. Placed logs are tracked and
+      restored to their original blocks when the burst is cleared, on boss defeat, or on despawn.
+- [x] **Timber Walls reworked (was a melee slam):** now raises a **3-wide × 4-tall wall of oak fence** facing
+      the telegraphed direction (telegraphed with a fence-block outline first). The wall is a physical barrier
+      placed a short distance ahead of the boss; any player touching it takes contact damage and is knocked
+      back, and the wall persists ~6 seconds before the fences are restored (also cleaned on defeat/despawn).
+- [x] **Poisonous Roots reworked (was a radial AoE):** now sends **red nether logs (crimson stems) snaking out
+      at ground level** in several random meandering patches around the boss. Stepping onto a root applies a
+      one-shot poison hit and toxin particles; the roots stay level with the floor and thin enough to
+      **jump over**. The patches persist ~10 seconds then the stems are restored (also cleaned on
+      defeat/despawn).
+- [x] **Basic melee now hits the Grovekeeper:** `registerAttack`'s melee swing only checked the Warden's
+      `boss` field/`boss.location()`, so left-click physical attacks on the Grovekeeper dealt no damage.
+      It now uses the shared `bossLocation()`/`damageBoss()` helpers (which branch to whichever boss is
+      active), plus knockback/Source drain and Ranger Shadow Step. The Grovekeeper can be damaged by a
+      plain melee swing again, not just abilities.
+- [x] **Timber Walls block abilities (fence only):** the wall's oak-fence blocks are registered in a static
+      `ACTIVE_TIMBER` set, and every instant-targeted ability (Slash, Cleave, Smash, Blade Storm, Arcane
+      Bolt, Chain Lightning, Lightning, Life Drain, Ravage, Mage's Arcane Nova, generic) now checks
+      `GrovekeeperController.timberWallBlocks` — if the straight line from caster to its target crosses an
+      active fence, the ability is blocked. Only the fence blocks count; dungeon walls never do. (Fireball
+      is a real projectile and is already stopped by the solid fence via vanilla physics.)
+- [x] **Root Burst erupts out of the ground + targets the head:** each placed root tip now bursts up out of the
+      floor (dirt/log block particles plus rising dust, from below the tip up past head height, with a grass
+      break sound), so the moving line reads as tearing up out of the ground rather than appearing fully formed.
+      The hit check and the explosion now cover the whole erupting column (from ~1.5 blocks below the line up
+      to ~4 blocks above it) and pop that column on impact, so the burst catches a player standing on a raised
+      cell or mid-jump — effectively targeting the player's head, not just their feet.
+- [x] **Poisonous Roots always level with the ground:** instead of locking root height to the target player's
+      current feet Y, `firePoisonRoots` now computes a fixed ground level via the new `poisonGroundY` helper,
+      which scans down from the fight center to the room's solid floor and places every crimson stem one block
+      above it. All roots share one Y for the whole cast regardless of where the player is standing.
+- [x] **Boss arena ~75% larger (width & length):** boss rooms are enlarged 13 → 23 interior for both the
+      procedural boss room (`RoomGen.BOSS_INTERIOR` in `scaleToTier`) and the default `boss_room` template
+      (`DefaultStructures.BOSS_INTERIOR`), giving the Grovekeeper a much bigger arena. The existing
+      room-to-room spacing already accommodates the larger footprint at every party tier.
+- [x] **Grovekeeper at ~20% speed via Slowness:** instead of disabling the native AI (which turned it into a statue)
+      or a manual teleport-loop, the Grovekeeper now gets **Slowness V** (75% reduction → ~25% ≈ a fifth) applied on
+      spawn, on top of its base `MOVEMENT_SPEED` of `0.12`. The native Ravager AI stays enabled so it still chases
+      players, just at a lumbering ~20% pace.
+- [x] **Oak-wood layer above the leaves:** `rethemeGrovekeeperRoom` now lays a solid `OAK_WOOD` (the all-bark log
+      variant, in place of the earlier `OAK_PLANKS`) layer directly above the dark-oak-leaf canopy across the whole
+      arena footprint — the walls/pillars/split blocks and the ceiling layer are all oak wood, so it reads as a
+      timber-vaulted glade from inside.
+- [x] **Melee is no longer spammable (empty hands count as melee):** a basic strike only deals damage when the
+      weapon's attack has recharged — a swing made during the per-player cooldown is now ignored entirely
+      instead of landing a reduced-damage hit, so rapid left-click can't whittle enemies/boss down. Empty-handed
+      punches share the same melee cooldown and use the base damage, so they're throttled too.
+      The melee cooldown (`fireRateTicks`) is now **7 ticks** for all classes, **5 for Rangers** (they still get
+      a 2-tick reduction on top).
+- [x] **Elixir drop is now 50%:** the Grovekeeper's Forest Transmutation Elixir reward is a **50% chance per kill**
+      (was guaranteed), so it's a rarer, more meaningful drop. The "drops an elixir" message only shows when it
+      actually drops.
+- [x] **Root attack no longer fires in a stale direction:** `warnAngle` was locked when the attack was *chosen*
+      (14–18 ticks before it fired), so by the time the Root Burst launched the boss and player had kept moving and
+      the root went very, very off target. `fire()` now recomputes the aim angle at the player's **current** position
+      the instant Root Burst / Timber Walls actually fire.
+- [x] **Timber Walls no longer vanish right after spawning:** `fireTimberWalls` used a separate `runTaskLater`
+      one-shot to auto-remove the wall, but that one-shot wasn't canceled when the wall was cleared early (e.g. by a
+      following Poisonous Roots cast), so a *stale* one-shot would wipe out the next freshly-spawned wall. The persist
+      window is now tracked inside the wall's own repeating task, eliminating the orphaned one-shot (same fix applied
+      to Poisonous Roots).
+- [x] **Boss arena no longer overlaps the corridors:** the assumption that the existing room-to-room spacing always
+      covered the enlarged boss footprint was wrong. The boss arena is a **fixed 23-interior / 25-footprint** box
+      regardless of party tier, while solo-tier (tier 0) spacing could roll as low as 22–24 — less than 25 — so the
+      boss room's walls physically collided with the adjacent room/corridor. `MIN_SPACING` is raised from 22 → **25**
+      (the widest footprint), so the boss arena always sits clear of its neighbours. `CorridorGeometryTest` gained two
+      guards so this can't regress (`bossFootprintNeverOverlapsNeighbour`, `bossNeighbourCorridorGapIsPositive`).
+- [x] **Root Burst travels along the true heading (not just 8 directions):** `tickRootMove` snapped the root's travel
+      direction with `signum()` of its direction components, so it could only move in 45&deg; steps — it veered
+      diagonally even when the player was basically in front, missing entirely unless the target sat exactly on a
+      cardinal/diagonal line. The root now advances its tips continuously along the exact `warnAngle` heading
+      (`ROOT_TRAVEL` blocks per step), placing a log in every cell the segment crosses (DDA sampling) so it stays a
+      solid single-thick line at any real angle, stopping at the first wall cell.
+- [x] **Root/wall warning tracks the player (matches the real attack):** the attack angle was locked when the attack
+      was *chosen* and the telegraph just redrew that stale line for the whole wind-up, so the warning pointed one way
+      while the (re-aimed) attack fired another. The warning now recomputes `warnAngle` at the player's **current**
+      position every warning tick, so the telegraph visibly follows the player and lands exactly where the root/wall
+      actually fires.
+- [x] **Timber wall is 5-wide and works at any angle:** the wall was 3-wide and placed by flooring per-offset
+      perpendicular cells, so on diagonals the `floor` collapsed/overlapped cells into a broken, off-axis line — and
+      its contact check assumed an axis-aligned 3x3 box. The wall is now **5 blocks wide** and its footprint is
+      **rasterized** (shared `wallCells`) so it's a clean connected perpendicular barrier at any angle; contact damage
+      + knockback check the actual wall columns and push the player back along the wall's normal.
+- [x] **Poisonous Roots fire in the base rotation:** the Poisonous Roots attack was gated to enrage-only
+      (`pool = rage ? 3 : 2`), so it was so rare it effectively never showed up in a typical fight. It's now part of
+      the standard 3-attack rotation, so all three Grovekeeper attacks reliably appear.
+- [x] **Poisonous Roots are denser, at ground level, and apply a 3-second poison:** roots were sparse (6 thin radial
+      spokes of crimson stems), placed one block *above* the floor (`poisonGroundY` returned floor+1) so they floated
+      up off the surface, and each contact was just a one-shot damage hit. Roots are now **denser** (12 patches,
+      longer/meander branches that cross and fill the floor), sit **flush in the ground** (root Y = the floor block
+      itself, and the step-detection Y was reconciled to the player standing on it), and **stepping on them applies a
+      real 3-second poison debuff** — a damage-over-time ticked every 0.5s through the plugin health model
+      (`poisonDurations` + `playerHurtBypassInvuln`, so defense still mitigates it) with light-green DUST particles
+      around the player (no vanilla potion effect, whose damage the per-tick health sync would wipe anyway).
+- [x] **Poison roots stay at ground level even when the boss is elevated:** roots were all pinned to ONE `baseY`
+      computed at the boss's column, so patches landed floating/buried over non-flat areas. Each stem now scans its
+      own column down from a reference height (`groundYAt`) and sits flush on that cell's actual floor.
+- [x] **Timber wall no longer damages a player walking away from it:** `wallTick` hurt anyone in a wall cell every tick
+      and knocked along the boss→player axis, so a wall spawned right behind the player still hurt them while they
+      fled. Contact damage + knockback now only fire when the player is pressing INTO the wall (velocity toward the
+      wall's center line), and the push is directed away from the wall's actual center line, so a player who's already
+      leaving takes nothing.
+- [x] **Root Burst is a continuous line again:** the burst used to place a log only on every other cell
+      (read as a sparse, gappy trail on the arena floor). `tickRootMove` now places a log cell on **every**
+      crossed cell of the root path, so the attack reads as one solid, continuous root.
+- [x] **Root attack travels 50% faster:** `ROOT_TRAVEL` raised from 1.6 to 2.4 blocks per advance (0.8 →
+      1.2 blocks/tick), so the burst reaches the player's lane noticeably sooner.
+- [x] **Blaze Staff now damages the Grovekeeper:** `GameListener.onProjectileHit`'s blaze-staff boss branch only checked
+      `di.boss()` (the Warden-only `BossController`), so fireballs dealt no damage on Grovekeeper floors — that path is
+      null there. It now goes through the shared `di.bossLocation()` + `damageBoss(dmg, caster)` (radius 3.0), which
+      branches to whichever boss is active. `bossActive()`/`damageBoss()`/`bossLocation()` are now public.
+- [x] **Poison roots can no longer spawn inside the room's roof:** `groundYAt` returned the **first** solid block
+      scanning down from above the floor, so a root cell that landed beneath the arena's solid canopy/oak-wood ceiling
+      matched that roof block first and the crimson stem spawned up in the ceiling. It now returns the solid block
+      whose cell above is open air — the scan passes the ceiling/canopy (whose own cell above is solid) and lands on
+      the interior floor, keeping every root flush on the floor as intended.
+- [x] **Corridor still never carves inside a neighbouring room:** the inter-room corridor carve used `nextWallT =
+      spacing - innerWallT` (this room's OWN half mirrored), so a small room sealing against a much bigger one (e.g. a
+      normal room next to the 23-interior boss) punched its 3-wide passage several blocks INTO the big room's interior —
+      the "corridor is inside the boss room" overlap. A first pass carved each room's passage up to the **midpoint**
+      (`spacing/2`) so no room ever crosses a wall face; that symmetric cut still left a **wall/floor gap** in the
+      middle of the corridor whenever the two rooms' halves differed (the carve stopped short of the neighbour's wall).
+      `RoomGen.build` is now **neighbour-aware**: it stops at the neighbour's actual facing wall (world coordinate from
+      the neighbour's footprint — `sizeW + 2*WALL` for procedural rooms, `structure.total().width()/depth()` for
+      structure rooms), so BOTH rooms carve the same span and the connecting corridor is fully walled — no overshoot
+      into the boss interior, no gap in the middle or floor. `RoomGen.build` gained a `Floor floor` parameter (caller
+      passes `run.floor`). New regression
+      `CorridorGeometryTest.neighbourAwareCarveReachesFacingWallWithNoGapOrOvershoot` locks this in.
+- [x] **Blaze-staff fireball hitbox +25%:** the projectile's area-of-effect radius rose from 3.0 to **3.75** blocks
+      (`GameListener.onProjectileHit`, for both the enemy loop and the Grovekeeper/Warden boss check), so fireballs
+      connect with targets a touch wider than before.
+- [x] **An item ability that finds no target is not put on cooldown:** `dispatchAbility` now returns a "connected"
+      flag (`hitTargets` also returns `boolean`; the boss branch reports through a dedicated flag); `tryCastAbility`
+      only spends mana, applies the GCD + ability cooldown, and wears the weapon when the cast actually connected.
+      A whiffed Cast (e.g. Chain Lightning/Lightning/Melee with no one in range) can be retried immediately.
+- [x] **Item ability cooldown never overlaps the class cooldown in the sidebar:** the class ability always owns its
+      row, and any in-hand item ability cooldown renders on its own row right below it (`ui/HUD.java`, `ROWS` 13 →
+      14, with a friendly localized name per ability id). Previously the sidebar collapsed both into one line and
+      showed whichever cooldown was longest.
+
+### Iteration 54 — per-player kill tracking (leaderboard counts your own kills)
+- [x] **Kills are attributed to the killer, not the party:** one run-wide `Run.kills` counter had every party member
+      credited with the whole party's total on their next death, and survivors got nothing. `Run.kills` is now a
+      **per-player map** (`Run.kills` → `Map<UUID,Integer>` + `killsOf`/`addKill`/`takeKills`), `Enemy` records the
+      `killer` who lands the killing blow in `damage()`, and the room-clear sweep in `DungeonInstance` credits each
+      death to that player (falling back to the nearest alive member if the source is ever missing).
+- [x] **Persistent kills are settled at run end, once per kill:** a `settleProfileKills(pid)` helper moves a player's
+      unsettled run kills into their `saves.yml` profile. It runs on **death** (`onPlayerDeath` — the death "Kills this
+      run" line now shows the player's own count), on **leaving early** (`removePlayer`), and on **run end** (`endRun`,
+      so completed runs actually credit kills instead of losing them). `takeKills` clears the counter, so a kill is
+      settled exactly once even when multiple events fire.
+- [x] **HUD "Kills" row shows the player's own kills** (`ui/HUD.java` → `run.killsOf(p.getUniqueId())`), so the sidebar
+      matches what the persistent profile records. `/leaderboard` (kills category), `/dung stats`, and the death screen
+      all now reflect each player's individual kills. 221/221 tests pass; `Dung-1.3.0.jar` re-exported.
 
 ## Build / run
 ```

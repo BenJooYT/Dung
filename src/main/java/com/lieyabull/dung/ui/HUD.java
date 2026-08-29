@@ -23,7 +23,7 @@ public final class HUD {
     /** Number of fixed sidebar rows. Rows are registered ONCE per board and never cleared per
      *  tick — resetting + re-adding scores every tick made the client tear the whole board down
      *  and rebuild it each frame, which reads as the sidebar flickering between two states. */
-    private static final int ROWS = 13;
+    private static final int ROWS = 14;
     private final String[] lastText = new String[ROWS];
     private String lastDisplayName = null;
 
@@ -69,7 +69,7 @@ public final class HUD {
         setLine(o, 4, "");
         // consumables / run
         setLine(o, 5, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.coinsLine", st.coins, st.keys));
-        setLine(o, 6, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bombsLine", st.bombs, run.kills));
+        setLine(o, 6, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bombsLine", st.bombs, run.killsOf(p.getUniqueId())));
         setLine(o, 7, "");
         // Determine which room the player is physically inside. If they're in the corridor
         // (between rooms), show "Corridor" instead of the stale previous room.
@@ -105,14 +105,9 @@ public final class HUD {
         }
         setLine(o, 10, di.boss() != null ? com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bossActive") : lockedHint);
         setLine(o, 11, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.class", className(p, st.classId)));
-        // ability cooldown (longest currently running)
+        // Ability cooldowns on separate rows so they never overlap: the class ability always owns
+        // row 12; any in-hand item ability cooldown renders on row 13 right beneath it.
         long now = System.currentTimeMillis();
-        long rem = 0; String cdName = "";
-        for (var e : st.cooldowns.entrySet()) {
-            if (e.getKey().equals(PlayerState.GCD_KEY)) continue;
-            long r = e.getValue() - now;
-            if (r > 0 && r > rem) { rem = r; cdName = e.getKey(); }
-        }
         // Show class ability cooldown with a friendly name
         String classAbilityLabel = classAbilityName(p, st.classId);
         String classKey = "class_" + st.classId;
@@ -120,11 +115,26 @@ public final class HUD {
         long classRem = classCd == null ? 0 : classCd - now;
         if (classRem > 0) {
             setLine(o, 12, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.cd", classAbilityLabel, String.format("%.1f", classRem / 1000.0)));
-        } else if (rem > 0) {
-            setLine(o, 12, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.cd", cdName, String.format("%.1f", rem / 1000.0)));
         } else {
             setLine(o, 12, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.ready", classAbilityLabel));
         }
+        // In-hand item ability cooldown, on the row below the class one.
+        String itemCdRow = "";
+        ItemStack hand = p.getInventory().getItemInMainHand();
+        if (hand != null && !hand.getType().isAir() && hand.getItemMeta() != null) {
+            var pdc = hand.getItemMeta().getPersistentDataContainer();
+            if (pdc.has(org.bukkit.NamespacedKey.minecraft("dung.ability"), org.bukkit.persistence.PersistentDataType.STRING)) {
+                String itemAbilityId = pdc.get(org.bukkit.NamespacedKey.minecraft("dung.ability"),
+                        org.bukkit.persistence.PersistentDataType.STRING);
+                Long itemCd = st.cooldowns.get(itemAbilityId);
+                long itemRem = itemCd == null ? 0 : itemCd - now;
+                if (itemRem > 0) {
+                    itemCdRow = com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.cd",
+                            itemAbilityName(p, itemAbilityId), String.format("%.1f", itemRem / 1000.0));
+                }
+            }
+        }
+        setLine(o, 13, itemCdRow);
     }
 
     /** Localized friendly name for a room type (used in the sidebar Room row). */
@@ -151,6 +161,27 @@ public final class HUD {
             case "ranger" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.ranger");
             default -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.class");
         };
+    }
+
+    /** Localized friendly name for an item ability id (e.g. "Chain Lightning") for its cooldown row.
+     *  The shared "ability.*" keys end in a celebratory "!" that reads oddly in a cooldown label, so
+     *  the trailing exclamation mark is stripped here. */
+    private static String itemAbilityName(Player p, String id) {
+        String raw = switch (id) {
+            case "Rush" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.rush");
+            case "Slash" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.slash");
+            case "Cleave" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.cleave");
+            case "Smash" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.smash");
+            case "Blade Storm" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.bladeStorm");
+            case "Arcane Bolt" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.arcaneBolt");
+            case "Ravage" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.ravage");
+            case "Chain Lightning" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.chainLightning");
+            case "Fireball" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.fireball");
+            case "Life Drain" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.lifeDrain");
+            case "Lightning" -> com.lieyabull.dung.lang.Lang.forPlayer(p, "ability.lightning");
+            default -> "§f" + id;
+        };
+        return raw.endsWith("!") ? raw.substring(0, raw.length() - 1) : raw;
     }
 
     /** Check the player's persistent gear and return a durability condition string. */

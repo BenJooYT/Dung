@@ -1,5 +1,7 @@
 package com.lieyabull.dung.entity;
 
+import java.util.UUID;
+
 import com.lieyabull.dung.dungeon.Floor;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -31,6 +33,7 @@ public final class Enemy {
     public final int room; // room id for scoping
     public final Entity entity;
     public boolean dead;
+    public UUID killer; // player who landed the killing blow, for per-player kill credit
     private long attackCd = 0;      // game ticks before the next attack is allowed
     private long movePause = 0;     // game ticks frozen after attacking (gives dodge window)
     private long knockTicks = 0;    // game ticks where knockback velocity pushes the mob (no homing)
@@ -428,6 +431,7 @@ public final class Enemy {
         }
         if (hp <= 0) {
             dead = true;
+            killer = source != null ? source.getUniqueId() : null;
             // Mulliboom explodes on death
             if (type.ai == 4) {
                 mulliboomExplode(source);

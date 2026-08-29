@@ -153,6 +153,75 @@ public final class MetaManager {
         return all;
     }
 
+    /**
+     * Offline-mode login migration. An offline-mode server derives a name-based (version-3) UUID from
+     * every player name, so a paid player who used to log in with their real (version-4) UUID suddenly
+     * appears as a brand-new account with no progression. On join as a v3 UUID, if a richer profile is
+     * saved under the SAME name with a v4 UUID, migrate that profile onto the joining UUID and drop the
+     * stale v4 entry, so the player's progress loads the moment they log in. Idempotent: after the
+     * first migration the v4 source is gone (or no longer richer), so it is a no-op.
+     *
+     * @return the premium UUID whose profile was migrated, or null if nothing was migrated
+     */
+    public UUID migrateOfflineLogin(UUID actualUuid, String name) {
+        if (actualUuid == null || name == null || actualUuid.version() != 3) return null;
+        MetaProfile mine = profile(actualUuid);
+        UUID source = null;
+        MetaProfile sourceProf = null;
+        for (Map.Entry<UUID, MetaProfile> e : allProfiles().entrySet()) {
+            MetaProfile prof = e.getValue();
+            if (e.getKey().equals(actualUuid)) continue;
+            if (e.getKey().version() == 3) continue; // another offline identity, not the paid profile
+            if (!name.equals(prof.name)) continue;
+            if (worth(prof) <= worth(mine)) continue;
+            if (sourceProf == null || worth(prof) > worth(sourceProf)) {
+                source = e.getKey();
+                sourceProf = prof;
+            }
+        }
+        if (source == null || sourceProf == null) return null;
+        // Overwrite the joining (offline) UUID's saved section with the premium profile's saved data,
+        // then remove the stale premium entry so the two never live side by side again.
+        var srcSection = data.getConfigurationSection(source.toString());
+        if (srcSection != null) {
+            data.set(actualUuid.toString(), srcSection);
+            data.set(source.toString(), null);
+        }
+        // Refresh the in-memory profile this session sees so HUD/tab/shop all use the migrated values.
+        MetaProfile cached = profiles.get(actualUuid);
+        if (cached != null) {
+            cached.name = sourceProf.name;
+            cached.persistentCoins = sourceProf.persistentCoins;
+            cached.shards = sourceProf.shards;
+            cached.hasSeenTutorial = sourceProf.hasSeenTutorial;
+            cached.lobbyEditNotified = sourceProf.lobbyEditNotified;
+            cached.deaths = sourceProf.deaths;
+            cached.clears = sourceProf.clears;
+            cached.classId = sourceProf.classId;
+            cached.language = sourceProf.language;
+            cached.kills = sourceProf.kills;
+            cached.bestFloor = sourceProf.bestFloor;
+            cached.lastWorld = sourceProf.lastWorld;
+            cached.lastX = sourceProf.lastX;
+            cached.lastY = sourceProf.lastY;
+            cached.lastZ = sourceProf.lastZ;
+            cached.lastYaw = sourceProf.lastYaw;
+            cached.lastPitch = sourceProf.lastPitch;
+            cached.upgrades.clear();
+            cached.upgrades.putAll(sourceProf.upgrades);
+        } else {
+            profiles.put(actualUuid, sourceProf);
+        }
+        profiles.remove(source);
+        save();
+        return source;
+    }
+
+    /** Rough measure of a profile's total progress, used to pick the richer of two same-named accounts. */
+    private static int worth(MetaProfile prof) {
+        return prof.persistentCoins + prof.shards + prof.clears * 10 + prof.kills;
+    }
+
     public static final class MetaProfile {
         public String name;
         public int persistentCoins;

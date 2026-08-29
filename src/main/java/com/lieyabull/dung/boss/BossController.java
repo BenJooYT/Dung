@@ -130,7 +130,6 @@ public final class BossController {
         }
         pending = atk;
         warning = rage ? 14 : 18;
-        p.sendMessage(telegraphMsg(p, atk, warnAngle));
     }
 
     /** Resolve the telegraphed attack once its warning ends. */
@@ -145,7 +144,6 @@ public final class BossController {
                 world.spawnParticle(org.bukkit.Particle.EXPLOSION, center.clone().add(dx * 5, 1, dz * 5), 1, 1, 0, 1);
                 if (along > -1 && along < 12 && perp < 2.0) {
                     com.lieyabull.dung.game.GameManager.playerHurt(p, (rage ? 55 : 45) + floor * 15);
-                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "boss.beamStrikes"));
                 }
                 break;
             }
@@ -179,22 +177,6 @@ public final class BossController {
     private void warnRing(Location center) {
         double r = 2 + (warning % 4);
         world.spawnParticle(org.bukkit.Particle.CRIT, center.clone().add(0, 1, 0), 20, r, 0, r, 0);
-    }
-
-    private String telegraphMsg(Player p, int atk, double angle) {
-        if (atk == ATTACK_BEAM) {
-            String dir = directionName(p, angle);
-            return com.lieyabull.dung.lang.Lang.forPlayer(p, "boss.telegraphBeam", dir);
-        }
-        return com.lieyabull.dung.lang.Lang.forPlayer(p, "boss.coreFlares");
-    }
-
-    private String directionName(Player p, double angle) {
-        String[] keys = {"dir.east", "dir.southEast", "dir.south", "dir.southWest",
-                "dir.west", "dir.northWest", "dir.north", "dir.northEast"};
-        int idx = (int) Math.round(angle / (Math.PI / 4)) % 8;
-        if (idx < 0) idx += 8;
-        return com.lieyabull.dung.lang.Lang.forPlayer(p, keys[idx]);
     }
 
     public boolean isActive() {

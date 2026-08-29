@@ -1070,4 +1070,22 @@ public final class PlotManager {
         List<PlotCoord> owned = ownedPlots(p.getUniqueId());
         return owned.isEmpty() ? null : owned.get(0);
     }
+
+    /** Re-home every plot reference (ownership and the trust lists) from one UUID to another after an
+     *  offline-login profile migration, so the player's plots follow them to their new account UUID. */
+    public void reassignPlotOwner(UUID oldOwner, UUID newOwner) {
+        if (oldOwner == null || newOwner == null || oldOwner.equals(newOwner)) return;
+        boolean changed = false;
+        for (PlotInfo info : plots.values()) {
+            if (oldOwner.equals(info.owner)) {
+                info.owner = newOwner;
+                changed = true;
+            }
+            if (info.buildTrust.remove(oldOwner)) { info.buildTrust.add(newOwner); changed = true; }
+            if (info.containerTrust.remove(oldOwner)) { info.containerTrust.add(newOwner); changed = true; }
+            if (info.pickupTrust.remove(oldOwner)) { info.pickupTrust.add(newOwner); changed = true; }
+            if (info.mobKillTrust.remove(oldOwner)) { info.mobKillTrust.add(newOwner); changed = true; }
+        }
+        if (changed) save();
+    }
 }
