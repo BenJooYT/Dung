@@ -62,7 +62,12 @@ public final class DummyManager implements Listener {
     private final java.util.HashSet<Dummy> resolving = new java.util.HashSet<>();
     /** Resolved avatar profiles (name → profile with textures), so boot-time failures can be
      *  retried on join without re-hitting Mojang for every viewer. */
-    private final Map<String, com.destroystokyo.paper.profile.PlayerProfile> avatarProfiles = new HashMap<>();
+    private final Map<String, com.destroystokyo.paper.profile.PlayerProfile> avatarProfiles =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    /** Last successfully resolved skin textures per avatar name ("textures" property) — persisted
+     *  to dummies.yml so offline servers keep rendering known skins with no route to Mojang. */
+    private final Map<String, com.destroystokyo.paper.profile.ProfileProperty> cachedTextures =
+            new java.util.concurrent.ConcurrentHashMap<>();
     /** Packet-based true player models (only functional when ProtocolLib is installed). */
     private final FakePlayerRenderer renderer;
 
@@ -165,6 +170,7 @@ public final class DummyManager implements Listener {
     public void setAvatar(Dummy d, String playerName) {
         d.avatar = playerName;
         save();
+        avatarProfiles.remove(playerName.toLowerCase()); // force a fresh lookup of the new skin
         resolveAndApplyAvatar(d);
     }
 
@@ -181,19 +187,28 @@ public final class DummyManager implements Listener {
             com.destroystokyo.paper.profile.PlayerProfile prof = avatarProfiles.get(key);
             if (prof == null) {
                 Player online = Bukkit.getPlayerExact(name);
-                if (online != null) {
-                    prof = online.getPlayerProfile(); // already has skin data
+                if (online != null && online.getPlayerProfile().hasTextures()) {
+                    prof = online.getPlayerProfile(); // live session skin (online mode)
                 } else {
+                    // Offline-mode players have NO textures in their live profile (there is no
+                    // session server), so a currently-online player must resolve like an offline
+                    // one: fetch the skin by name from Mojang's public API, which works regardless
+                    // of online-mode. This was silently breaking avatars on offline servers —
+                    // online players' avatars always degraded to blank stands.
                     try {
                         prof = Bukkit.createProfile(name); // triggers Mojang lookup
                         prof.complete(true);               // blocking fetch of textures
                     } catch (Exception ex) {
-                        resolving.remove(d);
                         plugin.getLogger().warning("Dummy avatar lookup failed for '" + name + "': " + ex.getMessage());
-                        return;
                     }
                 }
-                if (prof != null && prof.hasTextures()) avatarProfiles.put(key, prof);
+                // Fall back to the last successfully resolved skin for this name (persisted to
+                // dummies.yml) so avatars keep working even when Mojang is unreachable.
+                if (prof == null || !prof.hasTextures()) prof = fromCachedTextures(key, name);
+                if (prof != null && prof.hasTextures()) {
+                    avatarProfiles.put(key, prof);
+                    persistTextures(key, prof);
+                }
             }
             final com.destroystokyo.paper.profile.PlayerProfile resolved = prof;
             final boolean known = resolved != null && resolved.hasTextures();
@@ -252,6 +267,32 @@ public final class DummyManager implements Listener {
             head.setItemMeta(skull);
         }
         stand.getEquipment().setHelmet(head);
+    }
+
+    /** Rebuild a profile purely from a persisted textures property — no network involved. */
+    private com.destroystokyo.paper.profile.PlayerProfile fromCachedTextures(String key, String name) {
+        com.destroystokyo.paper.profile.ProfileProperty prop = cachedTextures.get(key);
+        if (prop == null) return null;
+        try {
+            com.destroystokyo.paper.profile.PlayerProfile p =
+                    Bukkit.createProfile(Bukkit.getOfflinePlayer(name).getUniqueId(), name);
+            p.setProperty(new com.destroystokyo.paper.profile.ProfileProperty(
+                    "textures", prop.getValue(), prop.getSignature()));
+            return p.hasTextures() ? p : null;
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    /** Remember a resolved skin so offline restarts can render it without another Mojang call. */
+    private void persistTextures(String key, com.destroystokyo.paper.profile.PlayerProfile prof) {
+        for (var prop : prof.getProperties()) {
+            if (prop.getName().equalsIgnoreCase("textures")) {
+                cachedTextures.put(key, new com.destroystokyo.paper.profile.ProfileProperty(
+                        "textures", prop.getValue(), prop.getSignature()));
+                return;
+            }
+        }
     }
 
     public List<Dummy> all() {
@@ -473,6 +514,7 @@ public final class DummyManager implements Listener {
             e.printStackTrace();
             return;
         }
+        loadCachedTextures();
         for (Map<?, ?> m : data.getMapList("dummies")) {
             Object worldObj = m.get("world");
             if (worldObj == null) continue;
@@ -508,6 +550,20 @@ public final class DummyManager implements Listener {
     private static String strOrNull(Object o) {
         String s = o == null ? null : o.toString();
         return s == null || s.isEmpty() ? null : s;
+    }
+
+    /** Restore previously persisted skin textures so offline restarts render without Mojang. */
+    private void loadCachedTextures() {
+        cachedTextures.clear();
+        var skins = data.getConfigurationSection("avatar-skins");
+        if (skins == null) return;
+        for (String k : skins.getKeys(false)) {
+            String value = skins.getString(k + ".value");
+            if (value == null) continue;
+            String signature = skins.getString(k + ".signature");
+            cachedTextures.put(k.toLowerCase(), new com.destroystokyo.paper.profile.ProfileProperty(
+                    "textures", value, signature == null ? "" : signature));
+        }
     }
 
     /** Max characters per display line — anything longer fills the player's screen. */
@@ -554,6 +610,18 @@ public final class DummyManager implements Listener {
                 list.add(m);
             }
             data.set("dummies", list);
+            if (cachedTextures.isEmpty()) {
+                data.set("avatar-skins", null);
+            } else {
+                Map<String, Object> skins = new HashMap<>();
+                for (Map.Entry<String, com.destroystokyo.paper.profile.ProfileProperty> e : cachedTextures.entrySet()) {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("value", e.getValue().getValue());
+                    m.put("signature", e.getValue().getSignature());
+                    skins.put(e.getKey(), m);
+                }
+                data.set("avatar-skins", skins);
+            }
             file.getParentFile().mkdirs();
             File tmp = new File(file.getParentFile(), file.getName() + ".tmp");
             Files.write(tmp.toPath(), data.saveToString().getBytes(StandardCharsets.UTF_8));

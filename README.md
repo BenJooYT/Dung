@@ -142,18 +142,21 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/plot pvp on\|off` | all | Toggle PVP on the plot you're standing on (off by default). |
 | `/plot fire on\|off` | all | Toggle fire spread/burning on the plot you're standing on. |
 | `/plot public on\|off` | all | Toggle public access (anyone may build/open containers). |
-| `/plot trust <player>` / `/plot untrust <player>` | all | Grant/revoke build access on the plot you're standing on. |
-| `/plot container <player>` / `/plot uncontainer <player>` | all | Grant/revoke container access on the plot you're standing on. |
-| `/plot pickup <player>` / `/plot unpickup <player>` | all | Grant/revoke item-pickup access on the plot you're standing on. |
+| `/plot perm` | all | Show the access lists (public, build, container, pickup, mobkill) of the plot you're standing on. |
+| `/plot perm <build\|container\|pickup\|mobkill> <player> [on\|off]` | all | Grant or revoke a per-player plot permission (`on\|grant` and `off\|remove\|revoke` work in either position, e.g. `/plot perm build remove <name>`). |
 | `/plot unclaim` | all | Unclaim the plot you're standing on (frees it for re-claiming). |
+
+`/p` is an alias for `/plot`, so `/p perm build <name> on` works everywhere `/plot` does.
 | `/leaderboard [category] [page]` | all | Top players by `persistent_coins`/`shards`/`kills`/`clears`/`max_floor`, including offline players. |
 | `/dung bossbar` | `dung.admin` | Remove any stuck boss bars from the server. |
 | `/dung forceboss <warden\|grovekeeper\|random>` | `dung.admin` | Force the boss type for the next floor in the dungeon world you're standing in. |
 | `/troll` | OP only | Opens the OP-only troll item menu giving a Lightning Wand (call down lightning) or a Fling Wand (fling looked-at players). |
+| `/afk` | all | Toggle your AFK status right away. While AFK you're announced in grey with a floating `[AFK]` tag, and mobs won't attack or push you; run `/afk` again to undo. |
 | `/dung room gen <id> [types]` | `dung.admin` | Auto-write `<id>.yml`+`<id>.schem` from your WorldEdit `//copy`. The id is the schematic name; reads marker signs for spawn/markers. Doors are carved procedurally at generation. |
 | `/dung room list` | `dung.admin` | List registered room structures. |
 | `/dung room reload` | `dung.admin` | Re-scan `plugins/Dung/structures/` and re-register structures. |
 | `/dung room validate <id>` | `dung.admin` | Re-validate one structure (metadata + physical build). |
+| `/check` | `dung.admin` / op | Open the container you're looking at (5 blocks) regardless of plot protections — the block's raw inventory is opened directly, so plot container permissions are bypassed. |
 | `/dung room preview <id> [0-3]` | `dung.admin` | Paste a preview of a structure at your location, at the given rotation. |
 
 `/dung give` is a free admin debug surface: `rareweapon` now spawns a persistent weapon at no
@@ -628,15 +631,19 @@ sound + `CRIT` particles), and at 0, despawns + calls `GameManager.onBossDefeate
 **`GrovekeeperController`** — a forest-themed boss that has a **20% chance per floor** to replace
 The Warden. Uses a Ravager entity with a green boss bar and 3 attacks:
 
-- **Root Burst (beam)** — telegraphs a directional lane with vine particles, then fires a root
-  burst dealing heavy damage in a 2-block-wide, 12-block-long lane.
-- **Timber Walls (slam)** — expanding ring telegraph with oak log/leaf particles, damages players
-  within 3 blocks.
-- **Poisonous Roots (radial)** — unlocked below 50% HP. Expanding ring telegraph with moss/spore
-  blossom particles, deals damage within 5 blocks plus poison DoT.
+- **Root Burst (beam)** — telegraphs a directional lane of vine particles, then fires a **moving
+  line of oak-log roots aimed at every party member at once** (one lane per player). A lane that
+  reaches its target explodes on impact (heavy AoE); one that misses stops at the wall and lingers
+  ~10s before fading.
+- **Timber Walls (slam)** — raises a 5-wide oak-fence wall facing a telegraphed direction; touching
+  it deals contact damage + knockback, and it blocks instant-targeted abilities (fence only).
+- **Poisonous Roots (radial)** — sends dense crimson-stem snakes snaking across the floor;
+  stepping on one applies a **3-second poison DoT** (bypasses i-frames, mitigated by defense).
 
 Below 50% HP the Grovekeeper enrages (faster telegraphs, shorter cooldowns). On taking damage it
-teleports behind the attacker (flanking dash). Drops a **Forest Transmutation Elixir** on defeat.
+teleports behind the attacker (flanking dash), and a **basic melee swing provokes it**: it hurls
+the attacker away for 3% max-HP backhand damage (once per second). Drops a **Forest Transmutation
+Elixir** (a persistent item) on defeat.
 
 ### `listener` — Paper event wiring
 
@@ -702,8 +709,9 @@ always cancelled in the plots world; crop trampling and out-of-bounds tree/plant
 Right-clicking a fully grown crop on a plot you can modify harvests it (natural drops fall) and
 auto-replants its seed as a fresh age-0 crop.
 
-**`PlotCommand`** — `/plots` (warp) and `/plot` (claim, home, name, warp, settings, pvp/fire/
-public, trust/untrust, container/uncontainer, pickup/unpickup, unclaim) with tab completion.
+**`PlotCommand`** — `/plots` (warp) and `/plot` / `/p` (claim, home, name, warp, settings, pvp/
+fire/public/mobkill toggles, the unified `perm` permission subcommand, unclaim) with tab
+completion.
 
 ### `compost` — composter feeding mechanic
 
@@ -965,6 +973,13 @@ immediately and spent in `/upgrades`.
 - **Custom composter mechanic** — drop compostables into a composter to feed it with vanilla per-item
   RNG, buffering leftovers; right-click a full (level-8) composter to collect bone meal and keep
   filling from the buffer; breaking it returns the buffered material.
+- **AFK detection** — 3 minutes without activity (movement/chat/clicks/drops/damage) announces the
+  player as AFK in grey chat and floats a grey `[AFK]` tag above their head; any activity clears it.
+  `/afk` opts in immediately (and survives activity until toggled off). While AFK a player is never
+  targeted by dungeon mobs/bosses and cannot be damaged or knocked around by any entity.
+- **Dummy avatars work on offline-mode servers** — a live `PlayerProfile` in offline mode carries no
+  textures, so avatars resolve via a name→Mojang lookup regardless of online mode, and resolved skins
+  are persisted to `dummies.yml` (`avatar-skins`) so offline restarts render them without re-fetching.
 
 ### Tests
 

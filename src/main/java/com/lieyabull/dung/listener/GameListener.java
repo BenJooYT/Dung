@@ -123,6 +123,14 @@ public final class GameListener implements Listener {
                 p.teleport(lobbySpawn);
             }
         }, 2L);
+        // Safety reset: a player joining outside a run can never carry stuck spectator/invisible
+        // state into the lobby (e.g. a dead run member whose removePlayer never restored them).
+        // Mid-run reconnects keep their state — they are still mapped to a live instance.
+        if (plugin.game().instanceOf(p) == null) {
+            p.setInvisible(false);
+            p.setInvulnerable(false);
+            if (p.getGameMode() == GameMode.SPECTATOR) p.setGameMode(GameMode.SURVIVAL);
+        }
         if (!p.hasPlayedBefore()) {
             ChatUI.startPrompt(p);
         } else {

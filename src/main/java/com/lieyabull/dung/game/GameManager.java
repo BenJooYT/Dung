@@ -124,9 +124,18 @@ public final class GameManager {
         }
     }
 
+    /** True once the player is flagged AFK; AFK players are not hurt by run damage at all. */
+    private static boolean isAfkProtected(Player p) {
+        Dung dung = Dung.instance();
+        if (dung == null) return false;
+        com.lieyabull.dung.listener.AfkListener afk = dung.afkListener();
+        return afk != null && afk.isAfk(p);
+    }
+
     /** Static helper so Enemy can reach the run without circular constructor params. */
     public static boolean playerHurt(Player p, double dmg) {
         if (instance == null) return false;
+        if (isAfkProtected(p)) return false;
         DungeonInstance di = instance.playerInstance.get(p.getUniqueId());
         if (di == null) return false;
         return di.playerHurt(p, dmg);
@@ -135,6 +144,7 @@ public final class GameManager {
     /** Static helper for Mulliboom explosions that bypass invulnerability frames. */
     public static boolean playerHurtBypassInvuln(Player p, double dmg) {
         if (instance == null) return false;
+        if (isAfkProtected(p)) return false;
         DungeonInstance di = instance.playerInstance.get(p.getUniqueId());
         if (di == null) return false;
         return di.playerHurtBypassInvuln(p, dmg);

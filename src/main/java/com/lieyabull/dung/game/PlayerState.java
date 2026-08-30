@@ -254,7 +254,13 @@ public final class PlayerState {
     }
 
     public void hurt(double dmg) {
-        if (isInvuln() || dead) return;
+        hurt(dmg, false);
+    }
+
+    /** Apply damage, optionally ignoring i-frames. Used by effects that must always land (poison
+     *  DoT, Mulliboom explosions) even while the player is inside a 500ms invuln window. */
+    public void hurt(double dmg, boolean bypassInvuln) {
+        if ((!bypassInvuln && isInvuln()) || dead) return;
         double mitigated = Math.max(1.0, dmg * (100.0 / (100.0 + defense)));
         // Mana Shield: absorb damage with shield first if active
         if (shieldActive && shield > 0) {

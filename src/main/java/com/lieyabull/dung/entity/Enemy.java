@@ -456,9 +456,9 @@ public final class Enemy {
         w.spawnParticle(org.bukkit.Particle.EXPLOSION_EMITTER, loc.clone().add(0, 1, 0), 1);
         w.spawnParticle(org.bukkit.Particle.FLAME, loc.clone().add(0, 1, 0), 20, 1.5, 0.5, 1.5, 0.05);
         w.playSound(loc, org.bukkit.Sound.ENTITY_GENERIC_EXPLODE, 1.0f, 0.8f);
-        // Damage all players within 3 blocks, bypassing invulnerability frames
-        double explosionDamage = damage * 5.4;
-        for (org.bukkit.entity.Player p : w.getNearbyPlayers(loc, 3.0)) {
+        // Damage all players within 2.25 blocks, bypassing invulnerability frames
+        double explosionDamage = damage * 3.5;
+        for (org.bukkit.entity.Player p : w.getNearbyPlayers(loc, 2.25)) {
             if (p.isValid() && !p.isDead() && p.getGameMode() != org.bukkit.GameMode.SPECTATOR) {
                 com.lieyabull.dung.game.GameManager.playerHurtBypassInvuln(p, explosionDamage);
             }

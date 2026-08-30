@@ -1336,9 +1336,116 @@ tab = detailed build/run/progression).
       matches what the persistent profile records. `/leaderboard` (kills category), `/dung stats`, and the death screen
       all now reflect each player's individual kills. 221/221 tests pass; `Dung-1.3.0.jar` re-exported.
 
+### Iteration 55 — offline-mode dummy avatars (skins survive without Mojang)
+- [x] **Online players on offline servers no longer blank their avatars:** in `online-mode=false`
+      there is no session server, so even a currently-online player's live `PlayerProfile` carries
+      **no textures** — `resolveAndApplyAvatar` was taking that empty profile and every dummy
+      degraded to a blank stand. It now only uses the live profile when `hasTextures()` is true and
+      otherwise resolves like an offline player: `Bukkit.createProfile(name)` + `complete(true)`
+      (a name → Mojang lookup that works regardless of online-mode).
+- [x] **Resolved skins are persisted (`dummies.yml` → `avatar-skins`):** every successfully
+      resolved "textures" property (value + signature) is saved under the avatar name, seeded back
+      into `cachedTextures` on load, and `fromCachedTextures` rebuilds a profile from disk with **no
+      network** — so restarts with no route to Mojang still render every previously-resolved skin.
+- [x] **`/dummy setavatar <name>` forces a fresh lookup:** the cached profile is evicted on
+      set-avatar so a changed skin is picked up instead of re-serving the boot-time cache.
+- [x] `avatarProfiles` / `cachedTextures` are now `ConcurrentHashMap`s (boot + player events can
+      resolve concurrently).
+
+### Iteration 56 — plot permissions consolidated under `/plot perm` (+ `/p` alias)
+- [x] **The eight per-player trust subcommands are gone.** `/plot trust|untrust`,
+      `/plot container|uncontainer`, `/plot pickup|unpickup` (and the unreachable `mobkill`/
+      `unmobkill` trust variants) are replaced by one unified subcommand:
+      `/plot perm` — shows the plot you're standing on's access lists (public, build, container,
+      pickup, mobkill); `/plot perm <build|container|pickup|mobkill> <player> [on|off]` — grants or
+      revokes a per-player permission. Action words are accepted in either position
+      (`on|off|grant|remove|revoke`), so `/plot perm build remove <name>` reads naturally too.
+- [x] **`/p` is now an alias for `/plot`** (`plugin.yml` `aliases: [p]`), so the common permission
+      workflows are one keystroke shorter.
+- [x] **New `PlotManager.showPlotPerms`** — a dedicated view for the access lists; mystery-hint and
+      `showPlotSettings` footer now point at `/plot perm` instead of the removed subcommands. Tab
+      completion completes the permission kind, then player names / action words (both orders).
+
+### Iteration 57 — AFK detection ([AFK] tag + grey announce)
+- [x] **New `AfkListener`** (registered in `Dung.onEnable`): a player with no activity for
+      **3 minutes** (movement, chat, interactions, hotbar swaps, drops, damage in/out) is announced
+      in grey chat (`§7<name> is now AFK`) and gets a grey **[AFK]** TextDisplay riding above their
+      head (`TAG_LIFT` 0.5 — the same non-persistent passenger-display technique as the run HP
+      readout, since `setCustomName` can't change a player's own nametag).
+- [x] **Any activity clears the tag** within the 1s sweep; join/quit/world-change handlers remove
+      stale tags and re-arm activity timers, so the tag never persists across worlds or restarts.
+
+### Iteration 58 — combat, room gates & spectator-stability fixes
+- [x] **Void guard:** a party member who falls below the generated floor (`BASE_Y − 12`) is bounced
+      back to their room's center instead of dropping into the void — a void/fall death used to
+      strand them as an invisible spectator.
+- [x] **Dead-spectator visibility restore:** quitting an instance while dead (`removePlayer`) and
+      joining outside any run now fully restore visibility — `setInvisible(false)`, invulnerable
+      off, `SPECTATOR`→`SURVIVAL` — so a dead run member who left no longer returns to the lobby
+      invisible "no matter what". (`onPlayerDeath` sets them invisible + invulnerable for the
+      corpse-marker spectator model; both leave paths now undo it.)
+- [x] **Locked rooms & room-skip guard gate with PHYSICAL iron bars instead of a teleport-back:** a
+      `LOCKED` room's IRON_BLOCK barrier already bars the doorway (no more yanking the player back);
+      the not-yet-cleared combat/elite room-skip guard now **seals the doorway with iron bars** (the
+      same gate a sealed combat room uses, iron-door close sound) and only repositions a runner who
+      has already slipped past the gate. `sealDoors` was refactored into a per-direction `sealDoor`
+      (structure rooms seal on the shared corridor line, procedural rooms on the wall plane — the
+      same geometry the locked barrier uses).
+- [x] **Storm Rod / Chain Lightning + Lightning aim their boss shots properly:** the target cone is
+      now measured along a **horizontal** view vector (looking up/down at a tall target like the
+      Grovekeeper no longer drops it out of the cone), and the **boss competes as a primary target**
+      (nearest-in-cone wins) instead of only being chosen when no enemy is in range — so aiming at
+      the boss isn't hijacked by a stray mob in the way, and a Grovekeeper timber wall still blocks
+      the strike.
+- [x] **Grovekeeper Root Burst is now multi-lane:** one moving oak-log lane per **online party
+      member**, all fired + telegraphed at once — no more single-lane bursts that a multi-player
+      party sidesteps by splitting up. Each lane carries its own heading, ground level, and placed-log
+      ledger (restored per-lane when it explodes, stops, or fades); a lane never erupts directly
+      beneath the boss.
+- [x] **Grovekeeper melee retribution:** a basic melee swing (new `DungeonInstance.damageBossMelee`
+      → `grovekeeper.damage(dmg, attacker, true)`) now provokes the Grovekeeper — it hurls the
+      attacker away and backhands them for **3% max HP** (shield/defense mitigated), throttled to
+      once per second so rapid swings can't chain the launch. Abilities/projectiles don't provoke it.
+- [x] **Poisonous Roots rework:** the step scan sweeps **every 2 ticks** (a sprinting player can no
+      longer cross a patch between samples) with a circular half-width overlap check (catching edge
+      steps and jump peaks); the DoT still lands every 10 ticks via a per-player accumulator and
+      **bypasses i-frames** (`PlayerState.hurt(dmg, bypassInvuln)` — shared with Mulliboom
+      explosions). Particles reworked: faint WITCH haze around poisoned players, soft green DUST on
+      each root, and a once-per-second ambient shimmer instead of the old spore blizzard.
+- [x] **Grovekeeper's arena interior is hollowed out:** `rethemeGrovekeeperRoom` keeps only the
+      outer perimeter wall ring solid (the room stays enclosed) and clears interior structures
+      (pillars, split walls, L-corner fills) so no stray oak logs tower around the fight area.
+- [x] **Forest Transmutation Elixir is now persistent gear** (stamped `dung.persistent`), so the
+      Grovekeeper's potion survives a run end and can hold its own in the stash.
+- [x] **Mulliboom re-tuned:** explosion radius 3.0 → **2.25** blocks, damage ×5.4 → **×3.5** — still
+      a real threat at close range, no longer an instant-death for everyone within 3 blocks.
+- [x] **Persistent gear parked in hotbar slots 7–9 is never clobbered:** `syncHotbarItems` and
+      `syncShieldSlot` used to overwrite whatever sat in the key/bomb/shield-slot columns with their
+      placeholder panes — a parked persistent weapon/armor piece vanished from the live inventory and
+      was treated as dropped at run end. Both routines now leave any foreign (non-run, non-pane) item
+      alone; `firstFreeSlot` also only considers main storage (0–35), never armor/offhand.
+
+### Iteration 59 — /afk opt-in, AFK protection & the /check admin tool
+- [x] **`/afk` opt-in:** a player can flag themselves AFK immediately instead of waiting out the
+      3-minute idle timer. It toggles: running `/afk` again clears it. Unlike a timeout, a manual
+      toggle survives movement/activation — the sweep always re-tags it and only `/afk` undoes it.
+      (`AfkListener` implements `CommandExecutor`; `toggleManual` shares the existing TextDisplay
+      tag + grey announce.)
+- [x] **AFK players are not attacked or pushed by mobs:** dungeon damage routes through
+      `GameManager.playerHurt` / `playerHurtBypassInvuln` (enemy melee, Mulliboom explosion, boss
+      contact/projectiles, Grovekeeper poison) — both static helpers now bail early when the victim
+      is AFK, so no run damage and no run knockback. Vanilla damage from any entity is cancelled at
+      HIGHEST in `AfkListener.onDamagedWhileAfk`, which also suppresses knockback (AFK players can't
+      be punched, shot, or shoved by mobs/players). `DungeonInstance.nearestPlayer` skips AFK
+      members, so mobs and bosses don't even pick an AFK player as their target.
+- [x] **`/check` admin tool:** an op (default `dung.admin`) open the container they're looking at
+      (5-block exact target line, chests/barrels/furnaces etc.; ender chests open the admin's own)
+      by opening the block's raw inventory directly — no interact event, so plot container
+      protection is bypassed entirely.
+
 ## Build / run
 ```
 gradlew build            # compiles + jars
 gradlew runServer        # boots a Paper 1.21.11 server with the plugin
 ```
-Commands: `/dung start|descend|leave|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop` (opens GUI) `/upgrades` (opens GUI) `/salvage [all|favorite]` `/leaderboard [category] [page]` `/plots [warp <name>]` `/plot claim|home|name|warp|settings|pvp|fire|public|trust|untrust|container|uncontainer|pickup|unpickup|unclaim` `/convert` `/troll`
+Commands: `/dung start|descend|leave|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop` (opens GUI) `/upgrades` (opens GUI) `/salvage [all|favorite]` `/leaderboard [category] [page]` `/plots [warp <name>]` `/plot|/p claim|home|name|warp|settings|pvp|fire|public|mobkill|perm|unclaim` `/convert` `/troll` `/afk` `/check`

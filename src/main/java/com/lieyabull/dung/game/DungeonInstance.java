@@ -64,6 +64,10 @@ import static com.lieyabull.dung.dungeon.BlockBatcher.setBlock;
  */
 public final class DungeonInstance {
     public static final int BASE_Y = 130;
+    /** How far below the floor a party member may fall before the void guard bounces them back
+     *  to their room's center. Nothing exists below the generated rooms, so this threshold is
+     *  safely inside open void — it prevents falling out of the dung map entirely. */
+    private static final int VOID_GUARD_MARGIN = 12;
     // Min spacing must be at least the widest room footprint so two adjacent rooms never overlap.
     // The boss arena is the widest: BOSS_INTERIOR (23) + 2 wall blocks = 25, and its footprint is
     // fixed regardless of party tier, so every floor's spacing must leave room for it.
@@ -292,9 +296,10 @@ public final class DungeonInstance {
                 ItemStack s = inv.getItem(slot);
                 if (s != null && !isPersistentGear(s)) inv.setItem(slot, null);
             }
-            // Move persistent gear out of hotbar slots 7-8 (indices 6-7) so they don't get
-            // overwritten by key/bomb items. Find a free slot for each displaced item.
-            for (int hotSlot : new int[]{KEY_SLOT, BOMB_SLOT}) {
+            // Move persistent gear out of hotbar slots 7-9 (indices 6-8) so it doesn't get
+            // overwritten by key/bomb items or the shield-slot indicator. Find a free slot for each
+            // displaced item.
+            for (int hotSlot : new int[]{KEY_SLOT, BOMB_SLOT, SHIELD_SLOT}) {
                 ItemStack s = inv.getItem(hotSlot);
                 if (s != null && isPersistentGear(s)) {
                     int free = firstFreeSlot(inv, hotSlot);
@@ -910,6 +915,17 @@ public final class DungeonInstance {
     /** Detect room crossings from any party member's movement. */
     public void onPlayerMoved(Player p, Location loc) {
         if (run == null || run.floor == null) return;
+        // Void guard: if a party member falls below the generated floor (out of the dung map),
+        // bounce them back to their room's center instead of letting them fall into the void and
+        // die — a void/fall death then strands them as an invisible spectator.
+        if (loc.getY() < BASE_Y - VOID_GUARD_MARGIN) {
+            Floor.RoomNode home = playerRoom.get(p.getUniqueId());
+            if (home == null) home = curRoom;
+            if (home != null) {
+                p.teleport(RoomGen.center(world, home, BASE_Y, spacing, offsetX, offsetZ));
+                return;
+            }
+        }
         Floor.RoomNode target = null;
         for (Floor.RoomNode rn : run.floor.rooms()) {
             if (insideRoom(loc, rn)) { target = rn; break; }
@@ -926,22 +942,27 @@ public final class DungeonInstance {
             }
         }
         // LOCKED room check: if the target is a LOCKED room that hasn't been cleared,
-        // block entry. The player must right-click the IRON_BLOCK barrier with a key item to unlock it.
+        // block entry. The IRON_BLOCK barrier already physically bars the doorway (right-click it
+        // with a key item to unlock), so no teleport-back is needed — the player just can't pass.
         if (target.type == RoomType.LOCKED && !target.cleared) {
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.doorLocked"));
-            // Teleport the player back to the center of the current room
-            Location back = RoomGen.center(world, prev != null ? prev : curRoom, BASE_Y, spacing, offsetX, offsetZ);
-            p.teleport(back);
             return;
         }
         // Room-skipping guard: a player may not cross OUT of a combat/elite room that hasn't
         // been cleared yet. This stops a single runner from dashing through rooms straight to
-        // the boss while the rest of the party follows behind. The room ahead is effectively
-        // locked until the room the player is leaving has been cleared.
-        if (prev != null && !prev.cleared && (prev.type == RoomType.COMBAT || prev.type == RoomType.ELITE)) {
+        // the boss while the rest of the party follows behind. The passage ahead is barred with
+        // iron bars (the same gate a sealed combat room uses) until the room the player is leaving
+        // clears — it opens again automatically on clear — instead of yanking the runner back.
+        if (prev != null && !prev.cleared && (prev.type == RoomType.COMBAT || prev.type == RoomType.ELITE)
+                && dir >= 0) {
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.prevNotCleared"));
-            Location back = RoomGen.center(world, prev, BASE_Y, spacing, offsetX, offsetZ);
-            p.teleport(back);
+            sealDoor(prev, dir, true);
+            world.playSound(loc, org.bukkit.Sound.BLOCK_IRON_DOOR_CLOSE, 0.8f, 0.9f);
+            // Only reposition a runner who has already slipped past the gate (the bars now sit
+            // behind them); a player merely reaching the gate stays put — the bars block the pass.
+            if (!insideRoom(loc, prev, 1.5)) {
+                p.teleport(RoomGen.center(world, prev, BASE_Y, spacing, offsetX, offsetZ));
+            }
             return;
         }
         playerRoom.put(p.getUniqueId(), target);
@@ -1301,27 +1322,35 @@ public final class DungeonInstance {
     }
 
     private void sealDoors(Floor.RoomNode n, boolean close) {
+        for (int d = 0; d < 4; d++) {
+            if (!n.doors[d]) continue;
+            sealDoor(n, d, close);
+        }
+    }
+
+    /** Place ({@code close}) or remove ({@code close = false}) the iron-bar gate across a single
+     *  doorway {@code d} of a room. Structure rooms seal on the shared corridor line; procedural
+     *  rooms seal on the wall plane (same geometry as the locked barrier). Used both when a combat
+     *  room locks and when a not-yet-explorable passage is barred instead of yanking the player back. */
+    private void sealDoor(Floor.RoomNode n, int d, boolean close) {
         int[] DX = {0, 1, 0, -1};
         int[] DZ = {-1, 0, 1, 0};
         int roomHeight = n.type == RoomType.BOSS ? RoomGen.BOSS_ROOM_HEIGHT : RoomGen.ROOM_HEIGHT;
+        boolean horiz = d == 1 || d == 3;
         if (n.structure != null) {
             // Structure room: seal the doorway opening itself, on the shared corridor line (same
             // position carveStructureDoors carved it), so the bars line up with the opening.
             RoomBounds t = n.structure.total();
-            for (int d = 0; d < 4; d++) {
-                if (!n.doors[d]) continue;
-                boolean horiz = d == 1 || d == 3;
-                int wallAlong = facingWallAlong(n, d, t);
-                int perpC = horiz ? (baseZ(n) + RoomGen.PERP_CENTER) : (baseX(n) + RoomGen.PERP_CENTER);
-                for (int off = -1; off <= 1; off++) {
-                    for (int y = BASE_Y + 1; y <= BASE_Y + roomHeight; y++) {
-                        int px = horiz ? wallAlong : (perpC + off);
-                        int pz = horiz ? (perpC + off) : wallAlong;
-                        if (close) {
-                            world.getBlockAt(px, y, pz).setType(Material.IRON_BARS);
-                        } else if (world.getBlockAt(px, y, pz).getType() == Material.IRON_BARS) {
-                            world.getBlockAt(px, y, pz).setType(Material.AIR);
-                        }
+            int wallAlong = facingWallAlong(n, d, t);
+            int perpC = horiz ? (baseZ(n) + RoomGen.PERP_CENTER) : (baseX(n) + RoomGen.PERP_CENTER);
+            for (int off = -1; off <= 1; off++) {
+                for (int y = BASE_Y + 1; y <= BASE_Y + roomHeight; y++) {
+                    int px = horiz ? wallAlong : (perpC + off);
+                    int pz = horiz ? (perpC + off) : wallAlong;
+                    if (close) {
+                        world.getBlockAt(px, y, pz).setType(Material.IRON_BARS);
+                    } else if (world.getBlockAt(px, y, pz).getType() == Material.IRON_BARS) {
+                        world.getBlockAt(px, y, pz).setType(Material.AIR);
                     }
                 }
             }
@@ -1329,22 +1358,18 @@ public final class DungeonInstance {
         }
         Location c = RoomGen.center(world, n, BASE_Y, spacing, offsetX, offsetZ);
         int bx = baseX(n), bz = baseZ(n);
-        for (int d = 0; d < 4; d++) {
-            if (!n.doors[d]) continue;
-            boolean horiz = d == 1 || d == 3;
-            int half = horiz ? n.sizeW / 2 : n.sizeH / 2;
-            int wallX = c.getBlockX() + DX[d] * (half + RoomGen.WALL);
-            int wallZ = c.getBlockZ() + DZ[d] * (half + RoomGen.WALL);
-            int perpC = horiz ? (bz + RoomGen.PERP_CENTER) : (bx + RoomGen.PERP_CENTER);
-            for (int off = -1; off <= 1; off++) {
-                for (int y = BASE_Y + 1; y <= BASE_Y + roomHeight; y++) {
-                    int px = horiz ? wallX : (perpC + off);
-                    int pz = horiz ? (perpC + off) : wallZ;
-                    if (close) {
-                        world.getBlockAt(px, y, pz).setType(Material.IRON_BARS);
-                    } else if (world.getBlockAt(px, y, pz).getType() == Material.IRON_BARS) {
-                        world.getBlockAt(px, y, pz).setType(Material.AIR);
-                    }
+        int half = horiz ? n.sizeW / 2 : n.sizeH / 2;
+        int wallX = c.getBlockX() + DX[d] * (half + RoomGen.WALL);
+        int wallZ = c.getBlockZ() + DZ[d] * (half + RoomGen.WALL);
+        int perpC = horiz ? (bz + RoomGen.PERP_CENTER) : (bx + RoomGen.PERP_CENTER);
+        for (int off = -1; off <= 1; off++) {
+            for (int y = BASE_Y + 1; y <= BASE_Y + roomHeight; y++) {
+                int px = horiz ? wallX : (perpC + off);
+                int pz = horiz ? (perpC + off) : wallZ;
+                if (close) {
+                    world.getBlockAt(px, y, pz).setType(Material.IRON_BARS);
+                } else if (world.getBlockAt(px, y, pz).getType() == Material.IRON_BARS) {
+                    world.getBlockAt(px, y, pz).setType(Material.AIR);
                 }
             }
         }
@@ -1702,6 +1727,16 @@ public final class DungeonInstance {
         }
     }
 
+    /** Boss damage from a basic MELEE swing — the Grovekeeper retaliates against melee (knockback +
+     *  3% max HP). Abilities and projectiles use {@link #damageBoss} so they don't provoke it. */
+    public void damageBossMelee(double dmg, Player attacker) {
+        if (grovekeeper != null && grovekeeper.isActive()) {
+            grovekeeper.damage(dmg, attacker, true);
+        } else if (boss != null && boss.isActive()) {
+            boss.damage(dmg, attacker);
+        }
+    }
+
     /** Location of whichever boss is active, or null if none. */
     public Location bossLocation() {
         if (grovekeeper != null && grovekeeper.isActive()) return grovekeeper.location();
@@ -1717,11 +1752,15 @@ public final class DungeonInstance {
     }
 
     /** Find the nearest online, alive (non-spectator) party member to a location. */
+    /** Nearest alive, non-AFK party member — AFK players are never targeted as a run's mob/boss
+     *  target (and their damage is skipped in GameManager), so mobs leave them alone. */
     private Player nearestPlayer(Location loc) {
+        com.lieyabull.dung.listener.AfkListener afk = plugin.afkListener();
         Player nearest = null;
         double best = Double.MAX_VALUE;
         for (Player p : party.onlineMembers()) {
             if (deadPlayers.contains(p.getUniqueId())) continue;
+            if (afk != null && afk.isAfk(p)) continue;
             double d = p.getLocation().distanceSquared(loc);
             if (d < best) { best = d; nearest = p; }
         }
@@ -1803,7 +1842,7 @@ public final class DungeonInstance {
             if (horiz < ps.reach + 0.5 && vert < 3.0) {
                 boolean crit = guaranteeCrit || Math.random() < ps.critChance;
                 double dmg = baseDmg * (crit ? ps.critMult : 1.0);
-                damageBoss(dmg, p);
+                damageBossMelee(dmg, p);
                 bossDmg = dmg;
             }
         }
@@ -2171,26 +2210,37 @@ public final class DungeonInstance {
                 caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.ravage"));
                 break;
             case "Chain Lightning": {
-                // Single-enemy selection: raycast the caster's view direction, pick the nearest
-                // non-dead enemy within range that falls in a narrow cone ahead.
+                // Single-enemy selection: pick the nearest non-dead enemy (or the active boss)
+                // within a narrow cone ahead. The aim uses a horizontal view-vector so looking up
+                // or down at a tall target (e.g. the Grovekeeper) doesn't drop it out of the cone.
+                org.bukkit.util.Vector hDir = dir.clone();
+                hDir.setY(0);
+                if (hDir.lengthSquared() < 1e-9) hDir.setX(1); else hDir.normalize();
                 Enemy primary = null;
                 double bestDist = Double.MAX_VALUE;
                 for (Enemy e : roomList) {
                     if (e.dead) continue;
                     if (timberWallBetween(caster, e.entity.getLocation())) continue;
-                    if (!inCone(e, caster, dir, 12.0, 0.7)) continue;
+                    if (!inCone(e, caster, hDir, 12.0, 0.7)) continue;
                     double dist = e.entity.getLocation().distanceSquared(caster.getLocation());
                     if (dist < bestDist) {
                         bestDist = dist;
                         primary = e;
                     }
                 }
-                // Also check boss as a valid primary target
-                if (primary == null && (boss != null && boss.isActive() || grovekeeper != null && grovekeeper.isActive())) {
+                // The boss competes with enemies as a valid primary target (nearest in the cone
+                // wins) instead of only being picked when no enemy is in the cone — so aiming at
+                // the boss isn't hijacked by a stray mob in the way — but it still can't be struck
+                // through a Grovekeeper timber wall.
+                boolean bossActive = boss != null && boss.isActive()
+                        || grovekeeper != null && grovekeeper.isActive();
+                if (bossActive) {
                     Location bl = bossLocation();
                     org.bukkit.util.Vector toBoss = bl.toVector().subtract(caster.getLocation().toVector());
                     toBoss.setY(0);
-                    if (toBoss.length() < 12.0 && toBoss.clone().normalize().dot(dir) > 0.7 && !timberWallBetween(caster, bl)) {
+                    double bossDist = toBoss.lengthSquared();
+                    if (bossDist < 144.0 && toBoss.clone().normalize().dot(hDir) > 0.7
+                            && !timberWallBetween(caster, bl) && bossDist < bestDist) {
                         // Treat boss as primary — damage it directly
                         damageBoss(dmg * 2.0, caster);
                         connected = true;
@@ -2236,25 +2286,35 @@ public final class DungeonInstance {
             }
             case "Lightning": {
                 // Call a bolt of lightning down on the target the caster is looking at: pick the
-                // nearest living enemy in a narrow cone ahead (or the boss), strike it with a real
-                // lightning bolt for big damage, and arc a splash to the next nearest enemy.
+                // nearest living enemy (or the boss) in a narrow cone ahead, strike it with a real
+                // lightning bolt for big damage, and arc a splash to the next nearest enemy. Aim is
+                // measured horizontally so looking up/down at a tall boss keeps it targetable.
+                org.bukkit.util.Vector hDir = dir.clone();
+                hDir.setY(0);
+                if (hDir.lengthSquared() < 1e-9) hDir.setX(1); else hDir.normalize();
                 Enemy primary = null;
                 double bestDist = Double.MAX_VALUE;
                 for (Enemy e : roomList) {
                     if (e.dead) continue;
                     if (timberWallBetween(caster, e.entity.getLocation())) continue;
-                    if (!inCone(e, caster, dir, 14.0, 0.7)) continue;
+                    if (!inCone(e, caster, hDir, 14.0, 0.7)) continue;
                     double dist = e.entity.getLocation().distanceSquared(caster.getLocation());
                     if (dist < bestDist) {
                         bestDist = dist;
                         primary = e;
                     }
                 }
-                if (primary == null && (boss != null && boss.isActive() || grovekeeper != null && grovekeeper.isActive())) {
+                // The boss competes with enemies as a valid primary (nearest in the cone wins),
+                // but never through a Grovekeeper timber wall.
+                boolean bossActive = boss != null && boss.isActive()
+                        || grovekeeper != null && grovekeeper.isActive();
+                if (bossActive) {
                     Location bl = bossLocation();
                     org.bukkit.util.Vector toBoss = bl.toVector().subtract(caster.getLocation().toVector());
                     toBoss.setY(0);
-                    if (toBoss.length() < 14.0 && toBoss.clone().normalize().dot(dir) > 0.7 && !timberWallBetween(caster, bl)) {
+                    double bossDist = toBoss.lengthSquared();
+                    if (bossDist < 196.0 && toBoss.clone().normalize().dot(hDir) > 0.7
+                            && !timberWallBetween(caster, bl) && bossDist < bestDist) {
                         damageBoss(dmg * 3.0, caster);
                         connected = true;
                         world.strikeLightningEffect(bl);
@@ -2800,6 +2860,7 @@ public final class DungeonInstance {
         if (isGrovekeeperFloor) {
             if (Math.random() < 0.5) {
                 ItemStack forestPotion = GrovekeeperController.createForestPotionReward();
+                com.lieyabull.dung.items.GearFactory.markPersistent(forestPotion);
                 Location potionLoc = roomSpawn(defeated).clone().add(0, 0.5, 0);
                 world.dropItem(potionLoc, forestPotion).setPickupDelay(10);
                 for (Player p : party.onlineMembers()) {
@@ -2903,7 +2964,11 @@ public final class DungeonInstance {
                         if (m == Material.OAK_WOOD || m == Material.STRIPPED_OAK_LOG
                                 || m == Material.OAK_LOG || m == Material.MOSS_BLOCK) continue; // already natural
                         if (isNaturalLight(m)) continue; // keep lamps
-                        setBlock(world, x, y, z, Material.OAK_WOOD);
+                        // Keep only the room's outer wall ring solid so the arena stays enclosed;
+                        // hollow out interior structures (pillars, split walls, L-corner fills) so
+                        // no stray oak logs / pillars tower around the fight area.
+                        boolean perimeter = x == x0 || x == x1 || z == z0 || z == z1;
+                        setBlock(world, x, y, z, perimeter ? Material.OAK_WOOD : Material.AIR);
                     }
                 }
             }
@@ -3552,19 +3617,29 @@ public final class DungeonInstance {
         if (count > 0) {
             ItemStack expected = item.clone();
             expected.setAmount(Math.min(count, 64));
-            if (!itemsMatch(cur, expected)) inv.setItem(slot, expected);
+            if (cur == null || cur.getType() == Material.AIR) {
+                inv.setItem(slot, expected);
+            } else if (kind != null) {
+                // Slot holds a run item (key/bomb or an empty placeholder) — refresh it.
+                if (!itemsMatch(cur, expected)) inv.setItem(slot, expected);
+            }
+            // A non-run item (persistent gear, etc.) parked in the slot is left alone — never
+            // clobber it, or it vanishes from the live inventory and gets treated as dropped at
+            // run end.
             return;
         }
         // count == 0: a leftover real key/bomb with nothing remaining is cleared so the placeholder
         // can show. This only fires once (the placeholder itself is tagged "empty", not "key"/"bomb"),
-        // so it does not re-send the slot every tick.
+        // so it does not re-send the slot every tick. A foreign (non-run) item is never touched.
         if ("key".equals(kind) || "bomb".equals(kind)) {
             inv.setItem(slot, null);
             cur = inv.getItem(slot);
         }
-        // Show the empty placeholder only if the slot isn't already holding one (no per-tick re-send).
-        if (cur == null || cur.getType() == Material.AIR || !isRunItem(cur)) {
-            inv.setItem(slot, makeEmptySlotItem(lang));
+        if (kind != null) {
+            // Show the empty placeholder only if the slot isn't already holding one (no per-tick re-send).
+            if (cur == null || cur.getType() == Material.AIR || !isRunItem(cur)) {
+                inv.setItem(slot, makeEmptySlotItem(lang));
+            }
         }
     }
 
@@ -3602,10 +3677,17 @@ public final class DungeonInstance {
         }
         // The slot is empty of a shield. It is a manual equip slot, so we never pull a shield in
         // automatically — we only show an indicator: green when a shield is available to equip, the
-        // standard empty placeholder when none is owned. First sweep away any stray panes so exactly
-        // one indicator exists, then refresh the slot with the correct one. A shield being dragged on
-        // the cursor (picked up from the inventory but not yet placed) still counts as "owned", so the
-        // green swappable pane stays up while the player moves a shield toward this slot.
+        // standard empty placeholder when none is owned. A foreign item (persistent gear, etc.)
+        // parked in the equip slot is left alone — never overwrite it, or it vanishes from the live
+        // inventory and gets treated as dropped at run end. First sweep away any stray panes so
+        // exactly one indicator exists, then refresh the slot with the correct one. A shield being
+        // dragged on the cursor (picked up from the inventory but not yet placed) still counts as
+        // "owned", so the green swappable pane stays up while the player moves a shield toward this slot.
+        ItemStack parked = inv.getItem(SHIELD_SLOT);
+        if (parked != null && !parked.getType().isAir()
+                && !isEquipIndicator(parked) && !"empty".equals(runItemKind(parked))) {
+            return; // a real non-shield item sits in the equip slot — do not clobber it
+        }
         clearEquipIndicators(inv);
         boolean hasShield = GearFactory.findShieldItem(inv) != null || shieldOnCursor(p);
         com.lieyabull.dung.lang.Language lang = com.lieyabull.dung.lang.Lang.languageOf(p);
@@ -3820,7 +3902,7 @@ public final class DungeonInstance {
     public boolean playerHurtBypassInvuln(Player p, double dmg) {
         PlayerState ps = run == null ? null : run.playerStateOf(p.getUniqueId());
         if (ps == null || ps.dead) return false;
-        ps.hurt(dmg);
+        ps.hurt(dmg, true);
         applyDamageKnockback(p, dmg);
         p.playHurtAnimation(0.0f);
         p.playSound(p.getLocation(), org.bukkit.Sound.ENTITY_PLAYER_HURT, 1.0f, 0.9f);
@@ -4009,6 +4091,16 @@ public final class DungeonInstance {
             damagePersistentGear(p, LEAVE_DURABILITY_DIVISOR);
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "leave.early"));
         }
+        // A dead (spectator) player leaving must get full visibility restoration just like
+        // endRun/reviveDeadPlayers do — onPlayerDeath set them invisible + invulnerable, and
+        // skipping this left them invisible "no matter what" once teleported back to the lobby.
+        if (deadPlayers.remove(pid)) {
+            p.setInvisible(false);
+            p.setInvulnerable(false);
+            p.getInventory().setHelmet(null);
+            PlayerState st = run.playerStateOf(pid);
+            if (st != null) st.dead = false;
+        }
         p.setGameMode(org.bukkit.GameMode.SURVIVAL);
         p.setWalkSpeed(0.2f);
         p.setFlySpeed(0.05f);
@@ -4078,9 +4170,10 @@ public final class DungeonInstance {
         return Math.random() < chance;
     }
 
-    /** Find the first free (empty or air) slot in the inventory, skipping the given slot. */
+    /** Find the first free (empty or air) main-storage slot, skipping the given slot. Only main
+     *  storage (0-35) is considered — armor and offhand slots are not valid drop targets. */
     private static int firstFreeSlot(PlayerInventory inv, int skipSlot) {
-        for (int i = 0; i < inv.getSize(); i++) {
+        for (int i = 0; i < Math.min(inv.getSize(), 36); i++) {
             if (i == skipSlot) continue;
             ItemStack s = inv.getItem(i);
             if (s == null || s.getType() == Material.AIR) return i;

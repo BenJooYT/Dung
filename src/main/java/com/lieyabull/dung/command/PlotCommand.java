@@ -87,9 +87,9 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        // /plot <subcommand>
+        // /plot <subcommand> (shortcut: /p)
         if (args.length == 0) {
-            p.sendMessage("§7Plot commands:");
+            p.sendMessage("§7Plot commands §7(shortcut: §f/p§7):");
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plots §7— Teleport to the plots world"));
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plots warp <name> §7— Warp to a named plot"));
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot claim §7— Claim the plot you're standing on (price §ex1.25§7 per plot you own)"));
@@ -97,10 +97,9 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot name <name> §7— Name your plot for warp access"));
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot warp <name> §7— Warp to a named plot"));
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot settings §7— Show settings of the plot you're standing on"));
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot pvp|fire|public on|off §7— Toggle a plot setting"));
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot trust|untrust <name> §7— Grant/revoke build access"));
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot container|uncontainer <name> §7— Grant/revoke container access"));
-            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot pickup|unpickup <name> §7— Grant/revoke item pickup access"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot pvp|fire|public|mobkill on|off §7— Toggle a plot setting"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot perm §7— Show permissions of the plot you're standing on"));
+            p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot perm <build|container|pickup|mobkill> <player> [on|off] §7— Grant/revoke a plot permission"));
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot unclaim §7— Unclaim the plot you're standing on"));
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/convert §7— Toggle whether potions can transform player-placed blocks"));
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("  §f/plot filllayers §7— Fill bedrock & stone layers (op)"));
@@ -203,24 +202,50 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
                 if (err != null) p.sendMessage(err);
                 return true;
             }
-            case "trust":
-            case "untrust":
-            case "container":
-            case "uncontainer":
-            case "pickup":
-            case "unpickup": {
-                if (args.length < 2) {
-                    p.sendMessage("§cUsage: §f/plot " + args[0].toLowerCase() + " <player>§c.");
+            case "perm": {
+                // /plot perm — show this plot's permissions
+                if (args.length == 1) {
+                    String err = pm.showPlotPerms(p);
+                    if (err != null) p.sendMessage(err);
                     return true;
                 }
-                boolean add = args[0].equalsIgnoreCase("trust") || args[0].equalsIgnoreCase("container")
-                        || args[0].equalsIgnoreCase("pickup") || args[0].equalsIgnoreCase("mobkill");
-                String err = pm.setPlotTrust(p, args[0].toLowerCase(), add, args[1]);
+                // /plot perm <build|container|pickup|mobkill> <player> [on|off]
+                // Also accepts the action as a word: /plot perm <kind> remove <player>.
+                String kind = args[1].toLowerCase();
+                if (!kind.equals("build") && !kind.equals("container")
+                        && !kind.equals("pickup") && !kind.equals("mobkill")) {
+                    p.sendMessage("§cUsage: §f/plot perm <build|container|pickup|mobkill> <player> [on|off]§c.");
+                    return true;
+                }
+                boolean add = true;
+                String name;
+                String first = args[2].toLowerCase();
+                if (first.equals("remove") || first.equals("off") || first.equals("revoke")
+                        || first.equals("grant") || first.equals("on")) {
+                    if (args.length < 4) {
+                        p.sendMessage("§cUsage: §f/plot perm " + kind + " <player> [on|off]§c.");
+                        return true;
+                    }
+                    add = first.equals("on") || first.equals("grant");
+                    name = args[3];
+                } else {
+                    name = args[2];
+                    if (args.length >= 4) {
+                        String last = args[3].toLowerCase();
+                        if (last.equals("on") || last.equals("grant")) add = true;
+                        else if (last.equals("off") || last.equals("remove") || last.equals("revoke")) add = false;
+                        else {
+                            p.sendMessage("§cUsage: §f/plot perm " + kind + " <player> [on|off]§c.");
+                            return true;
+                        }
+                    }
+                }
+                String err = pm.setPlotTrust(p, kind, add, name);
                 if (err != null) p.sendMessage(err);
                 return true;
             }
             default:
-                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Unknown subcommand. Use §f/plot claim§7, §f/plot home§7, §f/plot name§7, §f/plot warp§7, §f/plot settings§7, §f/plot pvp|fire|public|mobkill on|off§7, §f/plot trust|untrust <name>§7, §f/plot container|uncontainer <name>§7, §f/plot pickup|unpickup <name>§7, §f/plot mobkill|unmobkill <name>§7, or §f/plot unclaim§7."));
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Unknown subcommand. Use §f/plot claim§7, §f/plot home§7, §f/plot name§7, §f/plot warp§7, §f/plot settings§7, §f/plot pvp|fire|public|mobkill on|off§7, §f/plot perm <build|container|pickup|mobkill> <player> [on|off]§7, or §f/plot unclaim§7."));
                 return true;
         }
     }
@@ -242,8 +267,7 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
         // /plot tab completion
         if (args.length == 1) {
             List<String> subs = new ArrayList<>(List.of("claim", "home", "name", "warp", "unclaim",
-                    "settings", "pvp", "fire", "public", "mobkill", "trust", "untrust", "container", "uncontainer",
-                    "pickup", "unpickup", "unmobkill", "convert", "filllayers"));
+                    "settings", "pvp", "fire", "public", "mobkill", "perm", "convert", "filllayers"));
             return subs.stream().filter(s -> s.startsWith(args[0].toLowerCase())).toList();
         }
         if (args.length == 2) {
@@ -254,11 +278,25 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
                     || args[0].equalsIgnoreCase("public") || args[0].equalsIgnoreCase("mobkill")) {
                 return List.of("on", "off").stream().filter(s -> s.startsWith(args[1].toLowerCase())).toList();
             }
-            if (args[0].equalsIgnoreCase("trust") || args[0].equalsIgnoreCase("untrust")
-                    || args[0].equalsIgnoreCase("container") || args[0].equalsIgnoreCase("uncontainer")
-                    || args[0].equalsIgnoreCase("pickup") || args[0].equalsIgnoreCase("unpickup")
-                    || args[0].equalsIgnoreCase("mobkill") || args[0].equalsIgnoreCase("unmobkill")) {
-                return playerNames(args[1]);
+            if (args[0].equalsIgnoreCase("perm")) {
+                return List.of("build", "container", "pickup", "mobkill")
+                        .stream().filter(s -> s.startsWith(args[1].toLowerCase())).toList();
+            }
+        }
+        if (args[0].equalsIgnoreCase("perm")) {
+            if (args.length == 3) {
+                String a = args[2].toLowerCase();
+                boolean actionWord = a.equals("on") || a.equals("off") || a.equals("remove")
+                        || a.equals("grant") || a.equals("revoke");
+                if (actionWord) {
+                    return List.of("on", "off", "remove", "grant", "revoke")
+                            .stream().filter(s -> s.startsWith(a)).toList();
+                }
+                return playerNames(args[2]);
+            }
+            if (args.length == 4) {
+                return List.of("on", "off", "remove", "grant", "revoke")
+                        .stream().filter(s -> s.startsWith(args[3].toLowerCase())).toList();
             }
         }
         return List.of();

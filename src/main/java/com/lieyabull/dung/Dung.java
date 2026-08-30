@@ -41,6 +41,7 @@ public final class Dung extends JavaPlugin {
     private PotionListener potionListener;
     private DummyManager dummyManager;
     private TrollUI trollUI;
+    private com.lieyabull.dung.listener.AfkListener afkListener;
     private World world;
     private com.lieyabull.dung.world.WorldManager worldManager;
 
@@ -70,6 +71,8 @@ public final class Dung extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(new com.lieyabull.dung.listener.LobbyListener(this), this);
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
         Bukkit.getPluginManager().registerEvents(new PlotListener(this), this);
+        afkListener = new com.lieyabull.dung.listener.AfkListener(this);
+        Bukkit.getPluginManager().registerEvents(afkListener, this);
         Bukkit.getPluginManager().registerEvents(new CompostListener(this), this);
         Bukkit.getPluginManager().registerEvents(provenanceManager, this);
         Bukkit.getPluginManager().registerEvents(potionListener, this);
@@ -108,6 +111,8 @@ public final class Dung extends JavaPlugin {
         getCommand("language").setExecutor(languageCmd);
         getCommand("language").setTabCompleter(languageCmd);
         getCommand("troll").setExecutor(new com.lieyabull.dung.command.TrollCommand(this));
+        getCommand("afk").setExecutor(afkListener);
+        getCommand("check").setExecutor(new com.lieyabull.dung.command.CheckCommand(this));
         // The lobby world is lazy-created — resolve it NOW so dummies living there exist when
         // loadAll runs (previously every restart silently skipped them as "unloaded world").
         worldManager().getLobby();
@@ -186,6 +191,10 @@ public final class Dung extends JavaPlugin {
 
     public DummyManager dummyManager() {
         return dummyManager;
+    }
+
+    public com.lieyabull.dung.listener.AfkListener afkListener() {
+        return afkListener;
     }
 
     public TrollUI trollUI() {

@@ -681,7 +681,26 @@ public final class PlotManager {
             p.sendMessage("  §7Item pickup access: " + namesOf(info.pickupTrust));
             p.sendMessage("  §7Mob kill access: " + namesOf(info.mobKillTrust));
         }
-        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Set these with §f/plot pvp|fire|public|mobkill on|off§7, §f/plot trust|untrust <name>§7, §f/plot container|uncontainer <name>§7, §f/plot pickup|unpickup <name>§7, §f/plot mobkill|unmobkill <name>§7."));
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Set these with §f/plot pvp|fire|public|mobkill on|off§7, manage access with §f/plot perm <build|container|pickup|mobkill> <player> [on|off]§7."));
+        return null;
+    }
+
+    /** Show the current permissions (access lists + public flag) for the plot(s) the player is
+     *  standing on. On a shared path between two own plots, both are shown. Returns error msg or null. */
+    public String showPlotPerms(Player p) {
+        List<PlotCoord> coords = ownedPlotsForConfig(p);
+        if (coords.isEmpty()) return "§cStand on a plot you own to view its permissions.";
+        for (PlotCoord c : coords) {
+            PlotInfo info = plots.get(c);
+            p.sendMessage("§6§lPlot " + plotLabel(c) + " permissions");
+            p.sendMessage("  §7Public: " + (info.isPublic ? ON : OFF));
+            p.sendMessage("  §7Build access: " + namesOf(info.buildTrust));
+            p.sendMessage("  §7Container access: " + namesOf(info.containerTrust));
+            p.sendMessage("  §7Item pickup access: " + namesOf(info.pickupTrust));
+            p.sendMessage("  §7Mob kill access: " + namesOf(info.mobKillTrust));
+        }
+        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(
+                "§7Manage with §f/plot perm <build|container|pickup|mobkill> <player> [on|off]§7."));
         return null;
     }
 

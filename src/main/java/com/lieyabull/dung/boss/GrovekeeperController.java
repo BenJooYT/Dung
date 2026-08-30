@@ -39,6 +39,7 @@ public final class GrovekeeperController {
     private static final int ATTACK_ROOT_BURST = 1, ATTACK_TIMBER_WALLS = 2, ATTACK_POISON_ROOTS = 3;
     private int attackIndex = 0;
     private int attackCd = 0;
+    private int meleeRpCd = 0;      // ticks until the next melee retribution may fire
     private int warning = 0;
     private int pending = 0;
     private double warnAngle = 0;
@@ -46,13 +47,10 @@ public final class GrovekeeperController {
     // or stops at a wall and lingers for 10s before fading.
     private final Player primary;
     private boolean rootActive = false;
-    private boolean rootDone = false;
-    private double rootX, rootZ;           // current tip cell
-    private double rootDirX, rootDirZ;     // unit travel direction
-    private int rootY;                     // block Y the logs sit at
-    private int rootTimer = 0;             // ticks elapsed while stopped at a wall
     private double rootDamage;             // damage dealt on a direct hit
     private org.bukkit.scheduler.BukkitTask rootTask;
+    /** Every currently-traveling root burst — one lane per party member, all fired at once. */
+    private final java.util.List<RootBurst> rootBursts = new java.util.ArrayList<>();
     /** Advanced root-burst projectiles so their controllers can be ticked together/damaged. */
     private static final int ROOT_PERSIST_TICKS = 200; // 10 seconds after stopping at a wall
     private static final int ROOT_ADVANCE_TICKS = 2;   // move the root every 2 ticks
@@ -109,11 +107,33 @@ public final class GrovekeeperController {
     private final java.util.Set<Integer> poisonedSessions = new java.util.HashSet<>();
     /** Remaining poison ticks for each poisoned player (started at {@link #POISON_EFFECT_TICKS}). */
     private final java.util.Map<java.util.UUID, Integer> poisonDurations = new java.util.HashMap<>();
+    /** Per-player DoT phase accumulator: the step scan runs every 2 ticks, but the poison damage
+     *  still lands every 10 ticks (0.5s) — this tracks how many 2-tick steps have accumulated. */
+    private final java.util.Map<java.util.UUID, Integer> poisonAccum = new java.util.HashMap<>();
+    /** Ambient particle pulse: gates the per-root shimmer to once per second instead of every
+     *  2-tick sweep, so the field of roots reads as a slow haze rather than a particle blizzard. */
+    private int poisonAmbientTick = 0;
 
     private static final class RootBlock {
         final org.bukkit.Location loc;
         final org.bukkit.Material original;
         RootBlock(org.bukkit.Location loc, org.bukkit.Material original) { this.loc = loc; this.original = original; }
+    }
+
+    /** A single traveling root-burst lane: heading + current tip, its own ground level, and the log
+     *  cells it has erupted so they can be restored when the lane explodes, hits a wall, or fades. */
+    private static final class RootBurst {
+        final double dirX, dirZ;   // unit travel direction
+        double x, z;               // current tip cell (block-space)
+        final int y;               // block Y the logs sit at for this lane
+        boolean done;              // stopped at a wall, waiting out the linger timer
+        int timer = 0;             // ticks elapsed while stopped at a wall
+        final java.util.List<RootBlock> cells = new java.util.ArrayList<>();
+        RootBurst(double dirX, double dirZ, double x, double z, int y) {
+            this.dirX = dirX; this.dirZ = dirZ;
+            this.x = x; this.z = z;
+            this.y = y;
+        }
     }
 
     private static final class WallBlock {
@@ -185,6 +205,7 @@ public final class GrovekeeperController {
     public void tick(Player p) {
         if (hp <= 0) return;
         if (!boss.isValid()) return;
+        if (meleeRpCd > 0) meleeRpCd--;
         patternTimer++;
         boolean rage = enraged();
         Location center = boss.getLocation().clone();
@@ -195,10 +216,10 @@ public final class GrovekeeperController {
             warning--;
             // Re-aim at the player's CURRENT position every tick so the telegraph (and the message)
             // follow them live, matching the direction the root/wall actually fires.
-            if (pending == ATTACK_ROOT_BURST || pending == ATTACK_TIMBER_WALLS) {
+            if (pending == ATTACK_TIMBER_WALLS) {
                 warnAngle = Math.atan2(p.getZ() - center.getZ(), p.getX() - center.getX());
             }
-            if (pending == ATTACK_ROOT_BURST) warnRootBurst(center, warnAngle);
+            if (pending == ATTACK_ROOT_BURST) warnRootBursts(center);
             else if (pending == ATTACK_TIMBER_WALLS) warnWall(center, warnAngle);
             else warnRing(center);
             if (warning == 0) fire(p, center, rage);
@@ -227,12 +248,12 @@ public final class GrovekeeperController {
         // Re-aim at the player's CURRENT position. warnAngle was locked when the attack was chosen
         // (14-18 ticks earlier) and is stale by now, so the root/wall used to launch in a direction
         // that was very, very off after the boss and player kept moving during the telegraph.
-        if ((pending == ATTACK_ROOT_BURST || pending == ATTACK_TIMBER_WALLS) && p != null && p.isOnline()) {
+        if (pending == ATTACK_TIMBER_WALLS && p != null && p.isOnline()) {
             warnAngle = Math.atan2(p.getZ() - center.getZ(), p.getX() - center.getX());
         }
         switch (pending) {
             case ATTACK_ROOT_BURST: {
-                fireRootBurst(p, rage, center);
+                fireRootBurst(rage, center);
                 break;
             }
             case ATTACK_TIMBER_WALLS: {
@@ -248,47 +269,67 @@ public final class GrovekeeperController {
     }
 
     /**
-     * Root Burst: spawn a moving line of oak logs (roots) aimed at the player. It travels forward,
-     * exploding if it reaches the player; if it misses it stops at the nearest wall and lingers for
-     * {@link #ROOT_PERSIST_TICKS} before fading away.
+     * Root Burst: spawn a moving line of oak logs (roots) aimed at EVERY party member in the arena
+     * at once — one lane per online player. Each lane travels forward, exploding if it reaches its
+     * player; if it misses it stops at the nearest wall and lingers for {@link #ROOT_PERSIST_TICKS}
+     * before fading away.
      */
-    private void fireRootBurst(Player p, boolean rage, Location center) {
-        clearRootLogs(); // cancel any lingering root from a previous burst
-        // Travel along the locked telegraph angle so the vines warning matches where the roots go.
-        rootDirX = Math.cos(warnAngle);
-        rootDirZ = Math.sin(warnAngle);
-        double len = Math.hypot(rootDirX, rootDirZ);
-        if (len < 0.001) len = 1.0;
-        rootDirX /= len;
-        rootDirZ /= len;
-        rootX = center.getX();
-        rootZ = center.getZ();
-        rootY = p.getLocation().getBlockY();
+    private void fireRootBurst(boolean rage, Location center) {
+        clearRootLogs(); // cancel any lingering roots from a previous burst
         rootDamage = (rage ? 55 : 45) + floor * 15;
         rootActive = true;
-        rootDone = false;
-        rootTimer = 0;
-        placeBand();
-        checkRootHits(rage);
+        boolean any = false;
+        for (Player v : candidates()) {
+            if (v == null || !v.isOnline() || defeated) continue;
+            double ang = Math.atan2(v.getZ() - center.getZ(), v.getX() - center.getX());
+            spawnRootBurst(rage, center, ang, v.getLocation().getBlockY());
+            any = true;
+        }
+        if (!any) { rootActive = false; return; }
         rootTask = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
             if (defeated) { clearRootLogs(); return; }
             if (!rootActive) { if (rootTask != null) rootTask.cancel(); return; }
-            tickRootMove(rage);
+            tickRootMoves(rage);
         }, ROOT_ADVANCE_TICKS, ROOT_ADVANCE_TICKS);
     }
 
-    /** Advance the root one step along its true heading (not snapped to 8 directions), placing a log
-     *  column every other cell it crosses so the burst stays sparse (scarcer) while still advancing,
-     *  or waiting out the linger timer if it previously stopped at a wall. */
-    private void tickRootMove(boolean rage) {
-        if (rootDone) {
-            rootTimer++;
-            if (rootTimer >= ROOT_PERSIST_TICKS) clearRootLogs();
-            return;
+    /** Create one root-burst lane toward a player and place its first log. */
+    private void spawnRootBurst(boolean rage, Location center, double angle, int y) {
+        double dx = Math.cos(angle), dz = Math.sin(angle);
+        double len = Math.hypot(dx, dz);
+        if (len < 0.001) { dx = 1; dz = 0; } else { dx /= len; dz /= len; }
+        RootBurst b = new RootBurst(dx, dz, center.getX(), center.getZ(), y);
+        rootBursts.add(b);
+        placeLogCell(b, (int) Math.floor(b.x), (int) Math.floor(b.z));
+        if (checkRootHits(rage, b)) rootBursts.remove(b); // fired into a standing player: popped now
+    }
+
+    /** Advance every active root lane one step along its true heading (not snapped to 8 directions),
+     *  placing a log column every other cell it crosses so the bursts stay sparse (scarcer) while
+     *  still advancing, or waiting out the linger timer if a lane previously stopped at a wall. */
+    private void tickRootMoves(boolean rage) {
+        for (java.util.Iterator<RootBurst> it = rootBursts.iterator(); it.hasNext(); ) {
+            RootBurst b = it.next();
+            if (b.done) {
+                b.timer++;
+                if (b.timer >= ROOT_PERSIST_TICKS) { restoreRoots(b.cells); it.remove(); }
+                continue;
+            }
+            tickRootMove(b);
+            if (b.done) continue; // stopped at a wall this step; linger
+            if (checkRootHits(rage, b)) it.remove(); // exploded on a player
         }
-        double oldX = rootX, oldZ = rootZ;
-        double newX = oldX + rootDirX * ROOT_TRAVEL;
-        double newZ = oldZ + rootDirZ * ROOT_TRAVEL;
+        if (rootBursts.isEmpty()) {
+            rootActive = false;
+            if (rootTask != null) { rootTask.cancel(); rootTask = null; }
+        }
+    }
+
+    /** Advance one root lane's tip, placing logs across the cells it enters and stopping at a wall. */
+    private void tickRootMove(RootBurst b) {
+        double oldX = b.x, oldZ = b.z;
+        double newX = oldX + b.dirX * ROOT_TRAVEL;
+        double newZ = oldZ + b.dirZ * ROOT_TRAVEL;
         // Walk the segment, placing a log in each cell it enters and stopping at the first wall.
         double dist = Math.hypot(newX - oldX, newZ - oldZ);
         int steps = Math.max(1, (int) Math.ceil(dist / 0.25));
@@ -302,7 +343,7 @@ public final class GrovekeeperController {
             if (cx == prevX && cz == prevZ) continue; // still inside the previous cell
             prevX = cx;
             prevZ = cz;
-            Material ahead = world.getBlockAt(cx, rootY, cz).getType();
+            Material ahead = world.getBlockAt(cx, b.y, cz).getType();
             // Ignore our own logs so the root can carve along its own lane, but stop at any wall.
             if (ahead != Material.AIR && ahead != Material.CAVE_AIR && ahead != Material.OAK_LOG) {
                 stopX = oldX + (newX - oldX) * Math.max(0.0, t - 0.01);
@@ -311,42 +352,38 @@ public final class GrovekeeperController {
                 break;
             }
             // Place a log in every crossed cell so the root is a single continuous line.
-            placeLogCell(cx, cz);
+            placeLogCell(b, cx, cz);
             stopX = oldX + (newX - oldX) * t;
             stopZ = oldZ + (newZ - oldZ) * t;
         }
-        rootX = stopX;
-        rootZ = stopZ;
-        if (hitWall) {
-            stopRootAtWall();
-            return;
-        }
-        checkRootHits(rage);
+        b.x = stopX;
+        b.z = stopZ;
+        if (hitWall) stopRootAtWall(b);
     }
 
-    /** Place the current tip cell's log onto the world (with eruption particles/sound) and record
+    /** Place the root lane's tip cell onto the world (with eruption particles/sound) and record
      *  it so it can be restored later. Skips cells already logged. */
-    private void placeBand() {
-        placeLogCell((int) Math.floor(rootX), (int) Math.floor(rootZ));
-    }
-
-    /** Place a single log (root) cell at {@code (x, rootY, z)} if it isn't already one of ours,
-     *  recording it so it can be restored later. */
-    private void placeLogCell(int x, int z) {
-        for (RootBlock rb : rootLogs) {
-            if (rb.loc.getBlockX() == x && rb.loc.getBlockZ() == z && rb.loc.getBlockY() == rootY) return;
+    private void placeLogCell(RootBurst b, int x, int z) {
+        // Never erupt a root directly beneath the boss — the Grovekeeper can't stand on its own
+        // root line. Looking at the boss's own column keeps the burst line from materializing
+        // under it.
+        if (x == boss.getLocation().getBlockX() && z == boss.getLocation().getBlockZ()) return;
+        for (RootBlock rb : b.cells) {
+            if (rb.loc.getBlockX() == x && rb.loc.getBlockZ() == z && rb.loc.getBlockY() == b.y) return;
         }
-        if (world.getBlockAt(x, rootY, z).getType() == Material.OAK_LOG) return;
+        if (world.getBlockAt(x, b.y, z).getType() == Material.OAK_LOG) return;
         for (int h = 0; h < ROOT_LOG_HEIGHT; h++) {
-            int y = rootY + h;
+            int y = b.y + h;
             if (world.getBlockAt(x, y, z).getType() == Material.OAK_LOG) continue;
             Material orig = world.getBlockAt(x, y, z).getType();
-            rootLogs.add(new RootBlock(new Location(world, x + 0.5, y, z + 0.5), orig));
+            RootBlock rb = new RootBlock(new Location(world, x + 0.5, y, z + 0.5), orig);
+            b.cells.add(rb);
+            rootLogs.add(rb);
             world.getBlockAt(x, y, z).setType(Material.OAK_LOG);
         }
         // Erupt out of the ground: a burst of soil/log dirt rises, so the root reads as tearing out of
         // the floor.
-        Location cell = new Location(world, x + 0.5, rootY, z + 0.5);
+        Location cell = new Location(world, x + 0.5, b.y, z + 0.5);
         world.spawnParticle(org.bukkit.Particle.BLOCK, cell, 18, 0.5, 0.9, 0.5, Material.DIRT.createBlockData());
         world.spawnParticle(org.bukkit.Particle.BLOCK, cell.clone().add(0, 1, 0), 12, 0.4, 0.7, 0.4, Material.OAK_LOG.createBlockData());
         world.spawnParticle(org.bukkit.Particle.DUST, cell.clone().add(0, 1.5, 0), 20, 0.5, 0.8, 0.5, 0,
@@ -355,26 +392,26 @@ public final class GrovekeeperController {
         world.playSound(cell, org.bukkit.Sound.BLOCK_GRASS_BREAK, 0.9f, 0.7f);
     }
 
-    /** Damage any party member the root's leading band is touching. Returns true if it hit. */
-    private boolean checkRootHits(boolean rage) {
+    /** Damage any party member the given lane's leading band is touching. Returns true if it hit. */
+    private boolean checkRootHits(boolean rage, RootBurst b) {
         for (Player v : candidates()) {
             if (v == null || !v.isOnline() || defeated) continue;
             double vx = v.getLocation().getX();
             double vz = v.getLocation().getZ();
             double vy = v.getLocation().getY();
-            // The root erupts from (rootY - 1) up through the player's head, so it can catch a
+            // The root erupts from (y - 1) up through the player's head, so it can catch a
             // player standing on a raised cell or mid-jump rather than only at ground level.
-            if (vy < rootY - 1.5 || vy > rootY + 4.0) continue;
-            if (Math.abs(vx - rootX) < ROOT_DMG_RADIUS && Math.abs(vz - rootZ) < ROOT_DMG_RADIUS) {
-                explodeRoot(v, rage);
+            if (vy < b.y - 1.5 || vy > b.y + 4.0) continue;
+            if (Math.abs(vx - b.x) < ROOT_DMG_RADIUS && Math.abs(vz - b.z) < ROOT_DMG_RADIUS) {
+                explodeRoot(v, rage, b);
                 return true;
             }
         }
         return false;
     }
 
-    private void explodeRoot(Player v, boolean rage) {
-        Location boom = new Location(world, rootX, rootY + 1.0, rootZ);
+    private void explodeRoot(Player v, boolean rage, RootBurst b) {
+        Location boom = new Location(world, b.x, b.y + 1.0, b.z);
         world.spawnParticle(org.bukkit.Particle.EXPLOSION, boom, 1, 0, 0, 0);
         // The whole erupting column pops, from the floor up past head height.
         for (int h = 0; h <= 3; h++) {
@@ -383,14 +420,15 @@ public final class GrovekeeperController {
         world.spawnParticle(org.bukkit.Particle.ITEM, boom.clone().add(0, 1, 0), 20, 2, 1, 2, new org.bukkit.inventory.ItemStack(Material.VINE));
         world.playSound(boom, org.bukkit.Sound.ENTITY_GENERIC_EXPLODE, 1.0f, 1.0f);
         com.lieyabull.dung.game.GameManager.playerHurt(v, rootDamage);
-        clearRootLogs();
+        restoreRoots(b.cells);
+        b.cells.clear();
     }
 
-    /** The root reached a wall before the player: keep the roots, fade them after 10s. */
-    private void stopRootAtWall() {
-        rootDone = true;
-        rootTimer = 0;
-        Location stop = new Location(world, rootX, rootY + 0.5, rootZ);
+    /** The lane reached a wall before its player: keep the roots, fade them after 10s. */
+    private void stopRootAtWall(RootBurst b) {
+        b.done = true;
+        b.timer = 0;
+        Location stop = new Location(world, b.x, b.y + 0.5, b.z);
         world.playSound(stop, org.bukkit.Sound.BLOCK_WOOD_STEP, 1.0f, 0.6f);
         world.spawnParticle(org.bukkit.Particle.BLOCK, stop.clone().add(0, 1, 0), 12, 0.5, 0.5, 0.5, Material.OAK_LOG.createBlockData());
     }
@@ -404,18 +442,24 @@ public final class GrovekeeperController {
 
     /** Restore every placed log to its original block and stop the movement task. */
     private void clearRootLogs() {
-        for (RootBlock rb : rootLogs) {
-            org.bukkit.block.Block b = rb.loc.getBlock();
-            if (b.getType() == Material.OAK_LOG) b.setType(rb.original);
-        }
+        restoreRoots(rootLogs);
         rootLogs.clear();
+        rootBursts.clear();
         rootActive = false;
-        rootDone = false;
-        rootTimer = 0;
         if (rootTask != null) {
             rootTask.cancel();
             rootTask = null;
         }
+    }
+
+    /** Restore the given root cells (logs back to their originals) and drop them from the master
+     *  ledger so a lane that popped or faded doesn't get double-restored later. */
+    private void restoreRoots(java.util.List<RootBlock> cells) {
+        for (RootBlock rb : cells) {
+            org.bukkit.block.Block b = rb.loc.getBlock();
+            if (b.getType() == Material.OAK_LOG) b.setType(rb.original);
+        }
+        rootLogs.removeAll(cells);
     }
 
     /** Restore every placed fence block and stop the wall's tick task. */
@@ -445,6 +489,7 @@ public final class GrovekeeperController {
         poisonActive = false;
         poisonedSessions.clear();
         poisonDurations.clear();
+        poisonAccum.clear();
         if (poisonTask != null) {
             poisonTask.cancel();
             poisonTask = null;
@@ -593,10 +638,10 @@ public final class GrovekeeperController {
         poisonTask = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
             if (defeated) { clearPoisonRoots(); return; }
             if (!poisonActive) { if (poisonTask != null) poisonTask.cancel(); return; }
-            poisonElapsed[0] += 10; // firing every 10 ticks
+            poisonElapsed[0] += 2; // firing every 2 ticks
             if (poisonElapsed[0] >= POISON_DURATION_TICKS) { clearPoisonRoots(); return; }
             poisonTick(rage);
-        }, 10L, 10L);
+        }, 2L, 2L);
     }
 
     /** Scan down from an above-floor reference Y at column ({@code x},{@code z}) and return the solid
@@ -617,46 +662,62 @@ public final class GrovekeeperController {
     }
 
     /** Detect players stepping onto a root (applying the 3-second poison debuff) and tick down the
-     *  poison's damage-over-time. Roots sit flush at ground level, so a player stands at pb.y + 1. */
-    private void poisonTick(boolean rage) {
+     *  poison's damage-over-time. Roots sit flush at ground level, so a player stands at pb.y + 1.
+     *  The step scan sweeps every 2 ticks so a sprinting player can't cross a root between samples;
+     *  the DoT still lands every 10 ticks via the per-player {@link #poisonAccum} accumulator. */
+private void poisonTick(boolean rage) {
         if (poisonBlocks.isEmpty()) return;
         for (Player v : candidates()) {
             if (v == null || !v.isOnline() || defeated) continue;
-            int vy = v.getLocation().getBlockY();
-            int vx = v.getLocation().getBlockX();
-            int vz = v.getLocation().getBlockZ();
-            // Stepping onto a root cell (player's feet are one block above the flush floor root).
+            double vy = v.getLocation().getY();
+            double vx = v.getLocation().getX();
+            double vz = v.getLocation().getZ();
+            // The player's body must overlap the root cell horizontally (block half-width + player
+            // half-width) and their feet must be level with the root up through a jump peak, so
+            // stepping onto the edge or hopping over the column still registers the touch.
             boolean stepped = false;
             for (PoisonBlock pb : poisonBlocks) {
-                if (vx != pb.x || vz != pb.z) continue;
-                if (vy != pb.y + 1 && vy != pb.y) continue;
+                if (Math.abs(vx - (pb.x + 0.5)) > 1.0 || Math.abs(vz - (pb.z + 0.5)) > 1.0) continue;
+                if (vy < pb.y - 0.4 || vy > pb.y + 2.5) continue;
                 int key = v.getUniqueId().hashCode() * 31 + pb.x * 17 + pb.z;
-                if (poisonedSessions.add(key)) {
-                    stepped = true; // only act once per cell, even if standing across several
-                }
-                break;
+                if (poisonedSessions.add(key)) stepped = true;
             }
             if (stepped) {
                 // Apply the 3-second poison debuff (real DoT + light-green particle trail).
                 poisonDurations.put(v.getUniqueId(), POISON_EFFECT_TICKS);
-                world.spawnParticle(org.bukkit.Particle.ITEM, v.getLocation().clone().add(0, 1, 0), 6, 0.4, 0.6, 0.4, new org.bukkit.inventory.ItemStack(Material.SPORE_BLOSSOM));
+                world.spawnParticle(org.bukkit.Particle.DUST, v.getLocation().clone().add(0, 0.4, 0), 4,
+                        0.25, 0.3, 0.25, 0, new org.bukkit.Particle.DustOptions(org.bukkit.Color.fromRGB(170, 255, 190), 0.4f));
                 world.playSound(v.getLocation(), org.bukkit.Sound.BLOCK_GRASS_STEP, 0.8f, 0.4f);
             }
-            // Damage-over-time for anyone currently poisoned; ticks every 10 game ticks (0.5s).
+            // Damage-over-time for anyone currently poisoned; lands every 10 game ticks (0.5s)
+            // even though this step scan runs every 2 ticks.
             Integer dur = poisonDurations.get(v.getUniqueId());
             if (dur != null) {
-                poisonDurations.put(v.getUniqueId(), dur - 10);
-                if (dur - 10 <= 0) poisonDurations.remove(v.getUniqueId());
-                com.lieyabull.dung.game.GameManager.playerHurtBypassInvuln(v, poisonTickDamage(rage));
-                // Light green particles float up around the player while they're taking poison damage.
-                world.spawnParticle(org.bukkit.Particle.DUST, v.getLocation().clone().add(0, 0.6, 0), 18,
-                        0.35, 0.35, 0.35, 0, new org.bukkit.Particle.DustOptions(org.bukkit.Color.fromRGB(170, 255, 190), 0.4f));
+                // While poisoned: a soft haze of green smoke slowly falls and swirls around the head,
+                // spawned each 2-tick sweep so it reads as one continuous cloud over the whole 3s debuff.
+                world.spawnParticle(org.bukkit.Particle.WITCH, v.getLocation().clone().add(0, 1.9, 0), 3,
+                        0.4, 0.3, 0.4, 0.02, org.bukkit.Color.fromRGB(70, 200, 110));
+                int accum = poisonAccum.getOrDefault(v.getUniqueId(), 0) + 2;
+                if (accum >= 10) {
+                    poisonAccum.put(v.getUniqueId(), accum - 10);
+                    poisonDurations.put(v.getUniqueId(), dur - 10);
+                    if (dur - 10 <= 0) {
+                        poisonDurations.remove(v.getUniqueId());
+                        poisonAccum.remove(v.getUniqueId());
+                    }
+                    com.lieyabull.dung.game.GameManager.playerHurtBypassInvuln(v, poisonTickDamage(rage));
+                }
             }
         }
+        // Slow ambient shimmer: one soft green speck per root, once per second, so the whole patch
+        // glows gently instead of raining spore particles.
+        poisonAmbientTick++;
+        if (poisonAmbientTick % 10 != 0) return;
         for (PoisonBlock pb : poisonBlocks) {
             org.bukkit.block.Block b = world.getBlockAt(pb.x, pb.y, pb.z);
             if (b.getType() == Material.CRIMSON_STEM) {
-                world.spawnParticle(org.bukkit.Particle.ITEM, new Location(world, pb.x + 0.5, pb.y + 1.0, pb.z + 0.5), 1, 0.3, 0.2, 0.3, new org.bukkit.inventory.ItemStack(Material.SPORE_BLOSSOM));
+                world.spawnParticle(org.bukkit.Particle.DUST, new Location(world, pb.x + 0.5, pb.y + 1.05, pb.z + 0.5), 1,
+                        0.05, 0.05, 0.05, 0, new org.bukkit.Particle.DustOptions(org.bukkit.Color.fromRGB(150, 230, 170), 0.3f));
             }
         }
     }
@@ -686,6 +747,15 @@ public final class GrovekeeperController {
         }
     }
 
+    /** Telegraph a root burst lane toward every online party member. */
+    private void warnRootBursts(Location center) {
+        for (Player v : candidates()) {
+            if (v == null || !v.isOnline() || defeated) continue;
+            double ang = Math.atan2(v.getZ() - center.getZ(), v.getX() - center.getX());
+            warnRootBurst(center, ang);
+        }
+    }
+
     /** Show an expanding ring for timber walls / poison roots. */
     private void warnRing(Location center) {
         double r = 2 + (warning % 4);
@@ -705,6 +775,10 @@ public final class GrovekeeperController {
     }
 
     public void damage(double dmg, Player attacker) {
+        damage(dmg, attacker, false);
+    }
+
+    public void damage(double dmg, Player attacker, boolean melee) {
         if (defeated) return;
         hp -= dmg;
         bar.setProgress(Math.max(0, hp / maxHp));
@@ -713,6 +787,10 @@ public final class GrovekeeperController {
         world.playSound(boss.getLocation(), org.bukkit.Sound.ENTITY_PLAYER_HURT, 0.8f, 1.0f);
         world.spawnParticle(org.bukkit.Particle.BLOCK,
                 boss.getLocation().clone().add(0, 1.5, 0), 12, 0.5, 0.8, 0.5, Material.OAK_LEAVES.createBlockData());
+        // A basic melee hit provokes the Grovekeeper: it hurls the attacker away.
+        if (melee && attacker != null && attacker.isOnline() && !attacker.isDead() && boss.isValid() && !defeated) {
+            meleeRetribution(attacker);
+        }
         // Flanking dash: move behind the attacker
         if (attacker != null && attacker.isOnline() && boss.isValid()) {
             flankBehind(attacker);
@@ -752,6 +830,35 @@ public final class GrovekeeperController {
             world.spawnParticle(org.bukkit.Particle.BLOCK, behind.clone().add(0, 1, 0), 8, 0.5, 0.5, 0.5, Material.OAK_LEAVES.createBlockData());
             world.playSound(behind, org.bukkit.Sound.ENTITY_ENDERMAN_TELEPORT, 0.6f, 1.5f);
         }
+    }
+
+    /** Melee retribution: a player who lands a basic melee hit on the Grovekeeper is hurled away
+     *  from it and takes 3% max-HP damage (mitigated by the usual shield/defense path). Throttled
+     *  to once per second so rapid swings don't chain the launch. */
+    private void meleeRetribution(Player attacker) {
+        if (meleeRpCd > 0) return;
+        meleeRpCd = 20;
+        Location b = boss.getLocation();
+        Location a = attacker.getLocation();
+        double dx = a.getX() - b.getX();
+        double dz = a.getZ() - b.getZ();
+        double dist = Math.hypot(dx, dz);
+        if (dist > 0.01) {
+            dx /= dist;
+            dz /= dist;
+        } else {
+            dx = 0;
+            dz = 1;
+        }
+        attacker.setVelocity(new org.bukkit.util.Vector(dx * 1.5, 0.85, dz * 1.5));
+        int maxHp = 100;
+        com.lieyabull.dung.game.DungeonInstance di = com.lieyabull.dung.game.GameManager.instance().instanceOf(attacker);
+        if (di != null && di.run() != null) {
+            var st = di.run().playerStateOf(attacker.getUniqueId());
+            if (st != null) maxHp = st.maxHearts;
+        }
+        com.lieyabull.dung.game.GameManager.playerHurt(attacker, maxHp * 0.03);
+        world.playSound(a, org.bukkit.Sound.ENTITY_GENERIC_HURT, 1.0f, 0.8f);
     }
 
     private boolean isWalkable(Location l) {
