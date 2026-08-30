@@ -4317,17 +4317,17 @@ public final class DungeonInstance {
         return net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacySection().deserialize(s);
     }
 
-    /** Remove a player's overhead HP bar (and any stale passenger), if present. Dismounts the
-     *  display explicitly before removing it so the client never keeps rendering a ghost tag. */
+    /** Remove a player's overhead HP bar, if present. Dismounts the display explicitly before
+     *  removing it so the client never keeps rendering a ghost tag. Only this HP bar's own
+     *  passenger is touched — other systems (e.g. AfkListener's {@code [AFK]} tag) own their own
+     *  passenger displays, and sweeping them here would destroy their tag on every tick for
+     *  dead/spectator players. */
     private void removeHeadHp(Player p) {
         org.bukkit.entity.TextDisplay tag = hpTags.remove(p.getUniqueId());
         lastHeadHp.remove(p.getUniqueId());
         if (tag != null) {
             p.removePassenger(tag);
             tag.remove();
-        }
-        for (org.bukkit.entity.Entity e : List.copyOf(p.getPassengers())) {
-            if (e instanceof org.bukkit.entity.TextDisplay) e.remove();
         }
     }
 

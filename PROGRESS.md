@@ -1464,6 +1464,17 @@ tab = detailed build/run/progression).
       New `GearFactory.hasRunProgression` compares upgrade level, affix set, and reforge count; when
       any differ, the current (progressed) version is restored instead of the snapshot.
 
+### Iteration 62 — /afk no longer a toggle + "is now AFK" spam fixed
+- [x] **`/afk` is not a toggle anymore:** running `/afk` marks you AFK; re-running it stays AFK (no
+      undo). Any action — movement, chat, clicking, dropping, changing slots, dealing or taking
+      damage — ends it (`releaseManual` from every activity handler; chat defers to the main thread).
+- [x] **"is now AFK" broadcast spam fixed:** the 1-second sweep re-ran `markAfk`, and the run's
+      head-HP cleanup (`removeHeadHp`) destroyed *every* TextDisplay passenger each tick for
+      dead/spectator players — so the AFK tag kept dying and the broadcast re-fired once per second.
+      An `announced` session-set now guarantees the line is broadcast exactly once per AFK session
+      (lost tags are re-created silently), and `removeHeadHp` only touches its own HP-bar passenger
+      instead of sweeping other systems' tags.
+
 ## Build / run
 ```
 gradlew build            # compiles + jars

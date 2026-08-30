@@ -29,8 +29,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * AFK detection. A player who performs no activity (movement, chat, clicks, slot changes, drops,
  * damage in/out) for {@link #AFK_MILLIS} (3 minutes) is announced in chat in grey and gets a
  * floating {@code [AFK]} tag riding above their head. Any activity removes the tag. A player can
- * also opt in immediately with {@code /afk}; a manual toggle survives activity and is only cleared
- * by running {@code /afk} again.
+ * also opt in immediately with {@code /afk}; manual AFK is <b>not a toggle</b> — it ends the
+ * moment the player acts (moves, chats, clicks, drops, changes slots, is involved in damage).
+ *
+ * <p>The "is now AFK" line is broadcast exactly once per AFK session. The one-second sweep
+ * re-validates/re-creates the tag, but the announcement set guarantees it cannot repeat-announce
+ * while a player stays AFK.</p>
  *
  * <p>The tag is a non-persistent TextDisplay riding the player, mirroring the run's overhead HP
  * readout ({@code DungeonInstance.updateHeadHp}) — a player's own {@code setCustomName} cannot
@@ -49,13 +53,18 @@ public final class AfkListener implements Listener, CommandExecutor {
     /** Vertical lift of the [AFK] tag above the head (a passenger display renders at head height). */
     private static final float TAG_LIFT = 0.5f;
 
+    private final Dung plugin;
     private final Map<UUID, Long> lastActivity = new ConcurrentHashMap<>();
     /** Live [AFK] tag per player, present only while the player is AFK. */
     private final Map<UUID, TextDisplay> tags = new ConcurrentHashMap<>();
-    /** Players who ran {@code /afk}: AFK until they run it again, regardless of activity. */
+    /** Players who ran {@code /afk}: AFK until they act (any move/chat/click ends it). */
     private final Set<UUID> manualAfk = ConcurrentHashMap.newKeySet();
+    /** Players whose "is now AFK" has already been broadcast this AFK session, so the one-second
+     *  sweep can silently repair a lost tag without re-announcing the same player. */
+    private final Set<UUID> announced = ConcurrentHashMap.newKeySet();
 
     public AfkListener(Dung plugin) {
+        this.plugin = plugin;
         Bukkit.getScheduler().runTaskTimer(plugin, this::sweep,
                 SWEEP_INTERVAL_TICKS, SWEEP_INTERVAL_TICKS);
     }
@@ -81,37 +90,38 @@ public final class AfkListener implements Listener, CommandExecutor {
         return p != null && (manualAfk.contains(p.getUniqueId()) || tags.containsKey(p.getUniqueId()));
     }
 
-    /** Toggle a player's manual AFK state. Returns true if they are now AFK. */
-    public boolean toggleManual(Player p) {
-        UUID id = p.getUniqueId();
-        if (manualAfk.add(id)) {
+    /** Put a player into {@code /afk}. Not a toggle: re-running {@code /afk} keeps them AFK, and any
+     *  action (movement, chat, clicks, …) ends it for them. */
+    public boolean enterManual(Player p) {
+        if (manualAfk.add(p.getUniqueId())) {
             markAfk(p);
-            p.sendMessage("§7You are now AFK. Run §f/afk§7 again to undo.");
+            p.sendMessage("§7You are now AFK. Move, chat, or act to end it.");
             return true;
         }
-        manualAfk.remove(id);
-        lastActivity.put(id, System.currentTimeMillis());
-        clearAfk(p);
-        p.sendMessage("§7You are no longer AFK.");
-        return false;
+        p.sendMessage("§7You are already AFK. Move, chat, or act to end it.");
+        return true;
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        if (sender instanceof Player p) toggleManual(p);
+        if (sender instanceof Player p) enterManual(p);
         return true;
     }
 
-    /** Show the [AFK] tag above the head and announce it exactly once. */
+    /** Show the [AFK] tag above the head and announce it exactly once per AFK session. Re-validating
+     *  an existing tag returns early; a lost tag is re-created silently, never re-announced. */
     private void markAfk(Player p) {
         UUID id = p.getUniqueId();
+        boolean first = announced.add(id); // false once this player is already in an AFK session
         TextDisplay tag = tags.get(id);
         if (tag != null) {
-            if (tag.isValid() && p.getPassengers().contains(tag)) return; // already marked
+            if (tag.isValid() && p.getPassengers().contains(tag)) return; // already fully marked
             p.removePassenger(tag);
             tag.remove();
         }
-        Bukkit.broadcastMessage("§7" + p.getName() + " is now AFK");
+        if (first) {
+            Bukkit.broadcastMessage("§7" + p.getName() + " is now AFK");
+        }
         TextDisplay fresh = p.getWorld().spawn(p.getLocation(), TextDisplay.class, td -> {
             td.text(net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
                     .legacySection().deserialize("§7[AFK]"));
@@ -131,14 +141,24 @@ public final class AfkListener implements Listener, CommandExecutor {
 
     /** Remove the [AFK] tag; the sweep calls this whenever the player is active again. */
     private void clearAfk(Player p) {
+        announced.remove(p.getUniqueId());
         TextDisplay tag = tags.remove(p.getUniqueId());
         if (tag == null) return;
         p.removePassenger(tag);
         tag.remove();
     }
 
+    /** Record activity; if the player is in {@code /afk}, any action cancels it. */
     private void markActive(Player p) {
         lastActivity.put(p.getUniqueId(), System.currentTimeMillis());
+        releaseManual(p);
+    }
+
+    /** End manual AFK (no-op unless the player was in {@code /afk}). */
+    private void releaseManual(Player p) {
+        if (!manualAfk.remove(p.getUniqueId())) return;
+        clearAfk(p);
+        p.sendMessage("§7You are no longer AFK.");
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -182,7 +202,10 @@ public final class AfkListener implements Listener, CommandExecutor {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onChat(AsyncChatEvent e) {
-        markActive(e.getPlayer()); // only touches the timestamp map — safe off the main thread
+        Player p = e.getPlayer();
+        lastActivity.put(p.getUniqueId(), System.currentTimeMillis()); // CHM write — safe off-thread
+        // releaseManual touches entities and chat, so defer it to the main thread.
+        Bukkit.getScheduler().runTask(plugin, () -> releaseManual(p));
     }
 
     @EventHandler(priority = EventPriority.MONITOR)

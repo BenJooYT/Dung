@@ -151,7 +151,7 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/dung bossbar` | `dung.admin` | Remove any stuck boss bars from the server. |
 | `/dung forceboss <warden\|grovekeeper\|random>` | `dung.admin` | Force the boss type for the next floor in the dungeon world you're standing in. |
 | `/troll` | OP only | Opens the OP-only troll item menu giving a Lightning Wand (call down lightning) or a Fling Wand (fling looked-at players). |
-| `/afk` | all | Toggle your AFK status right away. While AFK you're announced in grey with a floating `[AFK]` tag, and mobs won't attack or push you; run `/afk` again to undo. |
+| `/afk` | all | Mark yourself AFK immediately. While AFK you're announced in grey with a floating `[AFK]` tag, and mobs won't attack or push you; the moment you move, chat, or act you're no longer AFK. |
 | `/dung room gen <id> [types]` | `dung.admin` | Auto-write `<id>.yml`+`<id>.schem` from your WorldEdit `//copy`. The id is the schematic name; reads marker signs for spawn/markers. Doors are carved procedurally at generation. |
 | `/dung room list` | `dung.admin` | List registered room structures. |
 | `/dung room reload` | `dung.admin` | Re-scan `plugins/Dung/structures/` and re-register structures. |
@@ -985,8 +985,9 @@ immediately and spent in `/upgrades`.
   filling from the buffer; breaking it returns the buffered material.
 - **AFK detection** — 3 minutes without activity (movement/chat/clicks/drops/damage) announces the
   player as AFK in grey chat and floats a grey `[AFK]` tag above their head; any activity clears it.
-  `/afk` opts in immediately (and survives activity until toggled off). While AFK a player is never
-  targeted by dungeon mobs/bosses and cannot be damaged or knocked around by any entity.
+  `/afk` opts in immediately — it is **not a toggle**: any movement, chat, or action ends it. The
+  "is now AFK" line is broadcast once per AFK session. While AFK a player is never targeted by
+  dungeon mobs/bosses and cannot be damaged or knocked around by any entity.
 - **Dummy avatars work on offline-mode servers** — a live `PlayerProfile` in offline mode carries no
   textures, so avatars resolve via a name→Mojang lookup regardless of online mode, and resolved skins
   are persisted to `dummies.yml` (`avatar-skins`) so offline restarts render them without re-fetching.
