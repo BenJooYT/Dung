@@ -7,10 +7,46 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.Damageable;
+import org.bukkit.inventory.meta.ItemMeta;
+
+import java.util.List;
 
 /** Clickable chat actions + notifications (command shortcuts without needing to type). */
 public final class ChatUI {
     private ChatUI() {}
+
+    /** The item's display name as an on-hover tooltip component: the name plus every lore line
+     *  (and its native durability), so rolling an item in chat shows the item's full stats. */
+    public static Component itemPreview(ItemStack item) {
+        if (item == null || item.getType().isAir()) {
+            return Component.text("?", NamedTextColor.GRAY);
+        }
+        ItemMeta meta = item.getItemMeta();
+        String displayName = (meta != null && meta.hasDisplayName())
+                ? meta.getDisplayName()
+                : com.lieyabull.dung.util.TextUtil.capital(
+                        item.getType().name().toLowerCase().replace('_', ' '));
+        LegacyComponentSerializer ser = LegacyComponentSerializer.legacySection();
+        Component hover = ser.deserialize(displayName);
+        if (meta != null) {
+            List<String> lore = meta.getLore();
+            if (lore != null) {
+                for (String line : lore) {
+                    hover = hover.append(Component.newline())
+                            .append(ser.deserialize(line).colorIfAbsent(NamedTextColor.GRAY));
+                }
+            }
+            if (meta instanceof Damageable dmg) {
+                int remaining = dmg.hasDamage() ? dmg.getMaxDamage() - dmg.getDamage() : dmg.getMaxDamage();
+                hover = hover.append(Component.newline())
+                        .append(Component.text("Durability: " + remaining + " / " + dmg.getMaxDamage(),
+                                NamedTextColor.GRAY));
+            }
+        }
+        return ser.deserialize(displayName).hoverEvent(HoverEvent.showText(hover));
+    }
 
     public static void startPrompt(Player p) {
         startPrompt(p, true);

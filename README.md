@@ -905,6 +905,9 @@ immediately and spent in `/upgrades`.
 - **Pedestal loot** — treasure/locked/clear rewards spawn on a `POLISHED_BLACKSTONE_SLAB`
   pedestal with an invulnerable, invisible item frame; right-click to claim. Pedestals are torn
   down with the run (`clearPedestals`).
+- **Party roll announcements** — claiming any pedestal loot broadcasts `§7<name> rolled:` to every
+  online party member; the item name in the chat line is hoverable and shows the item's full stats
+  (rarity-colored name, every lore line, durability) rendered natively by the client.
 - **Persistent gear durability** — on death each `dung.persistent` item loses 10% of max
   durability (min 1). A piece that breaks is **unequipped and moved to the inventory** (dropped
   only if the bag is full) with a repair notice — never silently deleted. Death now costs

@@ -3202,6 +3202,15 @@ public final class DungeonInstance {
         com.lieyabull.dung.items.GearFactory.localizeFor(item, p);
         p.getInventory().addItem(item).values().forEach(drop ->
                 world.dropItem(p.getLocation(), drop));
+        // Announce the roll to the whole party — the item name carries a tooltip hover with its
+        // full stats (name + lore + durability), so everyone can inspect it without asking.
+        net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer ser =
+                net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacySection();
+        net.kyori.adventure.text.Component itemPart = com.lieyabull.dung.ui.ChatUI.itemPreview(item);
+        for (Player m : party.onlineMembers()) {
+            String prefix = com.lieyabull.dung.lang.Lang.forPlayer(m, "roll.announced", p.getName());
+            m.sendMessage(ser.deserialize(prefix).append(itemPart));
+        }
         // Play effects
         world.playSound(key, org.bukkit.Sound.ENTITY_ITEM_PICKUP, 1.0f, 1.0f);
         world.spawnParticle(org.bukkit.Particle.ENCHANTED_HIT, key.clone().add(0.5, 1.2, 0.5), 15, 0.3, 0.3, 0.3, 0.1);

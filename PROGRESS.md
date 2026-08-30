@@ -1443,6 +1443,16 @@ tab = detailed build/run/progression).
       by opening the block's raw inventory directly — no interact event, so plot container
       protection is bypassed entirely.
 
+### Iteration 60 — party roll announcements with hoverable stats
+- [x] **Rolls are announced to the whole party:** claiming a pedestal (treasure/locked/combat/elite/
+      secret/boss gear) now broadcasts `§7<name> rolled:` to every online party member, not just the
+      roller — so nobody misses what someone else picked up.
+- [x] **Hover shows the item's full stats:** the item name in the chat line carries a tooltip via
+      `ChatUI.itemPreview(ItemStack)` — the rarity-colored display name, every lore line, and native
+      durability — rendered natively by the client on hover, exactly like the gear's own tooltip.
+- [x] **Localized:** new `roll.announced` language key (`EN: "§7%s rolled:"`, `HU: "§7%s szerzett:"`),
+      so the announcement follows each reader's language.
+
 ## Build / run
 ```
 gradlew build            # compiles + jars

@@ -119,6 +119,8 @@ public final class Lang {
             entry("pickup.name.key", "§9Keys", "§9Kulcsok"),
             entry("pickup.name.bomb", "§4Bombs", "§4Bombák"),
 
+            entry("roll.announced", "§7%s rolled:", "§7%s szerzett:"),
+
             // ---- /dung main menu (ChatUI.startPrompt) ----
             entry("menu.tagline", " — the dungeon awaits.", " — a Tömlöc rád vár."),
             entry("menu.start.label", "[Start a Run]", "[Futam Indítása]"),
