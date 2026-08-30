@@ -1453,6 +1453,17 @@ tab = detailed build/run/progression).
 - [x] **Localized:** new `roll.announced` language key (`EN: "§7%s rolled:"`, `HU: "§7%s szerzett:"`),
       so the announcement follows each reader's language.
 
+### Iteration 61 — generation lag warning + persistent upgrades/reforges survive death
+- [x] **"Starting" warning before worldgen:** every party member is told the dungeon is generating
+      (`run.generating`) before the run world is created, and again on each descend
+      (`run.floorGenerating`, tells the floor number) right before the synchronous floor rebuild —
+      so the few-second server freeze is expected instead of a surprise.
+- [x] **In-run upgrades/reforges now persist on death:** `restoreSavedInventory` only kept the
+      mid-run gear when its durability had dropped, so any persistent item upgraded or reforged at a
+      workstation during the run was silently reverted to its pre-run snapshot version on death/leave.
+      New `GearFactory.hasRunProgression` compares upgrade level, affix set, and reforge count; when
+      any differ, the current (progressed) version is restored instead of the snapshot.
+
 ## Build / run
 ```
 gradlew build            # compiles + jars

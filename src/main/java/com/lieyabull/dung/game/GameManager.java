@@ -82,6 +82,11 @@ public final class GameManager {
             }
             playerInstance.remove(uid);
         }
+        // Probe the party before the world build: worldgen freezes the server thread for a few
+        // seconds, so everyone should know the run is about to start before the lag hits.
+        for (org.bukkit.entity.Player p : party.onlineMembers()) {
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.generating"));
+        }
         // Each run gets its own dedicated void world, created here and deleted from disk when
         // the run ends (DungeonInstance.endRun). Offsets stay 0 — the private world needs no
         // region math to keep parallel parties apart.

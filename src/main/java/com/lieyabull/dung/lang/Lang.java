@@ -81,6 +81,8 @@ public final class Lang {
             entry("party.disbandedSelf", "§cParty disbanded.", "§cA csapat feloszlott."),
             entry("party.notLeader", "§cYou are not the party leader.", "§cNem te vagy a csapatvezető."),
             entry("run.alreadyIn", "§cYou're already in a run.", "§cMár egy futamban vagy."),
+            entry("run.generating", "§eGenerating the dungeon... §7the game may lag for a few seconds.", "§eA tömlöc generálása... §7a játék néhány másodpercre lelassulhat."),
+            entry("run.floorGenerating", "§eGenerating floor %s... §7the game may lag for a few seconds.", "§eA(z) %s. szint generálása... §7a játék néhány másodpercre lelassulhat."),
             entry("run.cantShopInRun", "§cYou can't use /shop while inside a dungeon run. Leave with /dung leave first.", "§cNem használhatod a /shop parancsot futam közben. Előbb lépj ki a /dung leave paranccsal."),
             entry("run.cantUpgradesInRun", "§cYou can't use /upgrades while inside a dungeon run. Leave with /dung leave first.", "§cNem használhatod a /upgrades parancsot futam közben. Előbb lépj ki a /dung leave paranccsal."),
             entry("run.cantStashInRun", "§cYou can't use /stash while inside a dungeon run. Leave with /dung leave first.", "§cNem használhatod a /stash parancsot futam közben. Előbb lépj ki a /dung leave paranccsal."),

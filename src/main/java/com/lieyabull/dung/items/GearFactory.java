@@ -691,6 +691,17 @@ public final class GearFactory {
                 org.bukkit.persistence.PersistentDataType.INTEGER, count));
     }
 
+    /** True if {@code now} has progressed past {@code before} during a run: a different upgrade
+     *  level, a different affix set, or an extra reforge. Run-restore uses this to keep mid-run
+     *  workstation work (UPGRADE / REFORGE) on persistent gear instead of reverting to the
+     *  pre-run snapshot. */
+    public static boolean hasRunProgression(ItemStack now, ItemStack before) {
+        if (now == null || before == null) return false;
+        if (getUpgradeLevel(now) != getUpgradeLevel(before)) return true;
+        if (getReforgeCount(now) != getReforgeCount(before)) return true;
+        return !getAffixes(now).equals(getAffixes(before));
+    }
+
     /** The item's core stat tag (the one UPGRADE boosts): MAGIC_DAMAGE/DAMAGE for weapons, DEFENSE for
      *  armor, SHIELD_MAX for shields. Returns the tag name, or null if the item has no core stat. */
     public static String coreStatTag(ItemStack s) {

@@ -601,6 +601,10 @@ Combat:
   persistent items whose `dung.uuid` is still owned (or legacy uuid-less items). A piece dropped,
   exchanged, or preserved during the run is not resurrected, and an owned piece isn't doubled up
   as an undamaged copy alongside the damaged current one.
+- **Mid-run upgrades/reforges survive death** — the snapshot preserves the pre-run item, but if the
+  owned copy's upgrade level, affix set, or reforge count changed at a workstation during the run
+  (`GearFactory.hasRunProgression`), the progressed mid-run version is restored instead of the
+  snapshot — so UPGRADE/REFORGE work on persistent gear is never silently reverted.
 
 Rooms/rewards:
 - `onRoomClear(n, k)` — clears the room, opens doors, awards coins + gear.
@@ -908,6 +912,9 @@ immediately and spent in `/upgrades`.
 - **Party roll announcements** — claiming any pedestal loot broadcasts `§7<name> rolled:` to every
   online party member; the item name in the chat line is hoverable and shows the item's full stats
   (rarity-colored name, every lore line, durability) rendered natively by the client.
+- **Generation lag warning** — before the run world is generated (and again on each descend,
+  naming the incoming floor), every party member is told the game may lag for a few seconds — so
+  the synchronous floor rebuild that freezes the server thread is expected, not a surprise.
 - **Persistent gear durability** — on death each `dung.persistent` item loses 10% of max
   durability (min 1). A piece that breaks is **unequipped and moved to the inventory** (dropped
   only if the bag is full) with a repair notice — never silently deleted. Death now costs

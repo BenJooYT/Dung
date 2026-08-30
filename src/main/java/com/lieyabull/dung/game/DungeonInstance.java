@@ -488,22 +488,25 @@ public final class DungeonInstance {
                 inv.addItem(ps).values().forEach(drop ->
                     p.getWorld().dropItemNaturally(p.getLocation(), drop));
             } else {
-                // Match found — check durability. If the current version has lower durability
-                // (damaged mid-run by ability use), keep the damaged version.
-                int curDur = GearFactory.getDurability(ps);
-                int snapDur;
+                // Match found — comparison. Keep the current mid-run version over the snapshot
+                // when it has lower durability (damaged by ability use / descent) OR carries run
+                // progression (UPGRADE's level, REFORGE's affix set / count). The snapshot holds
+                // the pre-run item, so without this an in-run upgrade or reforge would be silently
+                // reverted when the player dies or leaves the run.
+                ItemStack restored;
                 if (matchSlot[0] >= 0) {
-                    ItemStack restored = inv.getItem(matchSlot[0]);
-                    snapDur = restored != null ? GearFactory.getDurability(restored) : -1;
+                    restored = inv.getItem(matchSlot[0]);
                 } else if (matchSlot[1] >= 0) {
-                    ItemStack[] armorContents = inv.getArmorContents();
-                    snapDur = armorContents[matchSlot[1]] != null ? GearFactory.getDurability(armorContents[matchSlot[1]]) : -1;
+                    restored = inv.getArmorContents()[matchSlot[1]];
                 } else {
-                    // Offhand
-                    snapDur = GearFactory.getDurability(inv.getItemInOffHand());
+                    restored = inv.getItemInOffHand();
                 }
-                if (curDur >= 0 && snapDur >= 0 && curDur < snapDur) {
-                    // Replace the snapshot version with the damaged mid-run version
+                int curDur = GearFactory.getDurability(ps);
+                int snapDur = restored != null ? GearFactory.getDurability(restored) : -1;
+                boolean keepCurrent = (curDur >= 0 && snapDur >= 0 && curDur < snapDur)
+                        || GearFactory.hasRunProgression(ps, restored);
+                if (keepCurrent) {
+                    // Replace the snapshot version with the mid-run version
                     if (matchSlot[0] >= 0) {
                         inv.setItem(matchSlot[0], ps.clone());
                     } else if (matchSlot[1] >= 0) {
@@ -571,6 +574,13 @@ public final class DungeonInstance {
 
     public void enterFloor(int floorIndex) {
         if (run == null) return;
+        // Descends rebuild the whole floor in one synchronous pass — warn everyone before the
+        // freeze that follows so the party knows the game will stutter for a few seconds.
+        if (floorIndex > 0) {
+            for (Player p : party.onlineMembers()) {
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.floorGenerating", floorIndex));
+            }
+        }
         run.floorIndex = floorIndex;
         descendVotes.clear();
         isGrovekeeperFloor = false;
