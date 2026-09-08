@@ -1506,6 +1506,20 @@ tab = detailed build/run/progression).
 - [x] **Tests:** new `CombatPowerTest` (15 tests: weights, calibration, crit, upgrade tracks,
       weighting, reference, caps, 75/25 split). Suite: 236/236 green (was 221).
 
+## Iteration 64 — v1.5.0: plugin no longer auto-disables without ProtocolLib
+- [x] **Root cause found via live test server:** the server booted with WorldEdit but **no
+      ProtocolLib** disabled the plugin during `onEnable` with
+      `NoClassDefFoundError: com/comphenix/protocol/wrappers/EnumWrappers$PlayerInfoAction`.
+      The eager `new FakePlayerRenderer(plugin)` in `DummyManager` force-linked that class; even
+      though its constructor catches a missing ProtocolLibrary, *linking* (verifying) the PL-typed
+      methods throws before the constructor body runs on servers without PL.
+- [x] **Fix:** `DummyManager` now builds the renderer only when ProtocolLib is present (bare
+      `PluginManager` lookup — touches no PL classes otherwise) and null-guards all 5 use sites;
+      dummies fall back to skinned-head stands with a warning. Verified: `[Dung] Dung enabled.`
+      cleanly on a live Paper 1.21.11 run, no `Error occurred while enabling`. (Not a race — the
+      crash was deterministic on PL-less servers and hidden on servers that always shipped PL.)
+- [x] **Version bump:** `build.gradle.kts` → `1.5.0`; jar builds as `Dung-1.5.0.jar`.
+
 ## Build / run
 ```
 gradlew build            # compiles + jars
