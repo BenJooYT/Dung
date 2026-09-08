@@ -70,6 +70,7 @@ public final class GearFactory {
             pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.REACH),
                     org.bukkit.persistence.PersistentDataType.DOUBLE, reach);
         });
+        refreshCpLore(s);
         return s;
     }
 
@@ -93,7 +94,61 @@ public final class GearFactory {
             }
             meta.setLore(lore);
         });
+        refreshCpLore(s);
         return s;
+    }
+
+    /** Legacy-format Combat Power lore line (English creation-time lore). */
+    public static String cpLine(int cp) {
+        return "§6Combat Power: §e" + cp;
+    }
+
+    /** This item's Combat Power, rounded for display. */
+    public static int combatPowerOf(ItemStack s) {
+        return (int) Math.round(com.lieyabull.dung.game.CombatPower.itemCp(s));
+    }
+
+    /** True if a lore line is a Combat Power line (either UI language). */
+    private static boolean isCpLine(String line) {
+        return line != null && (line.startsWith("§6Combat Power: §e")
+                || line.startsWith("§6Harcierő: §e"));
+    }
+
+    /**
+     * Recompute this item's Combat Power line in its existing lore, preserving the line's
+     * language. Used after tag edits that don't rebuild lore (reach, magic damage, rarity
+     * downgrade). If no CP line exists yet, one is inserted ahead of the ability/rarity block.
+     */
+    public static void refreshCpLore(ItemStack s) {
+        if (s == null || s.getType() == Material.AIR || s.getItemMeta() == null) return;
+        int cp = combatPowerOf(s);
+        s.editMeta(meta -> {
+            List<String> lore = meta.hasLore() ? new ArrayList<>(meta.getLore()) : new ArrayList<>();
+            boolean done = false;
+            for (int i = 0; i < lore.size(); i++) {
+                String line = lore.get(i);
+                if (isCpLine(line)) {
+                    int cut = line.lastIndexOf("§e");
+                    String prefix = cut >= 0 ? line.substring(0, cut + 2) : "§6Combat Power: §e";
+                    lore.set(i, prefix + cp);
+                    done = true;
+                    break;
+                }
+            }
+            if (!done) {
+                int at = lore.size();
+                for (int i = 0; i < lore.size(); i++) {
+                    String line = lore.get(i);
+                    if (line.startsWith("§7Ability:") || line.startsWith("§7Hotbar slot 9")
+                            || line.isEmpty()) {
+                        at = i;
+                        break;
+                    }
+                }
+                lore.add(at, cpLine(cp));
+            }
+            meta.setLore(lore);
+        });
     }
 
     /** Flag gear bought with persistent currency: it survives death (run gear is stripped).
@@ -542,6 +597,7 @@ public final class GearFactory {
         // trim matches the new rarity instead of keeping the old tier's material/pattern.
         if (getStoredHealthMax(out) > 0) setStoredHealth(out, getStoredHealth(out));
         finalizeRarityLook(out);
+        refreshCpLore(out);
         return out;
     }
 
@@ -570,6 +626,7 @@ public final class GearFactory {
             }
             meta.lore(next);
         });
+        refreshCpLore(s);
     }
 
     private static void scaleIntTag(org.bukkit.persistence.PersistentDataContainer pdc, String tag, double scale) {
@@ -765,6 +822,7 @@ public final class GearFactory {
             lore.add(LEGACY.deserialize("§8" + roll.affix().label + " " + roll.affix().stat.color + "+" + roll.value()));
         }
         if (upLevel > 0) lore.add(LEGACY.deserialize("§5✦ §5Upgrade §d" + upLevel));
+        lore.add(LEGACY.deserialize(cpLine(combatPowerOf(s))));
         // ability line + rarity line if the original had them
         String ability = strTagOf(s, ItemTags.ABILITY);
         if (ability != null && !ability.isEmpty()) {
@@ -842,6 +900,12 @@ public final class GearFactory {
     private static Affix byId(String id) {
         for (Affix a : Affix.values()) if (a.id.equals(id)) return a;
         return null;
+    }
+
+    /** Public read of an item's dung.kind tag ({@code weapon}/{@code armor}/{@code shield}/...),
+     *  or null if the item carries none. Used by CombatPower's inventory scans. */
+    public static String kindOfPublic(ItemStack s) {
+        return kindOf(s);
     }
 
     private static String kindOf(ItemStack s) {
@@ -994,6 +1058,8 @@ public final class GearFactory {
             meta.setDisplayName(r.legacy + "Mana Shield");
             List<String> lore = new ArrayList<>();
             lore.add("§7Shield Capacity: §b" + shieldMax);
+            lore.add(cpLine((int) Math.round(
+                    com.lieyabull.dung.game.CombatPower.itemCpCore("shield", 0, 0, 0, 0, shieldMax, 0.0, 0, r))));
             lore.add("§7Hotbar slot 9 to activate");
             lore.add("§7Sneak to charge shield with mana");
             lore.add("§7Absorbs damage while active");
@@ -1056,6 +1122,8 @@ public final class GearFactory {
         List<String> l = new ArrayList<>();
         l.add("§7Damage: §c" + dmg);
         if (health > 0) l.add("§7Health: §a+" + health);
+        l.add(cpLine((int) Math.round(
+                com.lieyabull.dung.game.CombatPower.itemCpCore("weapon", dmg, 0, 0, health, 0, 0.0, 0, r))));
         if (ability != null && !ability.isEmpty()) {
             l.add("§7Ability: §6" + ability + " §8(§b" + abilityCost + " mana§8)");
             l.add("§8How: §7Sneak + Right-Click");
@@ -1088,6 +1156,8 @@ public final class GearFactory {
         List<String> l = new ArrayList<>();
         l.add("§7Defense: §a" + defense);
         if (health > 0) l.add("§7Health: §a+" + health);
+        l.add(cpLine((int) Math.round(
+                com.lieyabull.dung.game.CombatPower.itemCpCore("armor", 0, 0, defense, health, 0, 0.0, 0, r))));
         l.add("");
         l.add(r.legacy + r.name());
         return l;
@@ -1122,6 +1192,7 @@ public final class GearFactory {
             lore.add("§8" + roll.affix().label + " " + roll.affix().stat.color + "+" + roll.value());
         }
         if (upLevel > 0) lore.add(Lang.get(lang, "gear.upgrade", upLevel));
+        lore.add(Lang.get(lang, "gear.cp", combatPowerOf(s)));
 
         String ability = strTagOf(s, ItemTags.ABILITY);
         if (ability != null && !ability.isEmpty()) {

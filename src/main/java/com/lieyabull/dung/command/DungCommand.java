@@ -162,6 +162,21 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
             case "salvage": return meta.salvageCmd(p, args);
             case "balance": meta.balance(p, args); return true;
             case "stats": stats(p); return true;
+            case "cp": {
+                DungeonInstance di = gm.instanceOf(p);
+                if (di == null || di.run() == null) {
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "cp.noRun"));
+                    return true;
+                }
+                com.lieyabull.dung.game.PlayerState ps = di.run().playerStateOf(p.getUniqueId());
+                if (ps == null) {
+                    p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "cp.noRun"));
+                    return true;
+                }
+                ps.refreshCombatPower();
+                plugin.cpBreakdownUI().open(p, ps, di.run());
+                return true;
+            }
             case "class": classCmd(p, args); return true;
             case "give":
                 if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
@@ -613,7 +628,7 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
     }
 
     private static final String[] DUNG_SUBS = {
-            "start", "leave", "descend", "stats", "class", "give", "shieldswitch",
+            "start", "leave", "descend", "stats", "cp", "class", "give", "shieldswitch",
             "party", "shop", "upgrades", "salvage", "balance", "bossbar", "stop", "reset",
             "forceboss", "room", "tutorial", "help"
     };

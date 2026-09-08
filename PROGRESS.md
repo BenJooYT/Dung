@@ -1475,9 +1475,40 @@ tab = detailed build/run/progression).
       (lost tags are re-created silently), and `removeHeadHp` only touches its own HP-bar passenger
       instead of sweeping other systems' tags.
 
+### Iteration 63 — Combat Power system implemented (design sections 13-15)
+- [x] **New `game.CombatPower` core:** locked-in section 14 weights (damage/magic 4.0, defense
+      2.0, health 0.5, shield 1.0, reach 5.0, affix 1.0/pt, crit 3.0 per 1% folded per-item from
+      rarity — Option A, mirroring `PlayerState`'s 0.02/0.01-per-ordinal chances). Upgrade level
+      is not a separate weight (already folded into the stat tag), attack speed carries no CP,
+      magic weapons value only magic damage. Calibration holds: COMMON starter blade (5 dmg)
+      = 20 CP, COMMON cloth (1 def) = 2 CP.
+- [x] **Player total = best usable weapon (whole loadout, not held) + all 4 armor + every shield
+      + other gear + permanent upgrade tracks + shop tonics.** Broken items contribute nothing
+      (mirrors `recomputeStats`); class passives, special effects and support buffs contribute
+      nothing. Cached on `PlayerState` (`combatPower` + per-source parts) at the end of every
+      `recomputeStats`, so HUD/nametag/Tab never re-scan per tick.
+- [x] **Item lore CP (`gear.cp` EN/HU):** added to all lore paths — weapon/armor/shield creation,
+      `rebuildLoreWithAffixesAndUpgrade`, `localizeLore` — plus `refreshCpLore` (language-preserving
+      update/insert) hooked into reach, magic-damage, rarity-downgrade and stat-rewrite paths.
+- [x] **Run-start lock (`lockCombatPower`, after starters, before floor 1):** recompute + cache
+      CP, weighted party CP (100/80/60/40 weakest-first), `modifier = clamp((w/ref-1)*1.0, ±10%
+      floors 1-5, ±20% floors 6+)` with `referenceCP = 25+(floor-1)*12`, stored on `Run`
+      (write-once: `cpWeighted/cpModifier/cpComplexity/cpHpDmg/cpLocked`), full lore re-sync
+      (§12 — pre-CP items get their line), and a party attunement message.
+- [x] **Modifier application (75% complexity / 25% HP-damage):** `hpMult` and a new `Enemy`
+      damage multiplier carry the bounded nudge (±2.5% early / ±5% late max); `composeMobs`
+      takes the complexity bias (stronger mix, double charger/maw caps above 0.05, up to 25%
+      elite injection into normal rooms at max bias, softened elite rooms when negative).
+      Enemy count, floor scaling and upgrade rooms untouched.
+- [x] **UI (§11):** CP row on the overhead nametag, new sidebar HUD row (ROWS 14→15), two Tab
+      breakdown rows, read-only chest GUI (`CpBreakdownUI`) via `/dung cp` (also added to
+      tab-completion and the `/dung help` menu), with the locked run modifier shown.
+- [x] **Tests:** new `CombatPowerTest` (15 tests: weights, calibration, crit, upgrade tracks,
+      weighting, reference, caps, 75/25 split). Suite: 236/236 green (was 221).
+
 ## Build / run
 ```
 gradlew build            # compiles + jars
 gradlew runServer        # boots a Paper 1.21.11 server with the plugin
 ```
-Commands: `/dung start|descend|leave|stats|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop` (opens GUI) `/upgrades` (opens GUI) `/salvage [all|favorite]` `/leaderboard [category] [page]` `/plots [warp <name>]` `/plot|/p claim|home|name|warp|settings|pvp|fire|public|mobkill|perm|unclaim` `/convert` `/troll` `/afk` `/check`
+Commands: `/dung start|descend|leave|stats|cp|class|give|help` `/party create|invite|accept|decline|leave|kick|disband` `/shop` (opens GUI) `/upgrades` (opens GUI) `/salvage [all|favorite]` `/leaderboard [category] [page]` `/plots [warp <name>]` `/plot|/p claim|home|name|warp|settings|pvp|fire|public|mobkill|perm|unclaim` `/convert` `/troll` `/afk` `/check`

@@ -313,7 +313,64 @@ public final class DungeonInstance {
 
         running = true;
         grantStarters();
+        lockCombatPower();
         enterFloor(0);
+    }
+
+    /**
+     * Combat Power run-start reconciliation (design sections 7, 12, 15). Runs once, after the
+     * starter kits are granted and before the first floor generates:
+     * <ol>
+     *   <li>Recompute every member's stats + cached CP on their actual run loadout.</li>
+     *   <li>Lock the difficulty modifier from the weighted party CP (never recalculated).</li>
+     *   <li>Sync every Dung item's lore CP (pre-CP items get their line; stale lines refresh).</li>
+     * </ol>
+     */
+    private void lockCombatPower() {
+        java.util.List<Double> memberCp = new java.util.ArrayList<>();
+        for (Player p : party.onlineMembers()) {
+            PlayerState ps = run.playerStateOf(p.getUniqueId());
+            if (ps == null) continue;
+            ps.recomputeStats();
+            memberCp.add(ps.combatPower);
+        }
+        double weighted = CombatPower.weightedPartyCp(memberCp);
+        int startFloor = run.floorIndex + 1; // floorIndex is 0-based; the first floor is Floor 1
+        double mod = CombatPower.difficultyModifier(weighted, startFloor);
+        run.cpWeighted = weighted;
+        run.cpModifier = mod;
+        run.cpComplexity = CombatPower.complexityOf(mod);
+        run.cpHpDmg = CombatPower.hpDmgOf(mod);
+        run.cpLocked = true;
+        // Lore sync (§12): reconcile every Dung item the player carries with the CP model.
+        for (Player p : party.onlineMembers()) {
+            syncLoreCp(p);
+        }
+        // Tell the party how the dungeon attuned (transparency, not a tunable).
+        int pct = (int) Math.round(mod * 100);
+        for (Player p : party.onlineMembers()) {
+            if (pct == 0) {
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.cpNoMod"));
+            } else {
+                String sign = pct > 0 ? "+" : "";
+                p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.cpLock", sign + pct));
+            }
+        }
+    }
+
+    /** Refresh the Combat Power lore line on every Dung gear item a player carries (inventory,
+     *  armor, offhand). Adds the line to pre-CP items; updates stale lines after upgrades. */
+    private void syncLoreCp(Player p) {
+        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+        java.util.List<org.bukkit.inventory.ItemStack> all = new java.util.ArrayList<>();
+        java.util.Collections.addAll(all, inv.getStorageContents());
+        java.util.Collections.addAll(all, inv.getArmorContents());
+        all.add(inv.getItemInOffHand());
+        for (org.bukkit.inventory.ItemStack s : all) {
+            if (com.lieyabull.dung.items.GearFactory.isGear(s)) {
+                com.lieyabull.dung.items.GearFactory.localizeFor(s, p);
+            }
+        }
     }
 
     private void grantStarters() {
@@ -1105,7 +1162,16 @@ public final class DungeonInstance {
         int baseCount = elite ? 3 : 2 + Math.min(run.floorIndex, 2);
         int count = baseCount * partySize;
         double hpMult = 1 + 0.3 * (partySize - 1);
-        MobType[] comp = composeMobs(elite, count);
+        // CP difficulty lock (§15): 25% of the locked modifier nudges enemy HP/damage on top of
+        // the existing floor + party-size scaling. Complexity (75%) steers composition below.
+        double dmgMult = 1.0;
+        double complexity = 0.0;
+        if (run.cpLocked) {
+            hpMult *= (1 + run.cpHpDmg);
+            dmgMult = 1 + run.cpHpDmg;
+            complexity = run.cpComplexity;
+        }
+        MobType[] comp = composeMobs(elite, count, complexity);
 
         // Use the first online player as reference for spawn placement
         Player refPlayer = party.onlineMembers().stream().findFirst().orElse(null);
@@ -1115,7 +1181,7 @@ public final class DungeonInstance {
         for (int i = 0; i < count; i++) {
             Location l = templateSpawns != null ? templateSpawns.get(i) : placeRandomlyInRoom(n);
             MobType mt = comp[i];
-            list.add(new Enemy(world, l, mt, run.floorIndex, n.x * 100 + n.z, refPlayer, hpMult));
+            list.add(new Enemy(world, l, mt, run.floorIndex, n.x * 100 + n.z, refPlayer, hpMult, dmgMult));
         }
         roomEnemies.put(k, list);
         if (elite) {
@@ -1258,30 +1324,49 @@ public final class DungeonInstance {
     private static final MobType[] ELITES = {MobType.ELITE_GAPER, MobType.ELITE_CHARGER};
     private static final MobType[] RANGED = {MobType.MAW, MobType.GAPER};
 
-    private MobType[] composeMobs(boolean elite, int count) {
+    /**
+     * Room composition with the CP complexity bias (§15, 75% of the locked modifier, range
+     * +-0.15). Positive bias shifts the mix toward dangerous combinations (more Mullibooms,
+     * Chargers and Maws together, and up to a 25% chance to inject an elite into a normal
+     * room at max bias); negative bias softens elite rooms by downgrading some bruisers.
+     * Enemy count is never touched — complexity, not numbers.
+     */
+    private MobType[] composeMobs(boolean elite, int count, double complexity) {
         MobType[] out = new MobType[count];
         if (elite) {
             out[0] = ELITES[ThreadLocalRandom.current().nextInt(ELITES.length)];
-            for (int i = 1; i < count; i++) out[i] = pickWeighted(STRONG);
+            for (int i = 1; i < count; i++) {
+                if (complexity < 0 && ThreadLocalRandom.current().nextDouble() < -complexity * 2.0) {
+                    out[i] = pickWeighted(WEAK);
+                } else {
+                    out[i] = pickWeighted(STRONG);
+                }
+            }
             return out;
         }
         out[0] = pickWeighted(WEAK);
+        int maxChargers = complexity > 0.05 ? 2 : 1;
+        int maxMaws = complexity > 0.05 ? 2 : 1;
         int chargers = 0, maws = 0;
         for (int i = 1; i < count; i++) {
             MobType m;
-            double r = ThreadLocalRandom.current().nextDouble();
+            double r = ThreadLocalRandom.current().nextDouble() + complexity;
             if (r < 0.35) {
                 m = pickWeighted(WEAK);
             } else if (r < 0.55) {
                 m = MobType.MULLIBOOM;
-            } else if (r < 0.70 && chargers == 0) {
+            } else if (r < 0.70 && chargers < maxChargers) {
                 m = MobType.CHARGER; chargers++;
-            } else if (r < 0.85 && maws == 0) {
+            } else if (r < 0.85 && maws < maxMaws) {
                 m = MobType.MAW; maws++;
             } else {
                 m = pickWeighted(RANGED);
             }
             out[i] = m;
+        }
+        if (complexity >= 0.10
+                && ThreadLocalRandom.current().nextDouble() < (complexity - 0.10) * 5.0) {
+            out[0] = ELITES[ThreadLocalRandom.current().nextInt(ELITES.length)];
         }
         return out;
     }
@@ -4264,7 +4349,7 @@ public final class DungeonInstance {
         for (int i = 0; i < 10; i++) {
             cells.add(i < filled ? "§a█" : "§8█");
         }
-        // Rows above the head: player name / HP bar / HP as numbers.
+        // Rows above the head: player name / HP bar / HP as numbers / Combat Power.
         String text = "§f" + p.getName() + "\n" + String.join("", cells)
                 + "\n§c" + cur + " §7/ §f" + max;
         // Overlay the active Mana Shield's extra HP onto the bar: recolor the first (leftmost)
@@ -4284,6 +4369,9 @@ public final class DungeonInstance {
                         + "\n§c" + cur + " §7/ §f" + max + " §b+ " + shieldVal;
             }
         }
+        // Combat Power row (§11): cached on the PlayerState, so the per-tick tag update reuses
+        // the number recomputed on gear change instead of re-scanning the inventory.
+        text = text + "\n§6✦ " + (int) st.combatPower;
         org.bukkit.entity.TextDisplay tag = hpTags.get(p.getUniqueId());
         if (tag == null || !tag.isValid()) {
             if (tag != null) tag.remove();

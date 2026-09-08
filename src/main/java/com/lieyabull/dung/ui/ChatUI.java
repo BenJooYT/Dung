@@ -70,6 +70,8 @@ public final class ChatUI {
                 NamedTextColor.AQUA, "/upgrades", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.upgrades.hover")));
         p.sendMessage(menuButton(com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.stats.label"),
                 NamedTextColor.YELLOW, "/dung stats", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.stats.hover")));
+        p.sendMessage(menuButton(com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.cp.label"),
+                NamedTextColor.GOLD, "/dung cp", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.cp.hover")));
         p.sendMessage(menuButton(com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.help.label"),
                 NamedTextColor.GRAY, "/dung help", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.help.hover")));
         p.sendMessage(Component.text("═══════════════════════════", NamedTextColor.DARK_GRAY));

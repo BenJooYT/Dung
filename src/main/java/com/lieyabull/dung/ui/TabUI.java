@@ -37,6 +37,11 @@ public final class TabUI {
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.build",
                     TextUtil.fmt(st.damage), TextUtil.fmt(st.magicDamage), (int) st.defense,
                     (int) (st.critChance * 100), TextUtil.fmt(st.critMult)));
+            // Combat Power breakdown (§11): cached total + per-source parts.
+            team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.cp",
+                    (int) st.combatPower, (int) st.cpWeapon, (int) st.cpArmor));
+            team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.cpBreak",
+                    (int) st.cpShields, (int) st.cpOther, (int) st.cpUpgrades, (int) st.cpTonics));
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.mana",
                     TextUtil.fmt(st.mana), (int) st.maxMana, TextUtil.fmt(st.speedMult), st.fireRateTicks));
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.consumables", st.coins, st.keys, st.bombs));

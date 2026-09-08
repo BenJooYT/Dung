@@ -23,7 +23,7 @@ public final class HUD {
     /** Number of fixed sidebar rows. Rows are registered ONCE per board and never cleared per
      *  tick — resetting + re-adding scores every tick made the client tear the whole board down
      *  and rebuild it each frame, which reads as the sidebar flickering between two states. */
-    private static final int ROWS = 14;
+    private static final int ROWS = 15;
     private final String[] lastText = new String[ROWS];
     private String lastDisplayName = null;
 
@@ -66,11 +66,13 @@ public final class HUD {
                 (int) (st.critChance * 100), TextUtil.fmt(st.critMult)));
         setLine(o, 3, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.reachSpd",
                 TextUtil.fmt(st.reach), TextUtil.fmt(st.speedMult)));
-        setLine(o, 4, "");
+        // Combat Power (§11): cached on the PlayerState, refreshed on gear change.
+        setLine(o, 4, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.cp", (int) st.combatPower));
+        setLine(o, 5, "");
         // consumables / run
-        setLine(o, 5, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.coinsLine", st.coins, st.keys));
-        setLine(o, 6, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bombsLine", st.bombs, run.killsOf(p.getUniqueId())));
-        setLine(o, 7, "");
+        setLine(o, 6, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.coinsLine", st.coins, st.keys));
+        setLine(o, 7, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bombsLine", st.bombs, run.killsOf(p.getUniqueId())));
+        setLine(o, 8, "");
         // Determine which room the player is physically inside. If they're in the corridor
         // (between rooms), show "Corridor" instead of the stale previous room.
         Floor.RoomNode physicalRoom = di.roomAt(p.getLocation());
@@ -80,13 +82,13 @@ public final class HUD {
         } else {
             roomLabel = com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.corridor");
         }
-        setLine(o, 8, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.room", roomLabel));
+        setLine(o, 9, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.room", roomLabel));
         // Gear condition: show worst durability among persistent gear
         String gearCond = gearCondition(p);
         if (!gearCond.isEmpty()) {
-            setLine(o, 9, gearCond);
+            setLine(o, 10, gearCond);
         } else {
-            setLine(o, 9, "");
+            setLine(o, 10, "");
         }
         // Check if any adjacent room is a LOCKED room
         String lockedHint = "";
@@ -103,8 +105,8 @@ public final class HUD {
                 }
             }
         }
-        setLine(o, 10, di.boss() != null ? com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bossActive") : lockedHint);
-        setLine(o, 11, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.class", className(p, st.classId)));
+        setLine(o, 11, di.boss() != null ? com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bossActive") : lockedHint);
+        setLine(o, 12, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.class", className(p, st.classId)));
         // Ability cooldowns on separate rows so they never overlap: the class ability always owns
         // row 12; any in-hand item ability cooldown renders on row 13 right beneath it.
         long now = System.currentTimeMillis();
@@ -114,9 +116,9 @@ public final class HUD {
         Long classCd = st.cooldowns.get(classKey);
         long classRem = classCd == null ? 0 : classCd - now;
         if (classRem > 0) {
-            setLine(o, 12, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.cd", classAbilityLabel, String.format("%.1f", classRem / 1000.0)));
+            setLine(o, 13, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.cd", classAbilityLabel, String.format("%.1f", classRem / 1000.0)));
         } else {
-            setLine(o, 12, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.ready", classAbilityLabel));
+            setLine(o, 13, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.ready", classAbilityLabel));
         }
         // In-hand item ability cooldown, on the row below the class one.
         String itemCdRow = "";
@@ -134,7 +136,7 @@ public final class HUD {
                 }
             }
         }
-        setLine(o, 13, itemCdRow);
+        setLine(o, 14, itemCdRow);
     }
 
     /** Localized friendly name for a room type (used in the sidebar Room row). */

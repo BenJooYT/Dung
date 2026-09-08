@@ -84,6 +84,15 @@ public final class PlayerState {
     public int shieldUseCount = 0;
     /** Sum of health-affix bonuses pending from equipped gear; folded into maxHearts in recomputeStats. */
     private int pendingHealthAffixes = 0;
+    // cached Combat Power (refreshed at the end of recomputeStats so HUD/nametag/Tab read a number,
+    // never re-scan the inventory per tick). Breakdown parts mirror CombatPower.Breakdown.
+    public double combatPower = 0;
+    public double cpWeapon = 0;
+    public double cpArmor = 0;
+    public double cpShields = 0;
+    public double cpOther = 0;
+    public double cpUpgrades = 0;
+    public double cpTonics = 0;
 
     public PlayerState(Player p) {
         this.player = p;
@@ -159,6 +168,22 @@ public final class PlayerState {
             hearts -= (oldMax - maxHearts);
         }
         hearts = Math.max(0.0, Math.min(hearts, maxHearts));
+        refreshCombatPower();
+    }
+
+    /** Refresh the cached Combat Power from the current inventory + upgrade tracks. Safe to call
+     *  with no live player (e.g. pure-logic tests): the cache is simply left untouched. */
+    public void refreshCombatPower() {
+        if (player == null) return;
+        CombatPower.Breakdown b = CombatPower.playerBreakdown(
+                player.getInventory(), upgrades, tonicDamage, tonicDefense);
+        combatPower = b.total();
+        cpWeapon = b.weapon();
+        cpArmor = b.armor();
+        cpShields = b.shields();
+        cpOther = b.other();
+        cpUpgrades = b.upgrades();
+        cpTonics = b.tonics();
     }
 
     /** Apply permanent shard-bought upgrades on top of gear + class passives. */

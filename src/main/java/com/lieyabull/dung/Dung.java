@@ -34,6 +34,7 @@ public final class Dung extends JavaPlugin {
     private ShopUI shopUI;
     private StashUI stashUI;
     private WorkstationUI workstationUI;
+    private com.lieyabull.dung.ui.CpBreakdownUI cpBreakdownUI;
     private PlotManager plotManager;
     private StructureManager structureManager;
     private CompostManager compost;
@@ -59,6 +60,7 @@ public final class Dung extends JavaPlugin {
         shopUI = new ShopUI(this);
         stashUI = new StashUI(this);
         workstationUI = new WorkstationUI(this);
+        cpBreakdownUI = new com.lieyabull.dung.ui.CpBreakdownUI();
         plotManager = new PlotManager(this);
         structureManager = new StructureManager(this);
         compost = new CompostManager(this);
@@ -81,6 +83,7 @@ public final class Dung extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(shopUI, this);
         Bukkit.getPluginManager().registerEvents(stashUI, this);
         Bukkit.getPluginManager().registerEvents(workstationUI, this);
+        Bukkit.getPluginManager().registerEvents(cpBreakdownUI, this);
         Bukkit.getPluginManager().registerEvents(trollUI, this);
         com.lieyabull.dung.command.MetaCommand metaCmd = new com.lieyabull.dung.command.MetaCommand(this);
         DungCommand dungCmd = new DungCommand(this, metaCmd);
@@ -167,6 +170,10 @@ public final class Dung extends JavaPlugin {
 
     public WorkstationUI workstationUI() {
         return workstationUI;
+    }
+
+    public com.lieyabull.dung.ui.CpBreakdownUI cpBreakdownUI() {
+        return cpBreakdownUI;
     }
 
     public PlotManager plotManager() {

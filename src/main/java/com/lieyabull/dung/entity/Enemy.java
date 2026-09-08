@@ -56,10 +56,20 @@ public final class Enemy {
     private long shootCd = 0;       // ticks until next projectile volley
 
     public Enemy(World w, Location loc, MobType type, int floor, int room, Player target, double hpMult) {
+        this(w, loc, type, floor, room, target, hpMult, 1.0);
+    }
+
+    /**
+     * Full constructor. {@code dmgMult} is the CP difficulty lock's bounded damage share (§15,
+     * 25% of the locked modifier, so at most +-2.5% early / +-5% late) applied on top of the
+     * normal floor scaling — it never replaces it.
+     */
+    public Enemy(World w, Location loc, MobType type, int floor, int room, Player target,
+                 double hpMult, double dmgMult) {
         this.type = type;
         this.maxHp = type.hpAt(floor) * hpMult;
         this.hp = maxHp;
-        this.damage = type.damageAt(floor);
+        this.damage = type.damageAt(floor) * dmgMult;
         this.speed = type.baseSpeed;
         this.knockback = Math.max(0.5, type.baseSpeed * 0.5);
         this.room = room;

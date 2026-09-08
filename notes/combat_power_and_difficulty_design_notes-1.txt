@@ -1,0 +1,621 @@
+Combat Power & Difficulty — Current Design Notes
+
+1. Core Philosophy
+
+Combat Power (CP) is a balancing tool, not the primary difficulty system.
+
+Floor progression is the main source of difficulty.
+
+Floors naturally become harder as the party progresses.
+
+CP should only provide a gentle adjustment around the expected difficulty of the current run.
+
+CP should represent pure/raw combat power, rather than general usefulness or utility.
+
+
+2. What Combat Power Represents
+
+CP measures how much direct combat strength a player's build provides.
+
+It does not attempt to measure:
+
+How useful a class is to the team.
+
+How good a player is.
+
+How much utility an ability provides unless that ability directly translates into measurable combat power.
+
+
+For example:
+
+A Warrior may naturally have high CP because they have high damage/defensive stats.
+
+A Support class may have lower personal CP.
+
+The Support can still make the Warrior dramatically stronger through buffs.
+
+
+Therefore, individual CP and actual party effectiveness are not necessarily the same thing.
+
+3. CP Calculation
+
+CP should be calculated mathematically from an item's/upgrades' actual stats.
+
+Example:
+
+Sword: 25 damage → 100 CP
+
+Sword upgraded to 30 damage → CP increases accordingly
+
+
+The important principle is:
+
+> CP comes from stats rather than arbitrary item/rareness values.
+
+
+
+This means upgrading an item naturally changes its CP without requiring a separate CP value to be manually assigned to every upgrade.
+
+The exact stat-to-CP conversion weights still need to be defined.
+
+Special abilities/effects may require their own carefully balanced CP contribution if they provide meaningful direct combat power.
+
+4. Persistent Gear vs Run Gear
+
+There are two types of equipment:
+
+Persistent gear
+
+Gear the player owns permanently and chooses to bring into a dungeon.
+
+Run-exclusive gear
+
+Gear obtained during the dungeon run that does not persist after death/end of run.
+
+Both can contribute to the player's current CP.
+
+If a player replaces their persistent weapon with a stronger run-exclusive weapon, their current CP should reflect the gear they're actually able to use.
+
+However, the dungeon difficulty does not continuously react to these changes.
+
+5. Weapons Are Special
+
+Weapons should not simply use the currently equipped weapon for CP.
+
+Players can switch weapons frequently during combat.
+
+For example:
+
+> Scythe → Sword → Scythe → Sword
+
+
+
+If CP used the currently held weapon, the player's CP would constantly fluctuate.
+
+Instead:
+
+> Weapon CP = the CP of the strongest usable weapon available to the player during the run.
+
+
+
+So if the player has:
+
+Scythe: 100 CP
+
+Sword: 150 CP
+
+
+Their weapon contribution is 150 CP, regardless of which weapon they currently have in their hand.
+
+This prevents rapid CP fluctuations caused by normal weapon swapping.
+
+Only weapons that are actually part of the player's usable run loadout should count—not arbitrary weapons that are merely stored elsewhere and aren't available to them.
+
+6. Other Equipment
+
+Unlike weapons, things such as:
+
+Armour
+
+Accessories
+
+Passives
+
+Other persistent/run upgrades
+
+Active temporary bonuses where applicable
+
+
+can contribute normally according to their relevant stats/effects.
+
+The exact treatment of each category still needs to be formally defined.
+
+7. Current CP vs Difficulty CP
+
+An important distinction was established:
+
+Current Combat Power
+
+This represents the player's actual current build.
+
+It can change during a run when they obtain or lose equipment/upgrades.
+
+Example:
+
+> Player starts at 500 CP → finds a powerful run item → now has 550 CP.
+
+
+
+The displayed CP can therefore update.
+
+Run Difficulty Modifier
+
+This is not dynamic.
+
+The dungeon calculates the party's CP once, at the start of the run, and uses that to determine the difficulty adjustment.
+
+Once calculated:
+
+> The difficulty modifier is locked for the entire run.
+
+
+
+It does not recalculate when:
+
+A new floor is generated.
+
+The player enters a new floor.
+
+A player gets stronger run-exclusive gear.
+
+A player loses gear.
+
+A player switches weapons.
+
+Temporary upgrades change their current CP.
+
+
+This prevents the dungeon from constantly adapting to player progression.
+
+8. Floor Progression
+
+Floor progression remains independent and is the primary difficulty curve.
+
+For example:
+
+> Floor 1 → Floor 2 → Floor 3 → ... → Floor 10
+
+
+
+The dungeon naturally becomes harder through its floor design.
+
+CP simply determines an initial adjustment to that expected difficulty.
+
+Therefore:
+
+> Floor difficulty = primary difficulty
+
+
+
+> CP scaling = initial modifier
+
+
+
+9. Guaranteed Upgrade Rooms
+
+The guaranteed upgrade rooms, such as the rooms that appear every five floors, are not affected by CP.
+
+They exist according to the dungeon's normal progression rules.
+
+CP should not:
+
+Remove them.
+
+Change their frequency.
+
+Make them stronger/weaker.
+
+Override their guaranteed nature.
+
+
+There is no meaningful correlation between those progression rules and CP, so they remain independent.
+
+10. Multiplayer CP
+
+Party difficulty uses the players' CP with weighted contributions rather than treating every player's CP equally.
+
+The weakest player contributes 100% of their CP.
+
+The next weakest contributes approximately 80%.
+
+Further players continue with progressively lower weighting.
+
+Conceptually:
+
+> Weakest: 100%
+2nd weakest: 80%
+3rd weakest: 60%
+4th weakest: 40%
+etc.
+
+
+
+The exact weighting curve/number of players still needs to be finalised.
+
+The purpose is to prevent one extremely overpowered player from disproportionately determining the dungeon's difficulty while still allowing their strength to contribute.
+
+11. CP UI
+
+The player's CP should be directly visible.
+
+Item Lore
+
+Combat Power should also be displayed in the lore of the items that possess combat power.
+
+Each item that contributes CP shows its own CP value on its lore, so a player can see that item's contribution at a glance without opening the breakdown GUI.
+
+The existing player nametag already displays information such as:
+
+> Player Name
+Health
+Mana
+Shield
+etc.
+
+
+
+CP should simply become another row:
+
+> Combat Power: 523
+
+
+
+There is no need for a complicated primary CP interface.
+
+Detailed CP Breakdown
+
+A separate chest-style GUI can be opened to explain where the player's CP comes from.
+
+For example:
+
+> Total Combat Power: 523
+
+Weapon — 180
+Armour — 120
+Accessories — 73
+Passives — 100
+Other — 50
+
+
+
+This allows players to see the mathematical source of their CP while keeping the normal HUD simple.
+
+12. Run-Start Metadata Sync
+
+Because Combat Power is displayed in item lore, every Dung item that carries a CP value must
+stay in sync with the player's actual build.
+
+Some items may exist without a CP value — for example gear obtained or stored before the CP
+system was introduced, or items that were created without a recorded CP.
+
+To keep the lore accurate, each run start should include a check/refresh step:
+
+> On run start, check every Dung item the player has (inventory, armour, offhand) for a missing
+> or stale Combat Power value, and add/update that Combat Power on the item accordingly.
+
+
+
+This ensures that:
+
+Items acquired before the CP system display their CP once the next run begins.
+
+Items whose stats changed (e.g. upgrades, reforges, salvage) get their CP lore updated even if
+that change happened outside a run.
+
+The lore CP and the player's computed CP never drift apart.
+
+The displayed lore CP always reflects the item's actual combat contribution at the time of the
+run, even though the run's difficulty modifier itself stays locked for the whole run (see
+section 7 — the two are independent).
+
+Like the difficulty modifier, this sync runs at run start rather than continuously reacting to
+in-run changes; it is a one-time reconciliation of item lore with the CP model.
+
+13. What Is Still Undecided
+
+All items below are now resolved. Sections 14 (stat → CP conversion) and 15 (difficulty
+modifier) give the concrete numbers; this section records each decision in place.
+
+Things still needing concrete values/rules:
+
+1. Stat → CP conversion
+
+DECIDED (baseline weights) — see section 14. 1 damage = 4 CP, 1 magic damage = 4 CP, 1 defense =
+2 CP, 1 health = 0.5 CP, 1 shield capacity = 1 CP, 1 reach = 5 CP, affix value = 1.0/vpt, crit
+folded into each item from its rarity (Option A). (Attack speed is not an item stat and carries
+no CP.) If live play later suggests different numbers, they change as tuning — not undecided.
+
+
+Resolved decisions:
+
+2. Special effects
+
+DECIDED — special effects stay untouched. Effects that don't directly correspond to a simple
+stat are not valued for CP and are left as-is; they do not receive a CP contribution from the
+special-effects branch.
+
+3. Support abilities
+
+DECIDED — support abilities stay untouched. Direct buffs do not contribute any CP at all;
+CP intentionally represents individual raw power rather than team utility, so a Support class's
+buffs are not counted toward its own CP.
+
+4. Exact multiplayer weighting
+
+DECIDED — weighting as discussed: least-powerful player contributes 100% of their CP, the next
+80%, then 60%, then 40%, and so on. This weighted-party CP is used for the run's difficulty
+modifier. (The exact continuation beyond 4 players, if ever needed, can still be confirmed.)
+
+5. Exact difficulty modifier
+
+DECIDED (structural + locked-in defaults) — see section 15. modifier = clamp((weightedPartyCP /
+referenceCP(startFloor) - 1.0) * 1.0, ±10% early, ±20% late), computed once at run start and
+locked; 75% applied to encounter complexity, 25% to enemy HP/damage. The caps keep CP from
+overriding floor progression.
+
+6. Temporary effects counted toward displayed current CP
+
+DECIDED — as discussed. Current CP reflects the gear the player is actually able to use,
+including run-exclusive gear and applicable active temporary bonuses, while the dungeon's
+CP-based difficulty modifier stays locked at run start (section 7) and is not affected by these
+temporary changes.
+
+
+
+Core rule in one sentence
+
+> Combat Power is a mathematically calculated measurement of a player's raw combat strength; it can change as their build changes, but the party's CP-based dungeon difficulty adjustment is calculated once at run start and remains fixed, while floor progression remains the primary source of difficulty.
+
+
+14. Stat → CP Conversion (Plan)
+
+CP must be derived from actual item/upgrade stats (section 3 — "CP comes from stats rather
+than arbitrary item/rareness values"). The plan below gives every stat a per-unit CP weight so
+upgrading an item naturally changes its CP with no per-upgrade manual values.
+
+What we can actually read off an item (from the codebase):
+
+- Weapon: DAMAGE (melee) or MAGIC_DAMAGE (magic weapons), optional HEALTH affix, optional REACH,
+  optional ABILITY/COST, plus UPGRADE_LEVEL and AFFIXES.
+- Armor: DEFENSE, optional HEALTH, plus UPGRADE_LEVEL and AFFIXES.
+- Shield: SHIELD_MAX (capacity), plus UPGRADE_LEVEL and AFFIXES.
+- Rarity (RARITY tag) — used only to derive the crit chance / crit multiplier bonus the item
+  grants (those are computed from rarity in PlayerState, not stored as item tags).
+
+NOT computable from item data (so deliberately absent from per-item CP):
+
+- Attack speed / fire rate — this is a FIXED per-class value (default 7 ticks, 5 for Rangers),
+  never derived from any gear stat. Items do not change swing rate, so an item cannot have
+  "DPS" or attack-speed CP.
+- Overall DPS / "max DPS" — depends on the class's fixed fire rate plus the weapon's damage and
+  crit; it is a build-level figure, not an item property. Any DPS-language in this plan refers
+  to comparing weapon damage, not a per-item attack-rate stat.
+- Move speed / max mana — only reached on the combined PlayerState, not on individual items
+  (see player-total section below). (Crit is NOT in this list — under Option A it is folded into
+  each item's CP from its rarity.)
+
+Guiding principle:
+
+> Every stat's CP contribution is proportional to how much direct combat strength it gives,
+> expressed in a common "damage-equivalent" unit. Weights are designed so a typical weapon and
+> a typical armor piece land in the same broad CP band, and so higher tiers scale up naturally.
+
+The nominal weights (tunable, but this is the starting cadence):
+
+| Stat | Source | Weight (CP per unit) | Notes |
+|---|---|---|---|
+| Weapon damage | DAMAGE tag | 4.0 | Core damage-dealer stat |
+| Magic damage | MAGIC_DAMAGE tag | 4.0 | Matched to melee damage per point |
+| Defense | DEFENSE tag | 2.0 | Reduces incoming damage |
+| Health | HEALTH affix | 0.5 | Adds survivability, less direct than damage |
+| Shield capacity | SHIELD_MAX tag | 1.0 | Adds an absorb pool |
+| Reach | REACH tag | 5.0 | Adds melee range/utility |
+| Affix value | each affix roll value | 1.0 per value point | Affixes are stored separately (AFFIXES tag) and NOT written back into the base stat tag, so base-stat CP + affix-value CP do not double count |
+
+Upgrade level is NOT a separate CP weight:
+
+- The UPGRADE workstation raises an item's core stat by +10%/level
+  (WorkstationRules.upgradeStatMult = 1.0 + 0.10 * level) and WRITES that boosted value back
+  into the item's own stat tag (GearFactory.setUpgradeLevel).
+- So the base-stat weight already captures the upgrade's strength. Adding a separate
+  "8.0 per upgrade level" line would double-count the same boosted damage/defense/etc.
+- The UPGRADE_LEVEL tag is still useful for DISPLAY ("Upgrade V") and to know the multiplier,
+  but it contributes no additional CP of its own.
+
+Crit is folded into each item's CP (Option A — DECIDED):
+
+- critChance and critMult are derived from RARITY at recompute time, not stored as item tags.
+- Effective-damage math: crit chance c and crit mult m raise average damage by factor
+  1 + c(m-1).
+- DECIDED: Option A — each item's CP includes its own rarity-derived crit contribution, applied
+  to that item's own damage (for weapons) or armor-set damage context. So an item's lore CP =
+  direct stats + its rarity crit, and the breakdown GUI shows per-item numbers that already
+  include crit.
+- Because crit is rarity-derived, it rises naturally with tier (a Mythic weapon carries more
+  crit CP than a Common one at the same base damage).
+
+How to compute a total item CP (per item):
+
+- Read the item's stat tags (DAMAGE / MAGIC_DAMAGE / DEFENSE / HEALTH / SHIELD_MAX / REACH),
+  plus UPGRADE_LEVEL and AFFIXES.
+- Multiply each stat by its weight and sum. This is the item's CP.
+- Weapons: use the item's own stat tags; the item's CP is independent of whether it is currently
+  held (the player's weapon contribution uses the best usable weapon per section 5).
+- Magic weapons: only MAGIC_DAMAGE contributes as a damage stat (their melee damage is always 1
+  and should not add CP, since its basic swings are negligible by design).
+- Armor: sum defense + health affix + upgrade-boosted stats + affixes, plus the piece's own
+  rarity-derived crit CP contribution.
+- Shields: shield capacity * 1.0 + affixes, plus the shield's rarity-derived crit CP
+  contribution.
+
+Player total CP (current build):
+
+- Weapon contribution = CP of the strongest usable weapon (section 5) — the best weapon the
+  player can actually use this run counts, NOT only the currently held one.
+- Plus ALL equipped armor (all 4 slots), each computed by the same per-item sum. This includes:
+  - Each armor piece's DEFENSE (→ CP via the defense weight), and
+  - Each armor piece's HEALTH affix (→ CP via the health weight). Health from armor rises
+    maxHearts through the reservoir, so it contributes as survivability just like a weapon's
+    health affix.
+- Plus accessories, shields, and applicable temporary bonuses (section 6), each computed by the
+  same per-item sum.
+- Plus permanent upgrade-track contributions computed from the same weights:
+  - Damage upgrade: +4.0 * level (matches the +1 damage/level).
+  - Defense upgrade: +2.0 * level.
+  - Crit upgrade: +3.0 per 1% (crit upgrade = +0.5%/level → +1.5 CP/level), folded into each
+    upgraded piece's crit CP if applicable.
+  - Speed upgrade: +40.0 * 0.03 per level → +1.2 CP/level (mobility, capped).
+  - Mana upgrade: +0.15 * 5 per level → +0.75 CP/level.
+  - Max hearts upgrade: +0.5 * 5 per level → +2.5 CP/level.
+  - Magic damage upgrade: +4.0 * level.
+
+In short, the player's total CP = best-weapon CP + armor CP (defense AND health, incl. each
+piece's crit) + accessories + shields + temporary bonuses + permanent upgrades.
+
+Calibration target:
+
+- A COMMON starter weapon (~5 damage) should land near ~20 CP (its small crit contribution
+  included).
+- A COMMON cloth armor piece (~1 defense) should land near ~2 CP.
+- Higher rarities push stats up via statMult AND carry more crit CP, so CP rises naturally with
+  tier without any rarity→CP lookup table (rare/epic/mythic items are just items with bigger
+  stat values + more crit).
+
+Still-to-confirm (kept as open, see section 13):
+
+- The exact per-1%-crit CP number is locked in at 3.0 CP per 1% (matching the crit upgrade note
+  above; crit upgrade = +0.5%/level → +1.5 CP/level).
+
+Decided within this plan:
+
+- Move speed / max mana: KEPT at their small multipliers (retained in the plan, not excluded
+  or capped further).
+
+The weights above are a starting baseline, not final numbers. They are centralized as a single
+conversion table (the "CP weights") so they can be adjusted in one place once combat math is
+validated.
+
+
+15. Difficulty Modifier (Plan)
+
+This section turns the CP value into the run's difficulty adjustment. It must satisfy the
+constraints already locked in by sections 1, 4, 5, and 7:
+
+- Floor progression is the PRIMARY difficulty driver; CP is only a gentle adjustment (section 1).
+- The modifier is computed ONCE from the weighted-party CP at run start and LOCKED for the run
+  (section 7) — the player's later CP changes never affect it.
+- It can only nudge difficulty within a bounded range — exactly ±10% on the early floors
+  (floor <= 5), widening to exactly ±20% on the later floors (floor > 5) (original design,
+  section 4) — it can never turn Floor 2 into a late-game floor or remove the challenge from a
+  deep floor.
+- It should prefer ENCOUNTER VARIETY / COMPLEXITY over raw enemy HP and damage inflation
+  (original design, section 5): more elites, more dangerous combinations, more mechanics — not
+  bigger health bars.
+
+Step 1 — Expected CP baseline per floor.
+
+Because floor depth drives difficulty, define a "reference" CP the game considers normal at a
+given floor. This is the CP a correctly-progressed solo player is expected to have when that
+floor becomes reachable.
+
+Locked-in reference-CP constants:
+
+> referenceCP(floor) = baseCP_start + (floor - 1) * cpPerFloor
+> baseCP_start = 25  (a starter kit at Floor 1)
+> cpPerFloor = 12
+
+So referenceCP(1) = 25, referenceCP(5) = 73, referenceCP(10) = 133. These fixed defaults track how
+CP actually grows per floor with the weights from section 14.
+
+Step 2 — Compute weighted party CP (locked at run start).
+
+Use the decided weighting (section 13 item 4): sort party members by their intended-run CP
+(current build, section 6), weakest first, and apply 100% / 80% / 60% / 40%...
+
+> weightedPartyCP = 100%·weakest + 80%·next + 60%·next + 40%·next (if 4 members)
+
+A solo player is just 100% of their own CP. This value is computed once and never changes
+mid-run (section 7).
+
+Step 3 — Normalize to a "CP ratio".
+
+Compare the party against the reference for the FIRST floor they enter (or the starting floor):
+
+> cpRatio = weightedPartyCP / referenceCP(startFloor)
+
+- cpRatio ≈ 1.0 → party is right on the expected curve → modifier ≈ neutral.
+- cpRatio > 1.0 → party is stronger than expected → difficulty nudges up.
+- cpRatio < 1.0 → party is weaker than expected → difficulty nudges down (never below a floor).
+
+Step 4 — Bound the modifier.
+
+Clamp the raw ratio into the allowed gentle range so CP can't override floor progression:
+
+> modifier = clamp((cpRatio - 1.0) * sensitivity, minCap, maxCap)
+
+- sensitivity = 1.0 — how fast the adjustment grows with a CP mismatch.
+- Early floors (floor <= 5): minCap/maxCap = ±0.10 (±10%).
+- Later floors (floor > 5): minCap/maxCap = ±0.20 (±20%). The caps step at the floor-5
+  threshold.
+
+The caps are the hard guarantee that Floor 2 can't become a late-game floor and a deep floor
+can't be trivialized — the floor's own design is always the dominant difficulty.
+
+Step 5 — Apply the modifier.
+
+Prefer complexity, not HP/DPS inflation (original design, section 5):
+
+- Convert `modifier` mostly into ENCOUNTER COMPLEXITY:
+  - Elite-chance: higher party CP raises the chance a combat room rolls elite enemies.
+  - Combat composition: more advanced/dangerous enemy combinations and additional enemy types
+    appearing together.
+  - Room variants: strong parties are more likely to get the harder room variants.
+  - Mechanics: more frequent enemy/boss mechanics.
+- Apply only a SMALL fraction of the modifier directly to enemy HP/damage (the existing
+  floor + party-size scaling), so strong parties feel a bit more pressure without sponges.
+  The locked-in split: 75% of the modifier goes to complexity, 25% to a bounded HP/damage
+  nudge (mirrors the "prefer variety over inflation" principle).
+
+Rebalancing the HP lever that already exists:
+
+- Enemy HP already scales with floor and party size (MobType.hpAt: baseHp·(1+floor·0.5), with a
+  party-size hpMult 1+0.3·(partySize-1)). The modifier ADDS a small, capped multiplier on top of
+  this — it does not replace floor or party scaling.
+
+Step 6 — Lock and persist.
+
+- Compute `weightedPartyCP` and `modifier` once when the run starts (DungeonInstance.startRun),
+  store them on the instance, and reuse for every floor of that run.
+- Do NOT recompute on floor generation, descend, gear gain/loss, weapon switch, or CP change
+  (section 7). The modifier is fixed.
+
+Why this satisfies the philosophy:
+
+- Strong parties get harder-but-fair encounters (complexity) instead of damage sponges, and can
+  still clear early floors fast (section 1/7 of the original doc — veterans being faster is fine).
+- Weak/mixed parties aren't punished: the weighting favors the weakest members, and the caps keep
+  the adjustment gentle, so a new player grouped with a veteran faces a fairer floor.
+- The modifier is a static, per-run number: no constant re-scaling, no CP-powered difficulty
+  whiplash, floor progression stays the main curve.
+
+Locked-in default values (concrete, not left to tune later):
+
+- Reference-CP curve: baseCP_start = 25, cpPerFloor = 12.
+- Sensitivity = 1.0.
+- Caps: exactly ±0.10 (±10%) on the early floors (floor <= 5), widening to exactly ±0.20 (±20%)
+  on the late floors (floor > 5). Caps step at the floor-5 threshold rather than sliding smoothly.
+- Complexity-vs-HP split: exactly 75% of the modifier goes to encounter complexity
+  (elite chance, combos, room variants, mechanics), 25% to a bounded enemy HP/damage nudge.
+
+These are fixed defaults. If live play later shows they need adjustment, they change like any
+tuning decision — but they are not left undecided here.
