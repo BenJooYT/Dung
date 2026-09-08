@@ -68,7 +68,11 @@ public final class DummyManager implements Listener {
      *  to dummies.yml so offline servers keep rendering known skins with no route to Mojang. */
     private final Map<String, com.destroystokyo.paper.profile.ProfileProperty> cachedTextures =
             new java.util.concurrent.ConcurrentHashMap<>();
-    /** Packet-based true player models (only functional when ProtocolLib is installed). */
+    /** Packet-based true player models (only functional when ProtocolLib is installed).
+     *  Null when ProtocolLib is absent — every use site null-guards, and dummies fall back to
+     *  skinned-head stands. Never constructed without ProtocolLib: merely LINKING
+     *  FakePlayerRenderer (verifying its packet methods) needs ProtocolLib classes, so even a
+     *  guarded constructor call would throw NoClassDefFoundError on servers without it. */
     private final FakePlayerRenderer renderer;
 
     private record Ref(ArmorStand stand, Interaction interaction, TextDisplay display) {
@@ -77,12 +81,32 @@ public final class DummyManager implements Listener {
     public DummyManager(Dung plugin) {
         this.plugin = plugin;
         this.file = new File(plugin.getDataFolder(), "dummies.yml");
-        this.renderer = new FakePlayerRenderer(plugin);
+        this.renderer = createRenderer(plugin);
         // Fake players must re-appear for late joiners — renderer self-registers its join listener.
-        if (renderer.available()) {
+        if (renderer != null && renderer.available()) {
             Bukkit.getPluginManager().registerEvents(renderer, plugin);
         }
         // loadAll() is deferred until worlds exist — called from onEnable 1 tick later.
+    }
+
+    /**
+     * Build the packet renderer only when ProtocolLib is actually present. The presence check
+     * touches no ProtocolLib classes (a bare PluginManager lookup), so on servers without it
+     * FakePlayerRenderer is never even linked — its verification alone would throw
+     * NoClassDefFoundError and disable the whole plugin during onEnable.
+     */
+    private static FakePlayerRenderer createRenderer(Dung plugin) {
+        if (Bukkit.getPluginManager().getPlugin("ProtocolLib") == null) {
+            plugin.getLogger().warning("ProtocolLib not found — dummy avatars fall back to skinned-head stands.");
+            return null;
+        }
+        try {
+            return new FakePlayerRenderer(plugin);
+        } catch (Throwable t) {
+            plugin.getLogger().warning("ProtocolLib unusable (" + t.getClass().getSimpleName()
+                    + ") — dummy avatars fall back to skinned-head stands.");
+            return null;
+        }
     }
 
     // ==================== CREATION / REMOVAL ====================
@@ -222,12 +246,12 @@ public final class DummyManager implements Listener {
                     // player model shows. Falls back to a visible skinned-head stand when
                     // ProtocolLib is absent or its packets are incompatible with this server.
                     Location loc = new Location(Bukkit.getWorld(d.worldName), d.x, d.y, d.z, d.yaw, d.pitch);
-                    if (renderer.show(d, loc, name, resolved)) {
+                    if (renderer != null && renderer.show(d, loc, name, resolved)) {
                         ref.stand().setVisible(false);
                         ref.stand().setHelmet(null);
                         setDisplayLift(ref.display(), AVATAR_TAG_LIFT); // float above the model
                     } else {
-                        renderer.hide(d); // drop any half-sent fake-player state
+                        if (renderer != null) renderer.hide(d); // drop any half-sent fake-player state
                         applyAvatar(ref.stand(), resolved, true);
                         setDisplayLift(ref.display(), NAME_TAG_LIFT);
                     }
@@ -386,7 +410,7 @@ public final class DummyManager implements Listener {
     }
 
     private void despawn(Dummy d) {
-        renderer.hide(d); // remove any client-side fake player model first
+        if (renderer != null) renderer.hide(d); // remove any client-side fake player model first
         Ref ref = refs.remove(d);
         if (ref == null) return;
         for (Entity e : new Entity[]{ref.display(), ref.interaction(), ref.stand()}) {
@@ -432,7 +456,7 @@ public final class DummyManager implements Listener {
      * true player models. Profile caching makes repeated attempts cheap.
      */
     public void refreshAvatars(World w) {
-        if (!renderer.available() || w == null) return;
+        if (renderer == null || !renderer.available() || w == null) return;
         boolean anyFallback = false;
         for (Dummy d : dummies) {
             if (d.avatar == null || d.avatar.isEmpty()) continue;
@@ -493,7 +517,7 @@ public final class DummyManager implements Listener {
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (!p.isOnline()) return;
             ensureSpawned();
-            renderer.resendTo(p);
+            if (renderer != null) renderer.resendTo(p);
             refreshAvatars(p.getWorld());
         });
     }
