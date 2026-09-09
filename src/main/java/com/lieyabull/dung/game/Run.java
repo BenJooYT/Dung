@@ -61,14 +61,16 @@ public final class Run {
 
     // ---------- Combat Power difficulty lock (design section 15) ----------
     // Computed once at run start from the weighted party CP and never recalculated mid-run.
-    /** Weighted party CP at run start (100%/80%/60%/40% weakest-first). */
+    /** Weighted party CP at run start (100%/90%/80%/64% weakest-first). */
     public double cpWeighted = 0;
     /** Locked difficulty modifier, clamped to +-0.10 early / +-0.20 late. */
     public double cpModifier = 0;
-    /** Encounter-complexity share (75% of the modifier): elite chance + composition bias. */
+    /** Encounter-complexity share (tight leash, elite chance hard-capped at 25%/room). */
     public double cpComplexity = 0;
-    /** Bounded enemy HP/damage share (25% of the modifier). */
-    public double cpHpDmg = 0;
+    /** Enemy damage share (middle leash). */
+    public double cpDmg = 0;
+    /** Enemy health share (widest leash, allowed outside the elite cap). */
+    public double cpHp = 0;
     /** True once the modifier has been locked at run start. */
     public boolean cpLocked = false;
 }

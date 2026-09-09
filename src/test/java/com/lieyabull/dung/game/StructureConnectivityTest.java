@@ -32,8 +32,10 @@ class StructureConnectivityTest {
     private static final class FakeWorld {
         final Map<Long, Material> grid = new HashMap<>();
         final World world;
+        final Material outside;
 
-        FakeWorld() {
+        FakeWorld(Material outside) {
+            this.outside = outside;
             Map<Long, Block> blocks = new HashMap<>();
             world = (World) Proxy.newProxyInstance(StructureConnectivityTest.class.getClassLoader(),
                     new Class<?>[]{World.class},
@@ -45,7 +47,7 @@ class StructureConnectivityTest {
                                     new Class<?>[]{Block.class},
                                     (p2, m2, a2) -> {
                                         if (m2.getName().equals("getType")) {
-                                            return grid.getOrDefault(k, Material.STONE);
+                                            return grid.getOrDefault(k, outside);
                                         }
                                         if (m2.getName().equals("setType")) {
                                             grid.put(k, (Material) a2[0]);
@@ -69,7 +71,7 @@ class StructureConnectivityTest {
         }
 
         Material at(int x, int y, int z) {
-            return grid.getOrDefault(key(x, y, z), Material.STONE);
+            return grid.getOrDefault(key(x, y, z), outside);
         }
 
         private static long key(int x, int y, int z) {
@@ -107,7 +109,7 @@ class StructureConnectivityTest {
 
     private static final int[][] DIRS = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
 
-    private static boolean connected(FakeWorld fw, int[] a, int[] b) {
+    private static boolean connected(FakeWorld fw, int[] a, int[] b, int[] bounds) {
         ArrayDeque<int[]> q = new ArrayDeque<>();
         Set<Long> seen = new HashSet<>();
         seen.add(k(a[0], a[1], a[2]));
@@ -120,6 +122,7 @@ class StructureConnectivityTest {
             for (int[] d : DIRS) {
                 int nx = p[0] + d[0], ny = p[1] + d[1], nz = p[2] + d[2];
                 if (ny < BASE_Y || ny > BASE_Y + 8) continue;
+                if (nx < bounds[0] || nx > bounds[1] || nz < bounds[2] || nz > bounds[3]) continue;
                 if (fw.at(nx, ny, nz) != Material.AIR) continue;
                 if (seen.add(k(nx, ny, nz))) q.add(new int[]{nx, ny, nz});
             }
@@ -131,14 +134,23 @@ class StructureConnectivityTest {
         return ((long) (x + 2000) << 42) | ((long) (y + 2000) << 21) | (z + 2000);
     }
 
-    private static void assertFloorConnected(long seed, int tier, int floorIndex, int roomsPerFloor,
+    private static final class BuiltFloor {
+        final Floor f;
+        final int spacing;
+        final FakeWorld fw;
+
+        BuiltFloor(Floor f, int spacing, FakeWorld fw) {
+            this.f = f;
+            this.spacing = spacing;
+            this.fw = fw;
+        }
+    }
+
+    private static Floor generateFloor(long seed, int tier, int floorIndex, int roomsPerFloor,
             boolean allStructures) {
-        int spacing = 25 + 2 * tier + new Random(seed).nextInt(4);
-        int corridorHalf = RoomGen.corridorHalfFor(tier);
         FloorGenerator gen = new FloorGenerator(new Random(seed), 9, 9, roomsPerFloor, floorIndex);
         Floor f = gen.generate();
         Random rnd = new Random(seed * 31 + tier);
-        FakeWorld fw = new FakeWorld();
         for (Floor.RoomNode n : f.rooms()) {
             if (n.type == RoomType.SECRET || n.type == RoomType.LOCKED) continue;
             if (!allStructures && n.type == RoomType.SHOP) continue;
@@ -152,6 +164,11 @@ class StructureConnectivityTest {
         for (Floor.RoomNode n : f.rooms()) {
             if (n.structure == null) RoomGen.scaleToTier(n, tier);
         }
+        return f;
+    }
+
+    private static BuiltFloor buildFloor(Floor f, int spacing, int corridorHalf, Material outside) {
+        FakeWorld fw = new FakeWorld(outside);
         for (Floor.RoomNode n : f.rooms()) {
             if (n.structure == null) continue;
             RoomBounds tot = n.structure.total();
@@ -165,7 +182,27 @@ class StructureConnectivityTest {
             }
         }
         DungeonInstance.carveStructureDoorsStatic(fw.world, f, BASE_Y, spacing, 0, 0);
-        DungeonInstance.carveStructureCorridorsStatic(fw.world, f, BASE_Y, spacing, 0, 0);
+        DungeonInstance.carveStructureCorridorsStatic(fw.world, f, BASE_Y, spacing, 0, 0,
+                corridorHalf);
+        return new BuiltFloor(f, spacing, fw);
+    }
+
+    private static void assertFloorConnected(long seed, int tier, int floorIndex, int roomsPerFloor,
+            boolean allStructures) {
+        int spacing = 25 + 2 * tier + new Random(seed).nextInt(4);
+        int corridorHalf = RoomGen.corridorHalfFor(tier);
+        Floor f = generateFloor(seed, tier, floorIndex, roomsPerFloor, allStructures);
+        BuiltFloor stone = buildFloor(f, spacing, corridorHalf, Material.STONE);
+        BuiltFloor air = buildFloor(f, spacing, corridorHalf, Material.AIR);
+        int minBX = Integer.MAX_VALUE, maxBX = Integer.MIN_VALUE;
+        int minBZ = Integer.MAX_VALUE, maxBZ = Integer.MIN_VALUE;
+        for (Floor.RoomNode n : f.rooms()) {
+            minBX = Math.min(minBX, n.x * spacing);
+            maxBX = Math.max(maxBX, n.x * spacing + 30);
+            minBZ = Math.min(minBZ, n.z * spacing);
+            maxBZ = Math.max(maxBZ, n.z * spacing + 30);
+        }
+        int[] bounds = {minBX - 20, maxBX + 20, minBZ - 20, maxBZ + 20};
         for (Floor.RoomNode n : f.rooms()) {
             if (n.type == RoomType.SECRET) continue;
             for (int d = 0; d < 4; d++) {
@@ -175,11 +212,41 @@ class StructureConnectivityTest {
                         "seed " + seed + " tier " + tier + " floor " + floorIndex
                                 + ": door leads nowhere from (" + n.x + "," + n.z + ") dir " + d);
                 if (m.type == RoomType.SECRET) continue;
-                assertTrue(connected(fw, centerOf(fw, n, spacing), centerOf(fw, m, spacing)),
+                assertTrue(connected(stone.fw, centerOf(stone.fw, n, spacing),
+                        centerOf(stone.fw, m, spacing), bounds),
                         "seed " + seed + " tier " + tier + " floor " + floorIndex
                                 + ": no walkable path (" + n.x + "," + n.z + ") " + n.type
                                 + " -> (" + m.x + "," + m.z + ") " + m.type + " dir " + d);
+                assertCorridorWalled(air.fw, n, m, d, spacing, seed, tier, floorIndex);
             }
+        }
+    }
+
+    private static void assertCorridorWalled(FakeWorld fw, Floor.RoomNode n, Floor.RoomNode m,
+            int d, int spacing, long seed, int tier, int floorIndex) {
+        boolean horiz = d == 1 || d == 3;
+        int perpC = horiz ? n.z * spacing + RoomGen.PERP_CENTER : n.x * spacing + RoomGen.PERP_CENTER;
+        int nFoot = n.structure != null
+                ? (horiz ? n.structure.total().width() : n.structure.total().depth())
+                : (horiz ? n.sizeW : n.sizeH) + 2 * RoomGen.WALL;
+        int mFoot = m.structure != null
+                ? (horiz ? m.structure.total().width() : m.structure.total().depth())
+                : (horiz ? m.sizeW : m.sizeH) + 2 * RoomGen.WALL;
+        int nBase = horiz ? n.x * spacing : n.z * spacing;
+        int mBase = horiz ? m.x * spacing : m.z * spacing;
+        int nWall = nBase + ((d == 1 || d == 2) ? nFoot - 1 : 0);
+        int mWall = mBase + ((d == 1 || d == 2) ? 0 : mFoot - 1);
+        int lo = Math.min(nWall, mWall) + 1;
+        int hi = Math.max(nWall, mWall) - 1;
+        if (hi <= lo + 1) return;
+        int ax = (lo + hi) / 2;
+        String ctx = "seed " + seed + " tier " + tier + " floor " + floorIndex
+                + ": corridor wall missing (" + n.x + "," + n.z + ") -> (" + m.x + "," + m.z + ")";
+        for (int off : new int[]{-2, 2}) {
+            int px = horiz ? ax : perpC + off;
+            int pz = horiz ? perpC + off : ax;
+            assertTrue(fw.at(px, BASE_Y + 1, pz) != Material.AIR, ctx + " at y+1 off " + off);
+            assertTrue(fw.at(px, BASE_Y + 2, pz) != Material.AIR, ctx + " at y+2 off " + off);
         }
     }
 

@@ -163,20 +163,20 @@ public final class GrovekeeperController {
     }
 
     public GrovekeeperController(World w, Location center, int floor, Player target, Dung plugin, int partySize, Runnable onDefeated) {
-        this(w, center, floor, target, plugin, partySize, onDefeated, 0.0);
+        this(w, center, floor, target, plugin, partySize, onDefeated, 0.0, 0.0);
     }
 
-    /** Grovekeeper with party-size HP scaling, a defeat callback, and the CP locked HP/damage
-     *  nudge (§15 25% share) applied to its max HP and all of its attacks. */
+    /** Grovekeeper with party-size HP scaling, a defeat callback, and the CP locked health/damage
+     *  shares (§15) applied to its max HP and all of its attacks respectively. */
     public GrovekeeperController(World w, Location center, int floor, Player target, Dung plugin, int partySize,
-                                 Runnable onDefeated, double cpHpDmg) {
+                                 Runnable onDefeated, double cpHp, double cpDmg) {
         this.world = w;
         this.floor = floor;
         this.plugin = plugin;
         this.onDefeated = onDefeated;
-        this.dmgMult = 1 + cpHpDmg;
+        this.dmgMult = 1 + cpDmg;
         this.primary = target;
-        this.maxHp = (60 + floor * 25) * Math.max(1, partySize) * (1 + cpHpDmg);
+        this.maxHp = (60 + floor * 25) * Math.max(1, partySize) * (1 + cpHp);
         this.hp = maxHp;
         this.boss = w.spawnEntity(center, EntityType.RAVAGER);
         boss.setPersistent(true);

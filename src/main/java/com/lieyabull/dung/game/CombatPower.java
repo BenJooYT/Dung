@@ -24,11 +24,12 @@ import java.util.Map;
  *       reach 5.0, affix value 1.0/point, crit 3.0 per 1% folded into each item from its rarity
  *       (Option A). Attack speed is not an item stat and carries no CP. Upgrade level is not a
  *       separate weight (the +10%/level boost is already folded into the stat tag).</li>
- *   <li>Player total = best usable weapon + all armor + shields + other gear + permanent
+ *   <li>Player total = best usable weapon + all armor + equipped shield + other gear + permanent
  *       upgrade tracks + shop tonics. Special effects and support buffs contribute nothing.</li>
  *   <li>Difficulty modifier = clamp((weightedPartyCP / referenceCP(startFloor) - 1) * 1.0,
- *       +-0.10 early / +-0.20 late), computed once at run start and locked; 75% encounter
- *       complexity, 25% enemy HP/damage nudge.</li>
+ *       +-0.10 early / +-0.20 late), computed once at run start and locked; the raw mismatch
+ *       then feeds three independently capped shares: tight encounter complexity (elite chance
+ *       hard-capped at 25%/room), middle enemy damage, wide enemy health.</li>
  * </ul>
  *
  * <p>All numeric methods that take only primitives/Rarity are pure and unit-testable without a
@@ -59,9 +60,9 @@ public final class CombatPower {
     // ---------- Difficulty modifier constants (section 15, locked defaults) ----------
 
     /** Reference CP of a correctly-progressed solo player at Floor 1. */
-    public static final double REF_CP_START = 25.0;
+    public static final double REF_CP_START = 30.0;
     /** Expected CP growth per floor. referenceCP(floor) = REF_CP_START + (floor-1)*CP_PER_FLOOR. */
-    public static final double CP_PER_FLOOR = 12.0;
+    public static final double CP_PER_FLOOR = 14.4;
     /** How fast the adjustment grows with a CP mismatch. */
     public static final double SENSITIVITY = 1.0;
     /** Cap for floors 1-5: CP can nudge difficulty at most +-10%. */
@@ -72,10 +73,18 @@ public final class CombatPower {
     public static final int LATE_FLOOR = 5;
     /** Share of the modifier applied to encounter complexity (elite chance, composition). */
     public static final double COMPLEXITY_SHARE = 0.75;
-    /** Share of the modifier applied as a bounded enemy HP/damage nudge. */
-    public static final double HP_DMG_SHARE = 0.25;
-    /** Party weighting, weakest-first: 100% / 80% / 60% / 40%, then 20% steps floored at 0. */
-    public static final double[] PARTY_WEIGHTS = {1.0, 0.8, 0.6, 0.4};
+    /** Hard ceiling on the complexity share: normal-room elite injection never passes 25%/room. */
+    public static final double COMPLEXITY_CAP = 0.075;
+    /** Damage-share cap for floors 1-5. */
+    public static final double DMG_CAP_EARLY = 0.15;
+    /** Damage-share cap for floors 6+. */
+    public static final double DMG_CAP_LATE = 0.30;
+    /** Health-share cap for floors 1-5. */
+    public static final double HP_CAP_EARLY = 0.30;
+    /** Health-share cap for floors 6+. */
+    public static final double HP_CAP_LATE = 0.50;
+    /** Party weighting, weakest-first: 100% / 90% / 80% / 64%, then 20% steps floored at 0. */
+    public static final double[] PARTY_WEIGHTS = {1.0, 0.9, 0.8, 0.64};
 
     // ---------- Rarity-derived crit (mirrors PlayerState.recomputeStats) ----------
 
@@ -200,7 +209,8 @@ public final class CombatPower {
     /**
      * Current-build CP for the given inventory. Weapon contribution is the strongest usable
      * weapon anywhere in the loadout (not just the held one); armor covers all 4 slots;
-     * every shield in the inventory counts; broken items contribute nothing (mirroring
+     * only the equipped shield (hotbar slot 9) counts — spares in the bag don't inflate
+     * difficulty; broken items contribute nothing (mirroring
      * {@link PlayerState#recomputeStats}). Class passives, special effects and support buffs
      * intentionally contribute nothing — CP is raw gear + permanent-upgrade strength.
      */
@@ -214,7 +224,17 @@ public final class CombatPower {
         if (inv != null) {
             ItemStack bestStack = null;
             List<ItemStack> all = new ArrayList<>();
-            Collections.addAll(all, inv.getStorageContents());
+            ItemStack[] storage = inv.getStorageContents();
+            for (int i = 0; i < storage.length; i++) {
+                ItemStack s = storage[i];
+                if (s == null) continue;
+                all.add(s);
+                if (i != com.lieyabull.dung.game.DungeonInstance.SHIELD_SLOT) continue;
+                if (s.getType() == Material.AIR) continue;
+                if ("shield".equals(GearFactory.kindOfPublic(s)) && !GearFactory.isBroken(s)) {
+                    shields += itemCp(s);
+                }
+            }
             Collections.addAll(all, inv.getArmorContents());
             all.add(inv.getItemInOffHand());
             for (ItemStack s : all) {
@@ -232,8 +252,6 @@ public final class CombatPower {
                             bestStack = s;
                         }
                     }
-                } else if ("shield".equals(kind)) {
-                    if (!GearFactory.isBroken(s)) shields += itemCp(s);
                 } else if (GearFactory.isGear(s)
                         && !"armor".equals(kind)
                         && !"weapon".equals(kind)
@@ -292,7 +310,7 @@ public final class CombatPower {
     // ---------- Party + difficulty modifier (section 15) ----------
 
     /**
-     * Weighted party CP: sort ascending (weakest first) and apply 100%/80%/60%/40%, continuing
+     * Weighted party CP: sort ascending (weakest first) and apply 100%/90%/80%/64%, continuing
      * at 20% steps floored at 0 for larger parties. A solo player is 100% of their own CP.
      */
     public static double weightedPartyCp(List<Double> memberCp) {
@@ -318,9 +336,9 @@ public final class CombatPower {
      * floors 1-5 and +-0.20 on floors 6+. Positive = party stronger than expected.
      *
      * <p>For a party the reference is the per-member curve scaled by the SAME weights that summed
-     * the party (§13: 100/80/60/40 weakest-first) — so a party whose strongest-to-weakest members
+     * the party (§13: 100/90/80/64 weakest-first) — so a party whose strongest-to-weakest members
      * all sit ON the reference curve always lands at ratio 1.0, i.e. neutral. Dividing a weighted
-     * party sum by the bare per-member reference made every 2+ player group 1.8-2.8x "over" the
+     * party sum by the bare per-member reference made every 2+ player group 1.9-3.34x "over" the
      * reference and permanently pinned the modifier at the +cap, so section 15's "cpRatio ~= 1.0
      * means right on the expected curve" could never hold for groups.
      */
@@ -332,30 +350,45 @@ public final class CombatPower {
      *  above). Values past 4 members are capped at the four-member sum (the documented weights stop
      *  there; Dung parties cap at 4 anyway). */
     public static double difficultyModifier(double weightedCp, int startFloorOneBased, int memberCount) {
-        double ref = referenceCp(startFloorOneBased) * weightSum(memberCount);
-        if (ref <= 0) return 0.0;
-        double raw = (weightedCp / ref - 1.0) * SENSITIVITY;
+        double raw = rawMismatch(weightedCp, startFloorOneBased, memberCount);
         double cap = startFloorOneBased <= LATE_FLOOR ? CAP_EARLY : CAP_LATE;
         return Math.max(-cap, Math.min(cap, raw));
     }
 
-    /** Sum of the party weights (1.0 + 0.8 + 0.6 + 0.4 + stop) for {@code n} members. */
+    /** Uncapped mismatch ratio behind the modifier: {@code (weighted/ref - 1) * sensitivity}.
+     *  The three difficulty shares clamp this independently (tight elite leash, middle damage,
+     *  wide health) instead of sharing the headline cap. */
+    public static double rawMismatch(double weightedCp, int startFloorOneBased, int memberCount) {
+        double ref = referenceCp(startFloorOneBased) * weightSum(memberCount);
+        if (ref <= 0) return 0.0;
+        return (weightedCp / ref - 1.0) * SENSITIVITY;
+    }
+
+    /** Sum of the party weights (1.0 + 0.9 + 0.8 + 0.64 + stop) for {@code n} members. */
     private static double weightSum(int memberCount) {
         return switch (Math.max(1, memberCount)) {
             case 1 -> 1.0;
-            case 2 -> 1.8;
-            case 3 -> 2.4;
-            default -> 2.8; // 4+ members
+            case 2 -> 1.9;
+            case 3 -> 2.7;
+            default -> 3.34; // 4+ members
         };
     }
 
-    /** Encounter-complexity share of the modifier (elite chance, composition, caps). */
+    /** Encounter-complexity share: tight leash, hard-capped so elite injection never passes
+     *  25% per normal room on any floor. */
     public static double complexityOf(double modifier) {
-        return modifier * COMPLEXITY_SHARE;
+        return Math.max(-COMPLEXITY_CAP, Math.min(COMPLEXITY_CAP, modifier * COMPLEXITY_SHARE));
     }
 
-    /** Bounded enemy HP/damage share of the modifier. */
-    public static double hpDmgOf(double modifier) {
-        return modifier * HP_DMG_SHARE;
+    /** Enemy damage share: middle leash between the elite and health caps. */
+    public static double dmgOf(double raw, int startFloorOneBased) {
+        double cap = startFloorOneBased <= LATE_FLOOR ? DMG_CAP_EARLY : DMG_CAP_LATE;
+        return Math.max(-cap, Math.min(cap, raw));
+    }
+
+    /** Enemy health share: widest leash, allowed outside the elite cap. */
+    public static double hpOf(double raw, int startFloorOneBased) {
+        double cap = startFloorOneBased <= LATE_FLOOR ? HP_CAP_EARLY : HP_CAP_LATE;
+        return Math.max(-cap, Math.min(cap, raw));
     }
 }

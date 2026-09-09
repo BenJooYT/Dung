@@ -100,7 +100,7 @@ public final class GearFactory {
 
     /** Legacy-format Combat Power lore line (English creation-time lore). */
     public static String cpLine(int cp) {
-        return "§6Combat Power: §e" + cp;
+        return "◆ §e" + cp;
     }
 
     /** This item's Combat Power, rounded for display. */
@@ -108,15 +108,16 @@ public final class GearFactory {
         return (int) Math.round(com.lieyabull.dung.game.CombatPower.itemCp(s));
     }
 
-    /** True if a lore line is a Combat Power line (either UI language). */
+    /** True if a lore line is a Combat Power line (current format or either retired UI language). */
     private static boolean isCpLine(String line) {
-        return line != null && (line.startsWith("§6Combat Power: §e")
+        return line != null && (line.startsWith("◆ §e")
+                || line.startsWith("§6Combat Power: §e")
                 || line.startsWith("§6Harcierő: §e"));
     }
 
     /**
-     * Recompute this item's Combat Power line in its existing lore, preserving the line's
-     * language. Used after tag edits that don't rebuild lore (reach, magic damage, rarity
+     * Recompute this item's Combat Power line in its existing lore, migrating retired text
+     * formats to the ◆ line. Used after tag edits that don't rebuild lore (reach, magic damage, rarity
      * downgrade). If no CP line exists yet, one is inserted ahead of the ability/rarity block.
      */
     public static void refreshCpLore(ItemStack s) {
@@ -128,9 +129,7 @@ public final class GearFactory {
             for (int i = 0; i < lore.size(); i++) {
                 String line = lore.get(i);
                 if (isCpLine(line)) {
-                    int cut = line.lastIndexOf("§e");
-                    String prefix = cut >= 0 ? line.substring(0, cut + 2) : "§6Combat Power: §e";
-                    lore.set(i, prefix + cp);
+                    lore.set(i, "◆ §e" + cp);
                     done = true;
                     break;
                 }

@@ -1598,6 +1598,49 @@ tab = detailed build/run/progression).
       all 300 seeds — verified it FAILS on the old generator and passes with the fix.
 - [x] Suite 239/239 green (full re-run); live server restarted with the fix.
 
+## Iteration 69 — room-gen sealing audit: corridor dedup, wall math, detection box, side walls
+- [x] **Missing corridors (live):** `carveStructureCorridors` deduped edges with a component-wise
+      min key, so two edges sharing a room consumed one key and the second corridor never carved
+      (open doors, solid rock between). Keyed by the ordered room pair instead.
+- [x] **Sealed east/south structure doors:** wall lookup aimed one block past the real wall
+      (`B+F` instead of `B+F-1`); same correction in the `RoomGen` neighbour lookup.
+- [x] **Structure combat rooms never initializing:** `insideRoom` built the footprint from the
+      paste origin minus the rotated min corner, shifting detection up to a full room off for
+      rotated templates — `allMembersInRoom` never passed (shops worked: procedural, immune).
+      Footprint is now base-anchored and rotation-proof. Enemy random-spawn range uses the
+      template footprint for structure rooms; Grovekeeper retheme scan drops its 1-block overshoot.
+- [x] **Wall-less corridors:** structure-structure gaps got only the tube, never the side mass —
+      open air in void run worlds. Side mass now built for those pairs (same geometry as
+      procedural corridors). Default boss template raised to `BOSS_ROOM_HEIGHT` with per-room
+      carve heights (was 4-air vs 7-air arena, seal bars ate the ceiling).
+- [x] **Regression net:** new `StructureConnectivityTest` voxel-simulates the real generator +
+      real build/carve on fake worlds (stone world for walkable paths, void world for wall
+      enclosure) — 640 floors across party sizes, normal/upgrade floors, both template mixes.
+      Dedup, wall-math, and side-mass mutations each verified to FAIL the sim.
+- [x] Suite 240/240 green; live server restarted with the fix.
+
+## Iteration 70 — CP difficulty split into three capped shares + 30-based retune
+- [x] **Retune:** solo floor-1 mark 25 -> 30, growth 12 -> 14.4, party weights
+      1.0/0.8/0.6/0.4 -> 1.0/0.9/0.8/0.64 (quad floor-1 lands on 100). Starter kit (~28)
+      now reads below curve, so fresh runs ease down instead of pinning +cap elites.
+- [x] **Split shares off one locked raw ratio:** elite/complexity tight
+      (75% share hard-capped at 0.075, injection never passes 25%/room on any floor),
+      damage middle (+-0.15 early / +-0.30 late), health wide (+-0.30 early / +-0.50 late).
+      `Run.cpHpDmg` replaced by `cpHp`/`cpDmg`; bosses take both shares.
+- [x] **CP labels:** HUD, tab menu, and gear lore show a font-safe ◆ + number (both languages
+      identical); retired text formats still recognized and rewritten on refresh.
+- [x] Suite 244/244 green; live server restarted with the fix.
+
+## Iteration 71 — rarity pacing spaced out, shields: equipped-only CP
+- [x] **Faucet:** rarity unlocks were all fractional inside (0,1), so every tier opened on run
+      floor 2 with mythic at ~10.7%/roll — one mythic weapon (~300 CP) ended runs' attunement
+      on the spot. Unlocks re-spaced to whole indices (COMMON 0, UNCOMMON/RARE 1, EPIC 2,
+      LEGENDARY 3, MYTHIC 4), top-tier base chances trimmed, push slope 0.05 -> 0.03.
+- [x] **Shield CP:** breakdown summed every shield in storage/offhand, so shield-muling
+      inflated difficulty with zero combat benefit (and dumping shields eased attunement).
+      Only the equipped shield (hotbar slot 9) counts now; mock-inventory tests pin both.
+- [x] Suite 246/246 green; live server restarted with the fix.
+
 ## Build / run
 ```
 gradlew build            # compiles + jars

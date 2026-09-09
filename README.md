@@ -414,7 +414,7 @@ typos into compile errors instead of silent save incompatibility. All tags live 
 
 **`Rarity`** — SkyBlock-style enum: `COMMON`, `UNCOMMON`, `RARE`, `EPIC`, `LEGENDARY`,
 `MYTHIC`. Each carries a text color, a `statMult` (damage/defense multiplier), a `floorUnlock`
-(earliest fractional floor it may appear), and a `baseChance`.
+(earliest 0-based floor index it may appear), and a `baseChance`.
 
 **`GearFactory`** — builds rarity-colored `ItemStack`s with lore.
 

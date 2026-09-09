@@ -55,20 +55,20 @@ public final class BossController {
 
     /** Create a boss with HP scaled by party size and a callback for when it's defeated. */
     public BossController(World w, Location center, int floor, Player target, Dung plugin, int partySize, Runnable onDefeated) {
-        this(w, center, floor, target, plugin, partySize, onDefeated, 0.0);
+        this(w, center, floor, target, plugin, partySize, onDefeated, 0.0, 0.0);
     }
 
     /** Create a boss with party-size HP scaling, a defeat callback, and the CP difficulty lock's
-     *  bounded HP/damage nudge (§15 25% share; {@code cpHpDmg} is the stored multiplicand already
-     *  invested into {@code (1+mod*0.25)} by DungeonInstance, so it is applied as a +mult). */
+     *  independently capped health/damage shares (§15; each is the stored multiplicand already,
+     *  so they apply as +mults). */
     public BossController(World w, Location center, int floor, Player target, Dung plugin, int partySize,
-                          Runnable onDefeated, double cpHpDmg) {
+                          Runnable onDefeated, double cpHp, double cpDmg) {
         this.world = w;
         this.floor = floor;
         this.plugin = plugin;
         this.onDefeated = onDefeated;
-        this.dmgMult = 1 + cpHpDmg;
-        this.maxHp = (60 + floor * 25) * Math.max(1, partySize) * (1 + cpHpDmg);
+        this.dmgMult = 1 + cpDmg;
+        this.maxHp = (60 + floor * 25) * Math.max(1, partySize) * (1 + cpHp);
         this.hp = maxHp;
         this.boss = w.spawnEntity(center, EntityType.ZOGLIN);
         boss.setPersistent(true);

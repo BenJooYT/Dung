@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Pure-logic tests for {@link CombatPower} — no Bukkit server needed. Covers the locked-in
@@ -91,9 +93,9 @@ public class CombatPowerTest {
     @Test
     void weightedPartyFavorsWeakest() {
         assertEquals(100.0, CombatPower.weightedPartyCp(List.of(100.0)), 0.001);
-        // weakest 100% + next 80%: order of input must not matter.
-        assertEquals(100 + 0.8 * 200, CombatPower.weightedPartyCp(List.of(200.0, 100.0)), 0.001);
-        assertEquals(100 + 0.8 * 200 + 0.6 * 300 + 0.4 * 400,
+        // weakest 100% + next 90%: order of input must not matter.
+        assertEquals(100 + 0.9 * 200, CombatPower.weightedPartyCp(List.of(200.0, 100.0)), 0.001);
+        assertEquals(100 + 0.9 * 200 + 0.8 * 300 + 0.64 * 400,
                 CombatPower.weightedPartyCp(List.of(400.0, 100.0, 300.0, 200.0)), 0.001);
         assertEquals(0.0, CombatPower.weightedPartyCp(List.of()), 0.001);
     }
@@ -102,45 +104,53 @@ public class CombatPowerTest {
 
     @Test
     void referenceCpCurve() {
-        assertEquals(25.0, CombatPower.referenceCp(1), 0.001);
-        assertEquals(73.0, CombatPower.referenceCp(5), 0.001);
-        assertEquals(133.0, CombatPower.referenceCp(10), 0.001);
+        assertEquals(30.0, CombatPower.referenceCp(1), 0.001);
+        assertEquals(87.6, CombatPower.referenceCp(5), 0.001);
+        assertEquals(159.6, CombatPower.referenceCp(10), 0.001);
     }
 
     @Test
     void modifierIsNeutralOnCurve() {
-        assertEquals(0.0, CombatPower.difficultyModifier(25.0, 1), 0.001);
+        assertEquals(0.0, CombatPower.difficultyModifier(30.0, 1), 0.001);
     }
 
     @Test
     void modifierPartyReferenceUsesWeightSum() {
         // A party whose members all sit ON the reference curve must be neutral: its weighted sum
-        // is 1.0/1.8/2.4/2.8 x the per-member reference (100/80/60/40 weights), and the reference
+        // is 1.0/1.9/2.7/3.34 x the per-member reference (100/90/80/64 weights), and the reference
         // is scaled by the same weight sum — so ratio is always 1.0 for an on-curve group.
-        assertEquals(0.0, CombatPower.difficultyModifier(25.0 * 1.8, 1, 2), 0.0001);
-        assertEquals(0.0, CombatPower.difficultyModifier(25.0 * 2.4, 1, 3), 0.0001);
-        assertEquals(0.0, CombatPower.difficultyModifier(25.0 * 2.8, 1, 4), 0.0001);
+        assertEquals(0.0, CombatPower.difficultyModifier(30.0 * 1.9, 1, 2), 0.0001);
+        assertEquals(0.0, CombatPower.difficultyModifier(30.0 * 2.7, 1, 3), 0.0001);
+        assertEquals(0.0, CombatPower.difficultyModifier(30.0 * 3.34, 1, 4), 0.0001);
         // Solo flows through the same path (weight sum 1.0 -> bare reference).
-        assertEquals(0.0, CombatPower.difficultyModifier(25.0, 1, 1), 0.0001);
+        assertEquals(0.0, CombatPower.difficultyModifier(30.0, 1, 1), 0.0001);
     }
 
     @Test
     void modifierPartySensesOffCurveMembers() {
-        // Four members each at 30 CP (20% over curve) -> ratio 1.2, then +cap.
-        assertEquals(0.10, CombatPower.difficultyModifier(30.0 * 2.8, 1, 4), 0.001);
-        // Four members each at 20 CP (20% under curve) -> ratio 0.8, then -cap.
-        assertEquals(-0.10, CombatPower.difficultyModifier(20.0 * 2.8, 1, 4), 0.001);
+        // Four members each at 36 CP (20% over curve) -> ratio 1.2, then +cap.
+        assertEquals(0.10, CombatPower.difficultyModifier(36.0 * 3.34, 1, 4), 0.001);
+        // Four members each at 24 CP (20% under curve) -> ratio 0.8, then -cap.
+        assertEquals(-0.10, CombatPower.difficultyModifier(24.0 * 3.34, 1, 4), 0.001);
         // Below-curve pair gets the intended "fairer floor" easing, not the +cap.
-        assertEquals(-0.10, CombatPower.difficultyModifier(25.0 * 1.8 * 0.9, 1, 2), 0.001);
+        assertEquals(-0.10, CombatPower.difficultyModifier(30.0 * 1.9 * 0.9, 1, 2), 0.001);
         // Mixed pair: on-curve weakest + strong strongest is still clearly above curve.
-        assertEquals(0.10, CombatPower.difficultyModifier(25.0 + 0.8 * 60.0, 1, 2), 0.001);
+        assertEquals(0.10, CombatPower.difficultyModifier(30.0 + 0.9 * 72.0, 1, 2), 0.001);
+    }
+
+    @Test
+    void starterKitSitsBelowCurve() {
+        // Bare starter kit (~28 CP) reads below the floor-1 mark, so fresh runs ease down
+        // instead of pinning the +cap: no elite injection into normal rooms.
+        assertEquals(28.0 / 30.0 - 1.0, CombatPower.difficultyModifier(28.0, 1), 0.001);
+        assertTrue(CombatPower.complexityOf(CombatPower.difficultyModifier(28.0, 1)) < 0.05);
     }
 
     @Test
     void modifierMemberCountAboveFourCapsReference() {
         // Weighting stops at the four-member sum; 5+ members must not inflate the reference
         // further (Dung parties cap at 4 anyway).
-        assertEquals(0.0, CombatPower.difficultyModifier(25.0 * 2.8, 1, 8), 0.0001);
+        assertEquals(0.0, CombatPower.difficultyModifier(30.0 * 3.34, 1, 8), 0.0001);
     }
 
     @Test
@@ -149,7 +159,7 @@ public class CombatPowerTest {
         assertEquals(0.10, CombatPower.difficultyModifier(1000.0, 1), 0.001);
         assertEquals(-0.10, CombatPower.difficultyModifier(0.0, 1), 0.001);
         // Small mismatch passes through with sensitivity 1.0.
-        assertEquals(0.04, CombatPower.difficultyModifier(25.0 * 1.04, 1), 0.001);
+        assertEquals(0.04, CombatPower.difficultyModifier(30.0 * 1.04, 1), 0.001);
     }
 
     @Test
@@ -159,11 +169,36 @@ public class CombatPowerTest {
     }
 
     @Test
-    void modifierSplitsSeventyFiveTwentyFive() {
-        double m = 0.08;
-        assertEquals(0.06, CombatPower.complexityOf(m), 0.0001);
-        assertEquals(0.02, CombatPower.hpDmgOf(m), 0.0001);
-        assertEquals(m, CombatPower.complexityOf(m) + CombatPower.hpDmgOf(m), 0.0001);
+    void complexityShareIsHardCapped() {
+        // 75% of the modifier, but never past +-0.075: elite injection tops out at 25%/room.
+        assertEquals(0.06, CombatPower.complexityOf(0.08), 0.0001);
+        assertEquals(0.075, CombatPower.complexityOf(0.10), 0.0001);
+        assertEquals(0.075, CombatPower.complexityOf(0.20), 0.0001);
+        assertEquals(-0.075, CombatPower.complexityOf(-0.20), 0.0001);
+    }
+
+    @Test
+    void damageShareSitsBetweenEliteAndHealthCaps() {
+        assertEquals(0.08, CombatPower.dmgOf(0.08, 1), 0.0001);
+        assertEquals(0.15, CombatPower.dmgOf(1.0, 1), 0.0001);
+        assertEquals(0.30, CombatPower.dmgOf(1.0, 6), 0.0001);
+        assertEquals(-0.15, CombatPower.dmgOf(-1.0, 1), 0.0001);
+        assertEquals(-0.30, CombatPower.dmgOf(-1.0, 6), 0.0001);
+    }
+
+    @Test
+    void healthShareReachesOutsideEliteCap() {
+        assertEquals(0.08, CombatPower.hpOf(0.08, 1), 0.0001);
+        assertEquals(0.30, CombatPower.hpOf(1.0, 1), 0.0001);
+        assertEquals(0.50, CombatPower.hpOf(1.0, 6), 0.0001);
+        assertEquals(-0.30, CombatPower.hpOf(-1.0, 1), 0.0001);
+        assertEquals(-0.50, CombatPower.hpOf(-1.0, 6), 0.0001);
+    }
+
+    @Test
+    void rawMismatchIsUnclamped() {
+        assertEquals(0.04, CombatPower.rawMismatch(30.0 * 1.04, 1, 1), 0.0001);
+        assertEquals(1000.0 / 30.0 - 1.0, CombatPower.rawMismatch(1000.0, 1, 1), 0.0001);
     }
 
     // ---- breakdown ----
@@ -172,5 +207,63 @@ public class CombatPowerTest {
     void breakdownTotalIsSumOfParts() {
         CombatPower.Breakdown b = CombatPower.Breakdown.of(150, 120, 30, 0, 10, 4);
         assertEquals(314.0, b.total(), 0.001);
+    }
+
+    @Test
+    void onlyEquippedShieldCounts() {
+        org.bukkit.inventory.ItemStack bagShield = shieldMock(130);
+        org.bukkit.inventory.ItemStack equippedShield = shieldMock(60);
+        org.bukkit.inventory.ItemStack[] storage = new org.bukkit.inventory.ItemStack[36];
+        storage[0] = bagShield;
+        storage[8] = equippedShield;
+        storage[20] = bagShield;
+        org.bukkit.inventory.PlayerInventory inv = mock(org.bukkit.inventory.PlayerInventory.class);
+        when(inv.getStorageContents()).thenReturn(storage);
+        when(inv.getArmorContents()).thenReturn(new org.bukkit.inventory.ItemStack[4]);
+        when(inv.getItemInOffHand()).thenReturn(bagShield);
+        CombatPower.Breakdown b = CombatPower.playerBreakdown(inv, java.util.Map.of(), 0, 0);
+        assertEquals(60.0 + 15.0, b.shields(), 0.001);
+    }
+
+    @Test
+    void noEquippedShieldMeansNoShieldCp() {
+        org.bukkit.inventory.ItemStack bagShield = shieldMock(130);
+        org.bukkit.inventory.ItemStack[] storage = new org.bukkit.inventory.ItemStack[36];
+        storage[0] = bagShield;
+        storage[20] = bagShield;
+        org.bukkit.inventory.PlayerInventory inv = mock(org.bukkit.inventory.PlayerInventory.class);
+        when(inv.getStorageContents()).thenReturn(storage);
+        when(inv.getArmorContents()).thenReturn(new org.bukkit.inventory.ItemStack[4]);
+        when(inv.getItemInOffHand()).thenReturn(null);
+        CombatPower.Breakdown b = CombatPower.playerBreakdown(inv, java.util.Map.of(), 0, 0);
+        assertEquals(0.0, b.shields(), 0.001);
+    }
+
+    private static org.bukkit.inventory.ItemStack shieldMock(int capacity) {
+        org.bukkit.inventory.ItemStack s = mock(org.bukkit.inventory.ItemStack.class);
+        when(s.getType()).thenReturn(org.bukkit.Material.SHIELD);
+        org.bukkit.inventory.meta.ItemMeta meta = mock(org.bukkit.inventory.meta.ItemMeta.class);
+        when(s.getItemMeta()).thenReturn(meta);
+        org.bukkit.persistence.PersistentDataContainer pdc =
+                mock(org.bukkit.persistence.PersistentDataContainer.class);
+        when(meta.getPersistentDataContainer()).thenReturn(pdc);
+        when(pdc.has(org.mockito.ArgumentMatchers.any(org.bukkit.NamespacedKey.class),
+                org.mockito.ArgumentMatchers.any())).thenAnswer(invoc ->
+                ((org.bukkit.NamespacedKey) invoc.getArgument(0)).getKey()
+                        .equals(com.lieyabull.dung.items.ItemTags.GEAR));
+        when(pdc.get(org.mockito.ArgumentMatchers.any(org.bukkit.NamespacedKey.class),
+                org.mockito.ArgumentMatchers.any())).thenAnswer(invoc -> {
+            String key = ((org.bukkit.NamespacedKey) invoc.getArgument(0)).getKey();
+            Object type = invoc.getArgument(1);
+            if (type == org.bukkit.persistence.PersistentDataType.STRING) {
+                if (key.equals(com.lieyabull.dung.items.ItemTags.KIND)) return "shield";
+                if (key.equals(com.lieyabull.dung.items.ItemTags.RARITY)) return "MYTHIC";
+                return null;
+            }
+            if (type == org.bukkit.persistence.PersistentDataType.INTEGER
+                    && key.equals(com.lieyabull.dung.items.ItemTags.SHIELD_MAX)) return capacity;
+            return null;
+        });
+        return s;
     }
 }

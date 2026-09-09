@@ -75,7 +75,7 @@ public final class ItemPool {
      *  higher floors push toward the rarer tiers (uncapped, so deep floors keep improving). */
     public static Rarity rollRarity(int floor) {
         // no hard cap: deep floors should keep improving drops. push grows without bound.
-        double push = floor * 0.05;
+        double push = floor * 0.03;
         // only rarities that have unlocked at this floor may appear (COMMON always is).
         List<Rarity> eligible = new ArrayList<>();
         for (Rarity r : Rarity.values()) {

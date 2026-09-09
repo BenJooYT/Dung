@@ -150,11 +150,10 @@ public class ItemPoolTest {
 
     @Test
     void rarityDistributionAtFloor5HasExpectedRarities() {
-        // Floor 5: push = 0.25. Eligible rarities and their floorUnlock values:
-        // COMMON (0.00), UNCOMMON (0.06), RARE (0.14), EPIC (0.26), LEGENDARY (0.42)
-        // MYTHIC (0.60) is NOT eligible at floor 5 (5 < 0.60 is false, but 5 >= 0.60 is true).
-        // Actually floorUnlock is compared as: floor >= r.floorUnlock.
-        // 5 >= 0.42 -> true (LEGENDARY eligible), 5 >= 0.60 -> true (MYTHIC eligible).
+        // Floor 5: push = 0.15. Eligible rarities and their floorUnlock values:
+        // COMMON (0.0), UNCOMMON (1.0), RARE (1.0), EPIC (2.0), LEGENDARY (3.0), MYTHIC (4.0).
+        // floorUnlock is compared as: floor >= r.floorUnlock.
+        // 5 >= 3.0 -> true (LEGENDARY eligible), 5 >= 4.0 -> true (MYTHIC eligible).
         // So at floor 5, ALL rarities are eligible.
         Map<Rarity, Integer> counts = new HashMap<>();
         int samples = 10000;
@@ -177,7 +176,7 @@ public class ItemPoolTest {
 
     @Test
     void rarityDistributionAtFloor10IncludesAllRarities() {
-        // Floor 10: push = 0.50. All rarities are eligible (10 >= all floorUnlock values).
+        // Floor 10: push = 0.30. All rarities are eligible (10 >= all floorUnlock values).
         Map<Rarity, Integer> counts = new HashMap<>();
         int samples = 10000;
         for (int i = 0; i < samples; i++) {
@@ -192,7 +191,7 @@ public class ItemPoolTest {
 
     @Test
     void rarityDistributionAtFloor20IncludesMythic() {
-        // Floor 20: push = 1.0. MYTHIC (0.60) is eligible.
+        // Floor 20: push = 0.60. MYTHIC (4.0) is eligible.
         Map<Rarity, Integer> counts = new HashMap<>();
         int samples = 10000;
         for (int i = 0; i < samples; i++) {

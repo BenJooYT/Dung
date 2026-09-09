@@ -337,10 +337,12 @@ public final class DungeonInstance {
         double weighted = CombatPower.weightedPartyCp(memberCp);
         int startFloor = run.floorIndex + 1; // floorIndex is 0-based; the first floor is Floor 1
         double mod = CombatPower.difficultyModifier(weighted, startFloor, memberCp.size());
+        double raw = CombatPower.rawMismatch(weighted, startFloor, memberCp.size());
         run.cpWeighted = weighted;
         run.cpModifier = mod;
         run.cpComplexity = CombatPower.complexityOf(mod);
-        run.cpHpDmg = CombatPower.hpDmgOf(mod);
+        run.cpDmg = CombatPower.dmgOf(raw, startFloor);
+        run.cpHp = CombatPower.hpOf(raw, startFloor);
         run.cpLocked = true;
         // Lore sync (§12): reconcile every Dung item the player carries with the CP model.
         for (Player p : party.onlineMembers()) {
@@ -833,11 +835,11 @@ public final class DungeonInstance {
      *  neighbour's own corridor (also carved on that line) and the two structure doorways connect
      *  without a gap. Procedural↔procedural pairs are already handled by {@link RoomGen#build}. */
     private void carveStructureCorridors(Floor floor) {
-        carveStructureCorridorsStatic(world, floor, BASE_Y, spacing, offsetX, offsetZ);
+        carveStructureCorridorsStatic(world, floor, BASE_Y, spacing, offsetX, offsetZ, corridorHalf);
     }
 
     static void carveStructureCorridorsStatic(org.bukkit.World world, Floor floor, int baseY,
-            int spacing, int offsetX, int offsetZ) {
+            int spacing, int offsetX, int offsetZ, int corridorHalf) {
         int[] DX = {0, 1, 0, -1};
         int[] DZ = {-1, 0, 1, 0};
         Set<Long> carved = new HashSet<>();
@@ -865,7 +867,7 @@ public final class DungeonInstance {
                 int perpC = horiz ? (n.z * spacing + offsetZ + RoomGen.PERP_CENTER)
                         : (n.x * spacing + offsetX + RoomGen.PERP_CENTER);
                 for (int t = lo; t <= hi; t++) {
-                    for (int off = -1; off <= 1; off++) {
+                    for (int off = -corridorHalf; off <= corridorHalf; off++) {
                         int px = horiz ? t : (perpC + off);
                         int pz = horiz ? (perpC + off) : t;
                         setBlock(world, px, baseY, pz, Material.POLISHED_ANDESITE);
@@ -873,6 +875,16 @@ public final class DungeonInstance {
                             setBlock(world, px, y, pz, Material.AIR);
                         }
                         setBlock(world, px, baseY + airHeight + 1, pz, Material.STONE_BRICKS);
+                    }
+                }
+                for (int t = lo; t <= hi; t++) {
+                    for (int off = -corridorHalf; off <= corridorHalf; off++) {
+                        if (Math.abs(off) <= 1) continue;
+                        int px = horiz ? t : (perpC + off);
+                        int pz = horiz ? (perpC + off) : t;
+                        for (int y = baseY; y <= baseY + airHeight + 1; y++) {
+                            setBlock(world, px, y, pz, Material.STONE_BRICKS);
+                        }
                     }
                 }
             }
@@ -1128,10 +1140,12 @@ public final class DungeonInstance {
      *  without letting them block a room clear once they've strayed outside). */
     private boolean insideRoom(Location loc, Floor.RoomNode rn, double margin) {
         if (rn.structure != null) {
-            // Structure room footprint (may differ from the procedural grid shell)
+            // Structure room footprint (may differ from the procedural grid shell).
+            // The paste lands the template min corner on the room base whatever the
+            // rotation, so the footprint is base-anchored and rotation-proof.
             RoomBounds t = rn.structure.total();
-            double minX = baseX(rn) - t.minX - margin;
-            double minZ = baseZ(rn) - t.minZ - margin;
+            double minX = baseX(rn) - margin;
+            double minZ = baseZ(rn) - margin;
             double maxX = minX + t.width() + margin * 2;
             double maxZ = minZ + t.depth() + margin * 2;
             return loc.getX() >= minX && loc.getX() < maxX
@@ -1200,13 +1214,13 @@ public final class DungeonInstance {
         int baseCount = elite ? 3 : 2 + Math.min(run.floorIndex, 2);
         int count = baseCount * partySize;
         double hpMult = 1 + 0.3 * (partySize - 1);
-        // CP difficulty lock (§15): 25% of the locked modifier nudges enemy HP/damage on top of
-        // the existing floor + party-size scaling. Complexity (75%) steers composition below.
+        // CP difficulty lock (§15): independently capped health/damage shares nudge enemies
+        // on top of the existing floor + party-size scaling. Complexity steers composition below.
         double dmgMult = 1.0;
         double complexity = 0.0;
         if (run.cpLocked) {
-            hpMult *= (1 + run.cpHpDmg);
-            dmgMult = 1 + run.cpHpDmg;
+            hpMult *= (1 + run.cpHp);
+            dmgMult = 1 + run.cpDmg;
             complexity = run.cpComplexity;
         }
         MobType[] comp = composeMobs(elite, count, complexity);
@@ -1420,15 +1434,17 @@ public final class DungeonInstance {
 
     /** Place an enemy at a random walkable position inside the room, avoiding walls. */
     private Location placeRandomlyInRoom(Floor.RoomNode n) {
+        int sizeW = n.structure != null ? n.structure.total().width() - 2 * RoomGen.WALL : n.sizeW;
+        int sizeH = n.structure != null ? n.structure.total().depth() - 2 * RoomGen.WALL : n.sizeH;
         int minX = baseX(n) + RoomGen.WALL;
         int minZ = baseZ(n) + RoomGen.WALL;
-        int maxX = minX + n.sizeW - 1;
-        int maxZ = minZ + n.sizeH - 1;
+        int maxX = minX + sizeW - 1;
+        int maxZ = minZ + sizeH - 1;
         int y = BASE_Y + 1;
         // Try up to 20 random positions to find a walkable spot (not inside a wall)
         for (int attempt = 0; attempt < 20; attempt++) {
-            int x = minX + ThreadLocalRandom.current().nextInt(n.sizeW);
-            int z = minZ + ThreadLocalRandom.current().nextInt(n.sizeH);
+            int x = minX + ThreadLocalRandom.current().nextInt(sizeW);
+            int z = minZ + ThreadLocalRandom.current().nextInt(sizeH);
             Location l = new Location(world, x + 0.5, y, z + 0.5);
             Material block = world.getBlockAt(x, y, z).getType();
             Material above = world.getBlockAt(x, y + 1, z).getType();
@@ -1444,7 +1460,7 @@ public final class DungeonInstance {
             return l;
         }
         // Fallback: center of the room
-        return new Location(world, minX + n.sizeW / 2.0 + 0.5, y, minZ + n.sizeH / 2.0 + 0.5);
+        return new Location(world, minX + sizeW / 2.0 + 0.5, y, minZ + sizeH / 2.0 + 0.5);
     }
 
     private void lockDoors(Floor.RoomNode n) {
@@ -2936,10 +2952,11 @@ public final class DungeonInstance {
             if (leader == null) return;
             // Scale boss HP by party size
             int partySize = Math.max(1, party.onlineMembers().size());
-            // Locked CP difficulty nudge (§15 25% share) reaches bosses too — regular mobs already
-            // take it via hpMult/dmgMult; without this a strong party got harder trash but identical
+            // Locked CP difficulty shares reach bosses too — regular mobs already take them
+            // via hpMult/dmgMult; without this a strong party got harder trash but identical
             // bosses, silently undoing the modifier's intent for boss floors.
-            double cpHpDmg = run.cpLocked ? run.cpHpDmg : 0.0;
+            double cpHp = run.cpLocked ? run.cpHp : 0.0;
+            double cpDmg = run.cpLocked ? run.cpDmg : 0.0;
             bossRoom = curRoom;
             // Admin-forced boss type overrides the random roll
             if (forcedBossType != null) {
@@ -2953,7 +2970,7 @@ public final class DungeonInstance {
                 // Warden's deepslate lair.
                 rethemeGrovekeeperRoom(curRoom);
                 grovekeeper = new GrovekeeperController(world, roomSpawn(curRoom),
-                        run.floorIndex, leader, plugin, partySize, this::onBossDefeated, cpHpDmg);
+                        run.floorIndex, leader, plugin, partySize, this::onBossDefeated, cpHp, cpDmg);
                 for (Player p : party.onlineMembers()) {
                     if (!p.equals(leader)) grovekeeper.addViewer(p);
                 }
@@ -2963,7 +2980,7 @@ public final class DungeonInstance {
                 }
             } else {
                 boss = new BossController(world, roomSpawn(curRoom),
-                        run.floorIndex, leader, plugin, partySize, this::onBossDefeated, cpHpDmg);
+                        run.floorIndex, leader, plugin, partySize, this::onBossDefeated, cpHp, cpDmg);
                 for (Player p : party.onlineMembers()) {
                     if (!p.equals(leader)) boss.addViewer(p);
                 }
@@ -3066,8 +3083,8 @@ public final class DungeonInstance {
         int x0, x1, z0, z1, y0, y1;
         if (n.structure != null) {
             RoomBounds t = n.structure.total();
-            x0 = baseX(n); x1 = baseX(n) + (t.maxX - t.minX);
-            z0 = baseZ(n); z1 = baseZ(n) + (t.maxZ - t.minZ);
+            x0 = baseX(n); x1 = baseX(n) + t.width() - 1;
+            z0 = baseZ(n); z1 = baseZ(n) + t.depth() - 1;
             y0 = BASE_Y; y1 = BASE_Y + (t.maxY - t.minY);
         } else {
             x0 = baseX(n); x1 = baseX(n) + n.sizeW + 2 * RoomGen.WALL - 1;
