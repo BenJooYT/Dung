@@ -1520,6 +1520,41 @@ tab = detailed build/run/progression).
       crash was deterministic on PL-less servers and hidden on servers that always shipped PL.)
 - [x] **Version bump:** `build.gradle.kts` → `1.5.0`; jar builds as `Dung-1.5.0.jar`.
 
+## Iteration 65 — Combat Power difficulty defects closed (analysis → 9 fixes)
+- [x] **Party reference correction (the core defect):** the run modifier divided the weighted
+      party sum by the bare per-member reference, so any 2+ player group (weighted = 1.8–2.8× an
+      individual's curve) permanently sat the +10% cap — the §15 "correctly-progressed party sits
+      near 0" reading could never hold, and the modifier never varied for real parties. The
+      reference now scales by the same weight sum that tallies the party (100/80/60/40 →
+      1.0/1.8/2.4/2.8), so an on-curve group of any size is exactly neutral and under/over-curve
+      groups lean negative/positive. Solo path (bare reference) unchanged; 5+ members cap at the
+      4-member sum (parties cap at 4 anyway). All locked constants intact.
+- [x] **Elite injection made reachable:** the composeMobs gauntlet required complexity ≥ 0.10, but
+      max reachable complexity is 0.075 (the ±0.10 early cap × the 75% complexity share) — dead
+      code. Threshold now 0.05 with a ×10 ramp: 0% just under 0.05, exactly the documented 25% at
+      max bias.
+- [x] **Bosses honor the locked modifier:** Warden/Grovekeeper were scaled only by party size, so
+      a strong team got harder trash but identical bosses. Both controllers take an optional
+      `cpHpDmg` constructor arg (default 0.0); DungeonInstance passes the locked nudge, which
+      scales max HP and every attack (beam/slam/radial/contact/root burst/wall/poison DoT; the
+      thorn-reflect stays single-scaled via maxHp).
+- [x] **Elite 1.6× HP buff keyed to actual mob:** the injected elite in a normal room is now also
+      elite-buffed via `MobType.isElite()` instead of the room-type flag (same behavior in ELITE
+      rooms, no longer skipped for injected elites).
+- [x] **Magic-weapon upgrade no longer double-dips:** the §14 melee-vs-magic upgrade switch read
+      the *held* main hand — a player holding a weak melee stick while their magic weapon sat in a
+      hotbar slot both lost weapon CP and flipped the melee-damage upgrade on. `playerBreakdown`
+      now keys magic off the strongest usable weapon it actually counts.
+- [x] **Speed upgrade derives from one source of truth:** `PlayerState` hardcoded `spd * 0.03`;
+      now `delta(Upgrades.SPEED) / 100.0` (identical output, no drift if the track changes).
+- [x] **Tonics apply immediately:** buying a tonic mutated only the raw accumulator, so the stat
+      landed on the next *unrelated* recompute; the buy effect now calls `recomputeStats()` (and
+      refreshes the CP cache).
+- [x] **CP readout rounds:** sidebar HUD and Tab rows cast `(int)` (floor); now `Math.round`
+      (Breakdown GUI already rounded — matched everywhere).
+- [x] **Tests:** 3 new CombatPowerTest cases (weight-sum reference, off-curve sensitivity, 5+
+      member cap). Suite: **239/239 green** (was 236); full `build` passes.
+
 ## Build / run
 ```
 gradlew build            # compiles + jars

@@ -405,8 +405,8 @@ public final class ShopUI implements Listener {
             case ACTION_BUY_BOMB -> { cost = SUPPLY_BOMB_COST; icon = Material.TNT; label = clang(p, "shop.supply.bomb.name"); effect = () -> st.bombs++; }
             case ACTION_BUY_HEART -> { cost = SUPPLY_HEART_COST; icon = Material.RED_DYE; label = clang(p, "shop.supply.heart.name"); effect = () -> st.heal(8); }
             case ACTION_BUY_MANA -> { cost = SUPPLY_MANA_COST; icon = Material.LAPIS_LAZULI; label = clang(p, "shop.supply.mana.name"); effect = () -> st.mana = st.maxMana; }
-            case ACTION_BUY_DMG_TONIC -> { cost = SUPPLY_TONIC_COST; icon = Material.BLAZE_POWDER; label = clang(p, "shop.supply.dmgTonic.name"); effect = () -> st.tonicDamage += TONIC_STAT_AMOUNT; }
-            case ACTION_BUY_DEF_TONIC -> { cost = SUPPLY_TONIC_COST; icon = Material.IRON_INGOT; label = clang(p, "shop.supply.defTonic.name"); effect = () -> st.tonicDefense += TONIC_STAT_AMOUNT; }
+            case ACTION_BUY_DMG_TONIC -> { cost = SUPPLY_TONIC_COST; icon = Material.BLAZE_POWDER; label = clang(p, "shop.supply.dmgTonic.name"); effect = () -> { st.tonicDamage += TONIC_STAT_AMOUNT; st.recomputeStats(); }; }
+            case ACTION_BUY_DEF_TONIC -> { cost = SUPPLY_TONIC_COST; icon = Material.IRON_INGOT; label = clang(p, "shop.supply.defTonic.name"); effect = () -> { st.tonicDefense += TONIC_STAT_AMOUNT; st.recomputeStats(); }; }
             default -> { return; }
         }
         if (st.coins < cost) {

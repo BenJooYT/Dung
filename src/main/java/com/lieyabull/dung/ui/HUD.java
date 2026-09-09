@@ -67,7 +67,7 @@ public final class HUD {
         setLine(o, 3, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.reachSpd",
                 TextUtil.fmt(st.reach), TextUtil.fmt(st.speedMult)));
         // Combat Power (§11): cached on the PlayerState, refreshed on gear change.
-        setLine(o, 4, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.cp", (int) st.combatPower));
+        setLine(o, 4, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.cp", (int) Math.round(st.combatPower)));
         setLine(o, 5, "");
         // consumables / run
         setLine(o, 6, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.coinsLine", st.coins, st.keys));

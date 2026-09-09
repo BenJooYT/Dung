@@ -15,3 +15,6 @@ run/
 .DS_Store
 Thumbs.db
 *.log
+
+# Agent working notes (personal, not repo content)
+AGENTS.md

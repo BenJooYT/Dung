@@ -22,6 +22,7 @@ public final class BossController {
     private final Entity boss;
     private final double maxHp;
     private double hp;
+    private final double dmgMult;
     private final int floor;
     private final Dung plugin;
     private final KeyedBossBar bar;
@@ -54,11 +55,20 @@ public final class BossController {
 
     /** Create a boss with HP scaled by party size and a callback for when it's defeated. */
     public BossController(World w, Location center, int floor, Player target, Dung plugin, int partySize, Runnable onDefeated) {
+        this(w, center, floor, target, plugin, partySize, onDefeated, 0.0);
+    }
+
+    /** Create a boss with party-size HP scaling, a defeat callback, and the CP difficulty lock's
+     *  bounded HP/damage nudge (§15 25% share; {@code cpHpDmg} is the stored multiplicand already
+     *  invested into {@code (1+mod*0.25)} by DungeonInstance, so it is applied as a +mult). */
+    public BossController(World w, Location center, int floor, Player target, Dung plugin, int partySize,
+                          Runnable onDefeated, double cpHpDmg) {
         this.world = w;
         this.floor = floor;
         this.plugin = plugin;
         this.onDefeated = onDefeated;
-        this.maxHp = (60 + floor * 25) * Math.max(1, partySize);
+        this.dmgMult = 1 + cpHpDmg;
+        this.maxHp = (60 + floor * 25) * Math.max(1, partySize) * (1 + cpHpDmg);
         this.hp = maxHp;
         this.boss = w.spawnEntity(center, EntityType.ZOGLIN);
         boss.setPersistent(true);
@@ -115,7 +125,7 @@ public final class BossController {
 
         // only a small contact sting if the player walks into the boss
         if (p.getLocation().distance(center) < 1.6) {
-            com.lieyabull.dung.game.GameManager.playerHurt(p, 25 + floor * 10);
+            hurt(p, 25 + floor * 10);
         }
 
         // wait out the cooldown, then pick the next telegraphed attack
@@ -132,6 +142,11 @@ public final class BossController {
         warning = rage ? 14 : 18;
     }
 
+    /** Scale the base damage by the locked CP difficulty nudge and deal it. */
+    private void hurt(Player p, double base) {
+        com.lieyabull.dung.game.GameManager.playerHurt(p, (int) Math.round(base * dmgMult));
+    }
+
     /** Resolve the telegraphed attack once its warning ends. */
     private void fire(Player p, Location center, boolean rage) {
         switch (pending) {
@@ -143,21 +158,21 @@ public final class BossController {
                 double perp = Math.abs(px * dz - pz * dx);
                 world.spawnParticle(org.bukkit.Particle.EXPLOSION, center.clone().add(dx * 5, 1, dz * 5), 1, 1, 0, 1);
                 if (along > -1 && along < 12 && perp < 2.0) {
-                    com.lieyabull.dung.game.GameManager.playerHurt(p, (rage ? 55 : 45) + floor * 15);
+                    hurt(p, (rage ? 55 : 45) + floor * 15);
                 }
                 break;
             }
             case ATTACK_SLAM:
                 world.spawnParticle(org.bukkit.Particle.EXPLOSION, center.clone().add(0, 1, 0), 1, 1, 0, 1);
                 if (p.getLocation().distance(center) < 3.0) {
-                    com.lieyabull.dung.game.GameManager.playerHurt(p, 30 + floor * 10);
+                    hurt(p, 30 + floor * 10);
                 }
                 break;
             case ATTACK_RADIAL:
                 world.spawnParticle(org.bukkit.Particle.EXPLOSION, center.clone().add(0, 1, 0), 1, 1, 0, 1);
                 world.spawnParticle(org.bukkit.Particle.FLAME, center.clone().add(0, 1, 0), 16, 3, 0, 3, 0.1);
                 if (p.getLocation().distance(center) < 5.0) {
-                    com.lieyabull.dung.game.GameManager.playerHurt(p, 35 + floor * 12);
+                    hurt(p, 35 + floor * 12);
                 }
                 break;
         }

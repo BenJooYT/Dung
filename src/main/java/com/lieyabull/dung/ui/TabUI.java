@@ -39,7 +39,7 @@ public final class TabUI {
                     (int) (st.critChance * 100), TextUtil.fmt(st.critMult)));
             // Combat Power breakdown (§11): cached total + per-source parts.
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.cp",
-                    (int) st.combatPower, (int) st.cpWeapon, (int) st.cpArmor));
+                    (int) Math.round(st.combatPower), (int) st.cpWeapon, (int) st.cpArmor));
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.cpBreak",
                     (int) st.cpShields, (int) st.cpOther, (int) st.cpUpgrades, (int) st.cpTonics));
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.mana",

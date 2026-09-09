@@ -199,7 +199,7 @@ public final class PlayerState {
         int crit = upgrades.getOrDefault("crit", 0);
         if (crit > 0) critChance += crit * com.lieyabull.dung.meta.Upgrades.CRIT_DELTA_PCT / 100.0;
         int spd = upgrades.getOrDefault("speed", 0);
-        if (spd > 0) speedMult += spd * 0.03;
+        if (spd > 0) speedMult += spd * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.SPEED) / 100.0;
         int manaUp = upgrades.getOrDefault("mana", 0);
         if (manaUp > 0) maxMana += manaUp * com.lieyabull.dung.meta.Upgrades.delta(com.lieyabull.dung.meta.Upgrades.MANA);
     }

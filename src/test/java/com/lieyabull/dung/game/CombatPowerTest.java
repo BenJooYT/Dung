@@ -113,6 +113,37 @@ public class CombatPowerTest {
     }
 
     @Test
+    void modifierPartyReferenceUsesWeightSum() {
+        // A party whose members all sit ON the reference curve must be neutral: its weighted sum
+        // is 1.0/1.8/2.4/2.8 x the per-member reference (100/80/60/40 weights), and the reference
+        // is scaled by the same weight sum — so ratio is always 1.0 for an on-curve group.
+        assertEquals(0.0, CombatPower.difficultyModifier(25.0 * 1.8, 1, 2), 0.0001);
+        assertEquals(0.0, CombatPower.difficultyModifier(25.0 * 2.4, 1, 3), 0.0001);
+        assertEquals(0.0, CombatPower.difficultyModifier(25.0 * 2.8, 1, 4), 0.0001);
+        // Solo flows through the same path (weight sum 1.0 -> bare reference).
+        assertEquals(0.0, CombatPower.difficultyModifier(25.0, 1, 1), 0.0001);
+    }
+
+    @Test
+    void modifierPartySensesOffCurveMembers() {
+        // Four members each at 30 CP (20% over curve) -> ratio 1.2, then +cap.
+        assertEquals(0.10, CombatPower.difficultyModifier(30.0 * 2.8, 1, 4), 0.001);
+        // Four members each at 20 CP (20% under curve) -> ratio 0.8, then -cap.
+        assertEquals(-0.10, CombatPower.difficultyModifier(20.0 * 2.8, 1, 4), 0.001);
+        // Below-curve pair gets the intended "fairer floor" easing, not the +cap.
+        assertEquals(-0.10, CombatPower.difficultyModifier(25.0 * 1.8 * 0.9, 1, 2), 0.001);
+        // Mixed pair: on-curve weakest + strong strongest is still clearly above curve.
+        assertEquals(0.10, CombatPower.difficultyModifier(25.0 + 0.8 * 60.0, 1, 2), 0.001);
+    }
+
+    @Test
+    void modifierMemberCountAboveFourCapsReference() {
+        // Weighting stops at the four-member sum; 5+ members must not inflate the reference
+        // further (Dung parties cap at 4 anyway).
+        assertEquals(0.0, CombatPower.difficultyModifier(25.0 * 2.8, 1, 8), 0.0001);
+    }
+
+    @Test
     void modifierCapsEarlyAtTenPercent() {
         // Way over CP on floor 1 -> +10%, way under -> -10%.
         assertEquals(0.10, CombatPower.difficultyModifier(1000.0, 1), 0.001);

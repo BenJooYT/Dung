@@ -212,6 +212,7 @@ public final class CombatPower {
         double other = 0.0;
         boolean magicWeaponHeld = false;
         if (inv != null) {
+            ItemStack bestStack = null;
             List<ItemStack> all = new ArrayList<>();
             Collections.addAll(all, inv.getStorageContents());
             Collections.addAll(all, inv.getArmorContents());
@@ -220,7 +221,17 @@ public final class CombatPower {
                 if (s == null || s.getType() == Material.AIR) continue;
                 String kind = GearFactory.kindOfPublic(s);
                 if ("weapon".equals(kind)) {
-                    if (!GearFactory.isBroken(s)) bestWeapon = Math.max(bestWeapon, itemCp(s));
+                    // Magic is tied to the weapon actually tallying CP (the strongest usable one),
+                    // NOT whatever happens to be in the main hand — a player who swaps to a weak
+                    // melee stick while their magic weapon sits in a hotbar slot was silently
+                    // losing their weapon contribution AND flipping the melee-damage upgrade on.
+                    if (!GearFactory.isBroken(s)) {
+                        double cp = itemCp(s);
+                        if (cp > bestWeapon) {
+                            bestWeapon = cp;
+                            bestStack = s;
+                        }
+                    }
                 } else if ("shield".equals(kind)) {
                     if (!GearFactory.isBroken(s)) shields += itemCp(s);
                 } else if (GearFactory.isGear(s)
@@ -236,9 +247,7 @@ public final class CombatPower {
                     armor += itemCp(s);
                 }
             }
-            ItemStack hand = inv.getItemInMainHand();
-            magicWeaponHeld = "weapon".equals(GearFactory.kindOfPublic(hand))
-                    && intTagOf(hand, ItemTags.MAGIC_DAMAGE) > 0;
+            magicWeaponHeld = bestStack != null && intTagOf(bestStack, ItemTags.MAGIC_DAMAGE) > 0;
         }
         double up = upgradeCp(upgrades, magicWeaponHeld);
         double ton = tonicDamage * W_DAMAGE + tonicDefense * W_DEFENSE;
@@ -307,13 +316,37 @@ public final class CombatPower {
      * Locked run difficulty modifier from the weighted party CP against the reference for the
      * starting floor: {@code clamp((weighted/ref - 1) * 1.0, cap)}, where the cap is +-0.10 on
      * floors 1-5 and +-0.20 on floors 6+. Positive = party stronger than expected.
+     *
+     * <p>For a party the reference is the per-member curve scaled by the SAME weights that summed
+     * the party (§13: 100/80/60/40 weakest-first) — so a party whose strongest-to-weakest members
+     * all sit ON the reference curve always lands at ratio 1.0, i.e. neutral. Dividing a weighted
+     * party sum by the bare per-member reference made every 2+ player group 1.8-2.8x "over" the
+     * reference and permanently pinned the modifier at the +cap, so section 15's "cpRatio ~= 1.0
+     * means right on the expected curve" could never hold for groups.
      */
     public static double difficultyModifier(double weightedCp, int startFloorOneBased) {
-        double ref = referenceCp(startFloorOneBased);
+        return difficultyModifier(weightedCp, startFloorOneBased, 1);
+    }
+
+    /** Party-aware variant: {@code memberCount} scales the reference by the party weight sum (see
+     *  above). Values past 4 members are capped at the four-member sum (the documented weights stop
+     *  there; Dung parties cap at 4 anyway). */
+    public static double difficultyModifier(double weightedCp, int startFloorOneBased, int memberCount) {
+        double ref = referenceCp(startFloorOneBased) * weightSum(memberCount);
         if (ref <= 0) return 0.0;
         double raw = (weightedCp / ref - 1.0) * SENSITIVITY;
         double cap = startFloorOneBased <= LATE_FLOOR ? CAP_EARLY : CAP_LATE;
         return Math.max(-cap, Math.min(cap, raw));
+    }
+
+    /** Sum of the party weights (1.0 + 0.8 + 0.6 + 0.4 + stop) for {@code n} members. */
+    private static double weightSum(int memberCount) {
+        return switch (Math.max(1, memberCount)) {
+            case 1 -> 1.0;
+            case 2 -> 1.8;
+            case 3 -> 2.4;
+            default -> 2.8; // 4+ members
+        };
     }
 
     /** Encounter-complexity share of the modifier (elite chance, composition, caps). */

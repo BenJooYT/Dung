@@ -28,6 +28,7 @@ public final class GrovekeeperController {
     private final double maxHp;
     private double hp;
     private final int floor;
+    private final double dmgMult;
     private final Dung plugin;
     private final KeyedBossBar bar;
     private final org.bukkit.NamespacedKey barKey;
@@ -162,12 +163,20 @@ public final class GrovekeeperController {
     }
 
     public GrovekeeperController(World w, Location center, int floor, Player target, Dung plugin, int partySize, Runnable onDefeated) {
+        this(w, center, floor, target, plugin, partySize, onDefeated, 0.0);
+    }
+
+    /** Grovekeeper with party-size HP scaling, a defeat callback, and the CP locked HP/damage
+     *  nudge (§15 25% share) applied to its max HP and all of its attacks. */
+    public GrovekeeperController(World w, Location center, int floor, Player target, Dung plugin, int partySize,
+                                 Runnable onDefeated, double cpHpDmg) {
         this.world = w;
         this.floor = floor;
         this.plugin = plugin;
         this.onDefeated = onDefeated;
+        this.dmgMult = 1 + cpHpDmg;
         this.primary = target;
-        this.maxHp = (60 + floor * 25) * Math.max(1, partySize);
+        this.maxHp = (60 + floor * 25) * Math.max(1, partySize) * (1 + cpHpDmg);
         this.hp = maxHp;
         this.boss = w.spawnEntity(center, EntityType.RAVAGER);
         boss.setPersistent(true);
@@ -202,6 +211,16 @@ public final class GrovekeeperController {
         }
     }
 
+    /** Scale the base damage by the locked CP difficulty nudge and deal it. */
+    private void hurt(Player p, double base) {
+        com.lieyabull.dung.game.GameManager.playerHurt(p, (int) Math.round(base * dmgMult));
+    }
+
+    /** Same as {@link #hurt} but bypasses the player's i-frame window (poison DoT ticks). */
+    private void hurtBypass(Player p, double base) {
+        com.lieyabull.dung.game.GameManager.playerHurtBypassInvuln(p, (int) Math.round(base * dmgMult));
+    }
+
     public void tick(Player p) {
         if (hp <= 0) return;
         if (!boss.isValid()) return;
@@ -228,7 +247,7 @@ public final class GrovekeeperController {
 
         // contact sting
         if (p.getLocation().distance(center) < 1.6) {
-            com.lieyabull.dung.game.GameManager.playerHurt(p, 25 + floor * 10);
+            hurt(p, 25 + floor * 10);
         }
 
         if (attackCd > 0) { attackCd--; return; }
@@ -419,7 +438,7 @@ public final class GrovekeeperController {
         }
         world.spawnParticle(org.bukkit.Particle.ITEM, boom.clone().add(0, 1, 0), 20, 2, 1, 2, new org.bukkit.inventory.ItemStack(Material.VINE));
         world.playSound(boom, org.bukkit.Sound.ENTITY_GENERIC_EXPLODE, 1.0f, 1.0f);
-        com.lieyabull.dung.game.GameManager.playerHurt(v, rootDamage);
+        hurt(v, rootDamage);
         restoreRoots(b.cells);
         b.cells.clear();
     }
@@ -592,7 +611,7 @@ public final class GrovekeeperController {
                 org.bukkit.util.Vector vel = v.getVelocity().clone().setY(0);
                 double approach = vel.dot(toWall) + 0.06;
                 if (approach <= 0) break;
-                com.lieyabull.dung.game.GameManager.playerHurt(v, (rage ? 28 : 20) + floor * 8);
+                hurt(v, (rage ? 28 : 20) + floor * 8);
                 // Push the player away from the wall's center line (toward whichever side they came
                 // from), regardless of the wall's angle.
                 v.setVelocity(toWall.clone().multiply(-0.8).setY(0.3));
@@ -705,7 +724,7 @@ private void poisonTick(boolean rage) {
                         poisonDurations.remove(v.getUniqueId());
                         poisonAccum.remove(v.getUniqueId());
                     }
-                    com.lieyabull.dung.game.GameManager.playerHurtBypassInvuln(v, poisonTickDamage(rage));
+                    hurtBypass(v, poisonTickDamage(rage));
                 }
             }
         }

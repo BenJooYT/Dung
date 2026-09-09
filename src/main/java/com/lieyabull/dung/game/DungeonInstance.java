@@ -336,7 +336,7 @@ public final class DungeonInstance {
         }
         double weighted = CombatPower.weightedPartyCp(memberCp);
         int startFloor = run.floorIndex + 1; // floorIndex is 0-based; the first floor is Floor 1
-        double mod = CombatPower.difficultyModifier(weighted, startFloor);
+        double mod = CombatPower.difficultyModifier(weighted, startFloor, memberCp.size());
         run.cpWeighted = weighted;
         run.cpModifier = mod;
         run.cpComplexity = CombatPower.complexityOf(mod);
@@ -1184,7 +1184,9 @@ public final class DungeonInstance {
             list.add(new Enemy(world, l, mt, run.floorIndex, n.x * 100 + n.z, refPlayer, hpMult, dmgMult));
         }
         roomEnemies.put(k, list);
-        if (elite) {
+        // The composition's first slot is an elite in ELITE rooms AND for CP-complexity elites
+        // injected into normal rooms (composeMobs) — both must get the elite HP buff.
+        if (comp[0].isElite()) {
             Enemy top = list.get(0);
             top.hp = top.maxHp * 1.6;
             top.maxHp = top.hp;
@@ -1364,8 +1366,11 @@ public final class DungeonInstance {
             }
             out[i] = m;
         }
-        if (complexity >= 0.10
-                && ThreadLocalRandom.current().nextDouble() < (complexity - 0.10) * 5.0) {
+        // Elite injection into a normal room. Reachable complexity tops out at 0.075 (the +-0.10
+        // early cap × the 75% complexity share), so the 0.05 threshold with a x10 ramp yields the
+        // documented "up to 25% at max bias" without an unreachable 0.10 gate.
+        if (complexity >= 0.05
+                && ThreadLocalRandom.current().nextDouble() < (complexity - 0.05) * 10.0) {
             out[0] = ELITES[ThreadLocalRandom.current().nextInt(ELITES.length)];
         }
         return out;
@@ -2893,6 +2898,10 @@ public final class DungeonInstance {
             if (leader == null) return;
             // Scale boss HP by party size
             int partySize = Math.max(1, party.onlineMembers().size());
+            // Locked CP difficulty nudge (§15 25% share) reaches bosses too — regular mobs already
+            // take it via hpMult/dmgMult; without this a strong party got harder trash but identical
+            // bosses, silently undoing the modifier's intent for boss floors.
+            double cpHpDmg = run.cpLocked ? run.cpHpDmg : 0.0;
             bossRoom = curRoom;
             // Admin-forced boss type overrides the random roll
             if (forcedBossType != null) {
@@ -2906,7 +2915,7 @@ public final class DungeonInstance {
                 // Warden's deepslate lair.
                 rethemeGrovekeeperRoom(curRoom);
                 grovekeeper = new GrovekeeperController(world, roomSpawn(curRoom),
-                        run.floorIndex, leader, plugin, partySize, this::onBossDefeated);
+                        run.floorIndex, leader, plugin, partySize, this::onBossDefeated, cpHpDmg);
                 for (Player p : party.onlineMembers()) {
                     if (!p.equals(leader)) grovekeeper.addViewer(p);
                 }
@@ -2916,7 +2925,7 @@ public final class DungeonInstance {
                 }
             } else {
                 boss = new BossController(world, roomSpawn(curRoom),
-                        run.floorIndex, leader, plugin, partySize, this::onBossDefeated);
+                        run.floorIndex, leader, plugin, partySize, this::onBossDefeated, cpHpDmg);
                 for (Player p : party.onlineMembers()) {
                     if (!p.equals(leader)) boss.addViewer(p);
                 }
