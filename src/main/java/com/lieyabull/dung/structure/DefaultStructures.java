@@ -43,18 +43,19 @@ public final class DefaultStructures {
 
     public static List<DefaultStructure> generate() {
         List<DefaultStructure> out = new ArrayList<>();
-        out.add(box("start_room", List.of("START"), Material.SMOOTH_STONE, Material.POLISHED_DIORITE, Material.GLOWSTONE, INTERIOR));
-        out.add(box("combat_room", List.of("COMBAT"), Material.STONE_BRICKS, Material.POLISHED_ANDESITE, Material.GLOWSTONE, INTERIOR));
-        out.add(box("treasure_room", List.of("TREASURE"), Material.QUARTZ_BLOCK, Material.GOLD_BLOCK, Material.GLOWSTONE, INTERIOR));
-        out.add(box("shop_room", List.of("SHOP"), Material.OAK_PLANKS, Material.SPRUCE_PLANKS, Material.GLOWSTONE, INTERIOR));
-        out.add(box("elite_room", List.of("ELITE"), Material.NETHER_BRICKS, Material.RED_NETHER_BRICKS, Material.GLOWSTONE, INTERIOR));
-        out.add(box("boss_room", List.of("BOSS"), Material.DEEPSLATE_BRICKS, Material.POLISHED_BLACKSTONE_BRICKS, Material.SHROOMLIGHT, BOSS_INTERIOR));
+        out.add(box("start_room", List.of("START"), Material.SMOOTH_STONE, Material.POLISHED_DIORITE, Material.GLOWSTONE, INTERIOR, AIR_HEIGHT));
+        out.add(box("combat_room", List.of("COMBAT"), Material.STONE_BRICKS, Material.POLISHED_ANDESITE, Material.GLOWSTONE, INTERIOR, AIR_HEIGHT));
+        out.add(box("treasure_room", List.of("TREASURE"), Material.QUARTZ_BLOCK, Material.GOLD_BLOCK, Material.GLOWSTONE, INTERIOR, AIR_HEIGHT));
+        out.add(box("shop_room", List.of("SHOP"), Material.OAK_PLANKS, Material.SPRUCE_PLANKS, Material.GLOWSTONE, INTERIOR, AIR_HEIGHT));
+        out.add(box("elite_room", List.of("ELITE"), Material.NETHER_BRICKS, Material.RED_NETHER_BRICKS, Material.GLOWSTONE, INTERIOR, AIR_HEIGHT));
+        out.add(box("boss_room", List.of("BOSS"), Material.DEEPSLATE_BRICKS, Material.POLISHED_BLACKSTONE_BRICKS, Material.SHROOMLIGHT, BOSS_INTERIOR,
+                com.lieyabull.dung.dungeon.RoomGen.BOSS_ROOM_HEIGHT));
         return out;
     }
 
-    private static DefaultStructure box(String id, List<String> types, Material wall, Material floor, Material ceil, int interior) {
+    private static DefaultStructure box(String id, List<String> types, Material wall, Material floor, Material ceil, int interior, int airHeight) {
         int F = interior + 2;         // footprint including 1-block walls
-        int maxY = AIR_HEIGHT + 1;    // ceiling row
+        int maxY = airHeight + 1;    // ceiling row
         int mx = 1 + interior / 2;    // interior center x (wall index offset by 1)
         int mz = 1 + interior / 2;    // interior center z
 
@@ -80,7 +81,7 @@ public final class DefaultStructures {
         def.id = id;
         def.types = types;
         def.schematic = "structure.schem";
-        def.roomHeight = AIR_HEIGHT;
+        def.roomHeight = airHeight;
         def.entryHeight = 3;
         def.exitHeight = 3;
         def.bounds.add(new RoomBounds(0, 0, 0, F - 1, maxY, F - 1));

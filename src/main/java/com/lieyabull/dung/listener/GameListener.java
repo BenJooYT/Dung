@@ -40,6 +40,7 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
@@ -227,6 +228,16 @@ public final class GameListener implements Listener {
         DungeonInstance di = instanceOf(p);
         if (di == null) return;
         di.onPlayerMoved(p, p.getLocation());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onTeleport(PlayerTeleportEvent e) {
+        Player p = e.getPlayer();
+        DungeonInstance di = instanceOf(p);
+        if (di == null) return;
+        Location to = e.getTo();
+        if (to == null) return;
+        di.onPlayerMoved(p, to);
     }
 
     /** Handle death cleanly for the run's player so they never strand on the vanilla screen.

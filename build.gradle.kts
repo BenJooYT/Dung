@@ -34,6 +34,7 @@ dependencies {
     // 7.3.x targets Java 21 (7.4.x requires JVM 25+, which the server's Java 21 toolchain can't use).
     compileOnly("com.sk89q.worldedit:worldedit-bukkit:7.3.19")
     testCompileOnly("com.sk89q.worldedit:worldedit-bukkit:7.3.19")
+    testRuntimeOnly("com.sk89q.worldedit:worldedit-bukkit:7.3.19")
     // ProtocolLib (optional at runtime — softdepend): used ONLY for packet-based fake-player
     // dummy avatars. All usage is isolated in FakePlayerRenderer with a graceful fallback.
     // RUNTIME: run/plugins holds a 5.5.0-SNAPSHOT dev build (GitHub 'dev-build' release) —
@@ -49,6 +50,7 @@ tasks {
     }
     test {
         useJUnitPlatform()
+        maxHeapSize = "1536m"
     }
     processResources {
         filesMatching("plugin.yml") {

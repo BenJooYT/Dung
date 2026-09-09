@@ -1,0 +1,241 @@
+VINECALLER AND SHAMAN - ENEMY DESIGN NOTES
+
+These are normal enemies, not bosses.
+
+The purpose of both enemies is to add tactical decisions and room mechanics rather than simply having higher stats.
+
+
+==================================================
+VINECALLER
+==================================================
+
+ROLE
+
+Battlefield-control and timing enemy.
+
+The Vinecaller should punish players who mindlessly stay in melee range and spam attacks.
+
+Its primary mechanic is a temporary Thorn Shield.
+
+
+THORN SHIELD
+
+Duration:
+Approximately 4 seconds.
+
+Visual telegraph:
+The Vinecaller creates a clearly visible circular particle effect around itself, with particles rising upward to make the shield obvious.
+
+The shield should be visually distinct enough that players immediately understand:
+
+"Attacking this enemy right now is dangerous."
+
+
+DAMAGE BEHAVIOR WHILE SHIELDED
+
+The Vinecaller is NOT fully invulnerable.
+
+While the shield is active:
+
+- The Vinecaller only receives approximately 20-25% of the original incoming damage.
+- The attacker receives reflected damage equal to approximately 50% of the damage they dealt.
+- Critical hits are included in the calculation.
+
+Example:
+
+If a player lands a critical hit dealing 100 damage:
+
+- The Vinecaller receives approximately 20-25 damage.
+- The player receives approximately 50 reflected damage.
+
+This makes attacking the shield a deliberate risk/reward decision.
+
+The player can:
+- Stop attacking and wait.
+- Attack anyway and accept the reflected damage.
+- Potentially use the reduced damage window strategically.
+
+The reflected damage should be handled consistently with the existing combat system and should respect intended defensive calculations.
+
+
+KNOCKBACK
+
+When a player attacks the Vinecaller while Thorn Shield is active:
+
+- The player should receive strong knockback.
+- The knockback should make repeatedly standing directly beside the Vinecaller difficult.
+- The effect should feel like hitting a dangerous thorn barrier.
+
+This should not be unavoidable damage without feedback. The shield must be clearly telegraphed.
+
+
+SHIELD EXPIRATION - THORN BURST
+
+When the 4-second Thorn Shield expires:
+
+- The shield visually breaks.
+- Thorn projectiles are fired outward.
+- Fire approximately 4 to 6 projectiles.
+- The projectiles should be distributed evenly around the Vinecaller in a circular pattern.
+- Each projectile travels in a straight direction.
+- Players hit by a thorn projectile take damage.
+
+The Thorn Burst should be dodgeable.
+
+The expiration should have a clear visual and/or audio indication so players who are paying attention can react.
+
+After the shield expires, the Vinecaller should have a cooldown before it can activate Thorn Shield again.
+
+This creates a combat rhythm:
+
+1. Shield warning.
+2. Dangerous 4-second shield period.
+3. Thorn Burst.
+4. Vulnerable period.
+5. Shield becomes available again later.
+
+
+VINECALLER DESIGN INTENT
+
+The Vinecaller is not meant to be a boss or a major room-wide controller.
+
+Its purpose is to create a timing and positioning problem inside normal encounters.
+
+Players should learn:
+
+- Do not blindly spam melee attacks.
+- Watch enemy states.
+- Decide whether reflected damage is worth continuing to attack.
+- Move away when the Thorn Burst is about to occur.
+
+
+==================================================
+SHAMAN
+==================================================
+
+ROLE
+
+Support, disruption, and target-priority enemy.
+
+The Shaman should be an enemy that players actively need to consider instead of simply ignoring until every other enemy is dead.
+
+
+ALLY SUPPORT
+
+The Shaman can provide a moderate buff to nearby living enemies.
+
+The buff should be visually communicated, such as through particles or another clear effect.
+
+Possible support effects can include moderate improvements to enemy effectiveness, but the Shaman should not simply make nearby enemies overwhelmingly stronger.
+
+The purpose is to create target priority:
+
+"Do we kill the Shaman first, or do we deal with the other enemies?"
+
+
+DEFENSE CURSE
+
+The Shaman should have an offensive curse targeting players.
+
+The curse reduces player defense by a percentage rather than subtracting a fixed amount.
+
+Example concept:
+
+- Player is hit by the curse.
+- Their current effective defense is reduced by a percentage for a limited duration.
+- The effect then expires.
+
+Using a percentage makes the effect relevant across different stages of progression.
+
+It can affect both weak and highly progressed players without relying on one fixed defense value.
+
+The exact percentage and duration should be balanced later.
+
+The curse should have a clear visual indication and should not be confusingly hidden from the player.
+
+
+ON-DEATH TOTEM
+
+When the Shaman dies, it should spawn a temporary enemy-supporting Totem somewhere appropriate in the current room.
+
+The Totem is an entity/mechanic, not a collectible item.
+
+When created:
+
+- It selects approximately 2 or 3 nearby living enemies.
+- Those selected enemies become invincible.
+- A visible line/beam of particles connects the Totem to every protected enemy.
+- Protected enemies should have an additional visual indicator if needed.
+
+The particle connections must make it immediately obvious which enemies are currently invincible and why.
+
+
+TOTEM HEALTH AND DEFENSE
+
+The Totem should:
+
+- Have a substantial HP pool.
+- Have no special defensive mechanic.
+- Not block or negate incoming attacks.
+- Simply be damageable until destroyed.
+
+This means the player cannot ignore it forever, but it also does not become mechanically frustrating to attack.
+
+
+TOTEM DESTRUCTION
+
+When the Totem is destroyed:
+
+- All linked enemies immediately lose invincibility.
+- The particle links disappear.
+- Any Totem-related temporary state is cleaned up.
+
+If a linked enemy dies through another mechanic or disappears:
+
+- Its link should be safely removed.
+
+The Totem should also safely clean itself up when:
+- The room ends.
+- The encounter ends.
+- The dungeon/run ends.
+- The world or room becomes unavailable.
+
+
+SHAMAN DESIGN INTENT
+
+The Shaman should create a target-priority decision.
+
+While alive, it:
+- Supports nearby enemies.
+- Applies a percentage-based defense curse to players.
+
+When killed, it:
+- Creates a temporary Totem.
+- The Totem protects 2-3 remaining enemies with invincibility.
+- Players must decide whether to immediately destroy the Totem.
+
+This means killing the Shaman first is useful, but can also temporarily change the encounter instead of simply removing the support enemy.
+
+
+==================================================
+ENEMY SYNERGY
+==================================================
+
+The Vinecaller and Shaman should work well in the same room without being designed as a mandatory pair.
+
+Vinecaller:
+Controls timing around attacking and positioning.
+
+Shaman:
+Controls target priority and temporarily supports other enemies.
+
+Together, they can create encounters where players need to:
+
+- Decide which enemy to attack first.
+- Watch for enemy states.
+- Manage reflected damage.
+- Dodge Thorn Bursts.
+- React to defense curses.
+- Destroy Totems when enemies become invincible.
+
+The goal is to make normal rooms more tactical without turning these enemies into bosses or relying on inflated health and damage values.

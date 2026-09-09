@@ -231,13 +231,20 @@ public final class FloorGenerator {
             combat.remove(upgrade);
         }
         // LOCKED: place 1-2 locked rooms on dead-end branches (rooms with only 1 door).
-        // Pick from remaining combat rooms that are dead-ends and not the boss.
+        // Pick from remaining combat rooms that are dead-ends and not the boss. Dead-ends
+        // adjacent to START are excluded: locking one would iron-bar the start room's only
+        // exit and trap the party with no key.
         List<Floor.RoomNode> deadEnds = new ArrayList<>();
         for (Floor.RoomNode n : f.rooms()) {
             if (n.type != RoomType.COMBAT || n == boss) continue;
             int doors = 0;
             for (boolean d : n.doors) if (d) doors++;
-            if (doors == 1) deadEnds.add(n);
+            if (doors != 1) continue;
+            boolean adjacentToStart = false;
+            for (int d = 0; d < 4; d++) {
+                if (f.at(n.x + DX[d], n.z + DZ[d]) == start) { adjacentToStart = true; break; }
+            }
+            if (!adjacentToStart) deadEnds.add(n);
         }
         Collections.shuffle(deadEnds, rng);
         int lockedCount = Math.min(1 + rng.nextInt(2), deadEnds.size()); // 1 or 2

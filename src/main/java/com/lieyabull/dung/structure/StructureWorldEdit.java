@@ -114,6 +114,7 @@ public final class StructureWorldEdit {
             session.commit();
             return true;
         } catch (Exception e) {
+            org.bukkit.Bukkit.getLogger().warning("[structures] paste failed: " + e);
             return false;
         }
     }

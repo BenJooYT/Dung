@@ -206,11 +206,11 @@ public final class RoomGen {
                 } else if (horiz) {
                     int mw = (m.structure != null) ? m.structure.total().width() : (m.sizeW + 2 * WALL);
                     int mbase = m.x * spacing + offsetX;
-                    nbWallWorld = mbase + (d == 1 ? 0 : mw);
+                    nbWallWorld = mbase + (d == 1 ? 0 : mw - 1);
                 } else {
                     int mh = (m.structure != null) ? m.structure.total().depth() : (m.sizeH + 2 * WALL);
                     int mbase = m.z * spacing + offsetZ;
-                    nbWallWorld = mbase + (d == 0 ? mh : 0);
+                    nbWallWorld = mbase + (d == 0 ? mh - 1 : 0);
                 }
                 int nextWallT = (nbWallWorld - axC) / asg;
                 // guard: if the two rooms are flush or the range would be empty, keep the doorway

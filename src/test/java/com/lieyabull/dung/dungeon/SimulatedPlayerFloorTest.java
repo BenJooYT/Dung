@@ -113,6 +113,18 @@ public class SimulatedPlayerFloorTest {
             assertOneOf(seed, f, RoomType.TREASURE);
             assertOneOf(seed, f, RoomType.ELITE);
 
+            // no LOCKED room may sit adjacent to START: its iron barrier would seal the
+            // start room's exit and trap the party with no key
+            int[] DX = {0, 1, 0, -1};
+            int[] DZ = {-1, 0, 1, 0};
+            for (Floor.RoomNode n : f.rooms()) {
+                if (n.type != RoomType.LOCKED) continue;
+                for (int d = 0; d < 4; d++) {
+                    assertTrue(f.at(n.x + DX[d], n.z + DZ[d]) != f.start,
+                            "seed " + seed + ": LOCKED room must not be adjacent to START");
+                }
+            }
+
             // bidirectional doors
             assertTrue(doorsBidirectional(f), "seed " + seed + ": all doors bidirectional");
 

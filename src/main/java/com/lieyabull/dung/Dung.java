@@ -62,7 +62,16 @@ public final class Dung extends JavaPlugin {
         workstationUI = new WorkstationUI(this);
         cpBreakdownUI = new com.lieyabull.dung.ui.CpBreakdownUI();
         plotManager = new PlotManager(this);
-        structureManager = new StructureManager(this);
+        try {
+            structureManager = new StructureManager(this);
+        } catch (LinkageError e) {
+            getLogger().severe("[structures] A WorldEdit class is missing (" + e.getMessage()
+                    + "). Your WorldEdit jar is incomplete — install the FULL WorldEdit 7.3.x build for"
+                    + " 1.21.x (Modrinth or the EngineHub dev builds); some mirrors serve stripped jars."
+                    + " Disabling Dung until WorldEdit is fixed.");
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
         compost = new CompostManager(this);
         provenanceManager = new ProvenanceManager(this);
         potionListener = new PotionListener(this);

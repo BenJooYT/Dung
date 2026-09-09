@@ -675,14 +675,24 @@ public final class DungeonInstance {
                 .build()) {
             BlockBatcher.begin(editSession);
             for (Floor.RoomNode n : run.floor.rooms()) {
-                if (n.structure != null) {
-                    StructureDefinition s = n.structure;
-                    RoomBounds tot = s.total();
-                    int ox = baseX(n) - tot.minX;
-                    int oy = BASE_Y - tot.minY;
-                    int oz = baseZ(n) - tot.minZ;
-                    StructureWorldEdit.paste(world, n.clipboard, ox, oy, oz, n.rotationSteps);
-                } else {
+                if (n.structure == null) continue;
+                StructureDefinition s = n.structure;
+                RoomBounds tot = s.total();
+                int ox = baseX(n) - tot.minX;
+                int oy = BASE_Y - tot.minY;
+                int oz = baseZ(n) - tot.minZ;
+                if (n.clipboard == null
+                        || !StructureWorldEdit.paste(world, n.clipboard, ox, oy, oz, n.rotationSteps)) {
+                    plugin.getLogger().warning("[structures] Template '" + n.structureId + "' failed for "
+                            + n.type + " room at (" + n.x + "," + n.z + ") — building procedurally instead.");
+                    n.structure = null;
+                    n.clipboard = null;
+                    n.structureId = null;
+                    n.rotationSteps = 0;
+                }
+            }
+            for (Floor.RoomNode n : run.floor.rooms()) {
+                if (n.structure == null) {
                     RoomGen.build(world, n, BASE_Y, spacing, corridorHalf, run.floor, offsetX, offsetZ);
                 }
             }
@@ -782,24 +792,36 @@ public final class DungeonInstance {
      *  room's opening always lines up with the corridor — it never leaves a hole between the room's
      *  outer wall and the corridor wall — and stays well away from the corners. */
     private void carveStructureDoors(Floor floor) {
+        carveStructureDoorsStatic(world, floor, BASE_Y, spacing, offsetX, offsetZ);
+    }
+
+    static int roomAirHeight(Floor.RoomNode n) {
+        return n.type == RoomType.BOSS ? RoomGen.BOSS_ROOM_HEIGHT : RoomGen.ROOM_HEIGHT;
+    }
+
+    static void carveStructureDoorsStatic(org.bukkit.World world, Floor floor, int baseY,
+            int spacing, int offsetX, int offsetZ) {
         for (Floor.RoomNode n : floor.rooms()) {
             if (n.structure == null) continue;
             RoomBounds t = n.structure.total();
+            int airHeight = roomAirHeight(n);
             for (int d = 0; d < 4; d++) {
                 if (!n.doors[d]) continue;
                 boolean horiz = d == 1 || d == 3;
-                int wallAlong = facingWallAlong(n, d, t);
-                int perpC = horiz ? (baseZ(n) + RoomGen.PERP_CENTER) : (baseX(n) + RoomGen.PERP_CENTER);
+                int baseAlong = horiz ? n.x * spacing + offsetX : n.z * spacing + offsetZ;
+                int wallAlong = structureWallAlong(baseAlong, t, d, horiz);
+                int perpC = horiz ? (n.z * spacing + offsetZ + RoomGen.PERP_CENTER)
+                        : (n.x * spacing + offsetX + RoomGen.PERP_CENTER);
                 for (int off = -1; off <= 1; off++) {
-                    for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
+                    for (int y = baseY + 1; y <= baseY + airHeight; y++) {
                         int px = horiz ? wallAlong : (perpC + off);
                         int pz = horiz ? (perpC + off) : wallAlong;
                         setBlock(world, px, y, pz, Material.AIR);
                     }
                     int fx = horiz ? wallAlong : perpC;
                     int fz = horiz ? perpC : wallAlong;
-                    setBlock(world, fx, BASE_Y, fz, Material.POLISHED_ANDESITE);
-                    setBlock(world, fx, BASE_Y + RoomGen.ROOM_HEIGHT + 1, fz, Material.STONE_BRICKS);
+                    setBlock(world, fx, baseY, fz, Material.POLISHED_ANDESITE);
+                    setBlock(world, fx, baseY + airHeight + 1, fz, Material.STONE_BRICKS);
                 }
             }
         }
@@ -811,6 +833,11 @@ public final class DungeonInstance {
      *  neighbour's own corridor (also carved on that line) and the two structure doorways connect
      *  without a gap. Procedural↔procedural pairs are already handled by {@link RoomGen#build}. */
     private void carveStructureCorridors(Floor floor) {
+        carveStructureCorridorsStatic(world, floor, BASE_Y, spacing, offsetX, offsetZ);
+    }
+
+    static void carveStructureCorridorsStatic(org.bukkit.World world, Floor floor, int baseY,
+            int spacing, int offsetX, int offsetZ) {
         int[] DX = {0, 1, 0, -1};
         int[] DZ = {-1, 0, 1, 0};
         Set<Long> carved = new HashSet<>();
@@ -820,47 +847,58 @@ public final class DungeonInstance {
                 if (!n.doors[d]) continue;
                 Floor.RoomNode m = floor.at(n.x + DX[d], n.z + DZ[d]);
                 if (m == null) continue;
-                long e = floor.key(Math.min(n.x, m.x), Math.min(n.z, m.z));
+                long k1 = floor.key(n.x, n.z);
+                long k2 = floor.key(m.x, m.z);
+                long e = (Math.min(k1, k2) << 32) | Math.max(k1, k2);
                 if (!carved.add(e)) continue;
                 boolean horiz = d == 1 || d == 3;
                 RoomBounds ta = n.structure.total();
                 RoomBounds tb = m.structure == null ? null : m.structure.total();
-                int aAlong = facingWallAlong(n, d, ta);
-                int bAlong = m.structure != null ? facingWallAlong(m, d ^ 2, tb)
-                        : facingWallAlongProcedural(m, d ^ 2);
+                int aBase = horiz ? n.x * spacing + offsetX : n.z * spacing + offsetZ;
+                int bBase = horiz ? m.x * spacing + offsetX : m.z * spacing + offsetZ;
+                int aAlong = structureWallAlong(aBase, ta, d, horiz);
+                int bAlong = m.structure != null ? structureWallAlong(bBase, tb, d ^ 2, horiz)
+                        : proceduralWallAlong(bBase, m.sizeW, m.sizeH, d ^ 2, horiz);
                 int lo = Math.min(aAlong, bAlong) + 1;
                 int hi = Math.max(aAlong, bAlong) - 1;
-                int perpC = horiz ? (baseZ(n) + RoomGen.PERP_CENTER) : (baseX(n) + RoomGen.PERP_CENTER);
+                int airHeight = Math.max(roomAirHeight(n), roomAirHeight(m));
+                int perpC = horiz ? (n.z * spacing + offsetZ + RoomGen.PERP_CENTER)
+                        : (n.x * spacing + offsetX + RoomGen.PERP_CENTER);
                 for (int t = lo; t <= hi; t++) {
                     for (int off = -1; off <= 1; off++) {
                         int px = horiz ? t : (perpC + off);
                         int pz = horiz ? (perpC + off) : t;
-                        setBlock(world, px, BASE_Y, pz, Material.POLISHED_ANDESITE);
-                        for (int y = BASE_Y + 1; y <= BASE_Y + RoomGen.ROOM_HEIGHT; y++) {
+                        setBlock(world, px, baseY, pz, Material.POLISHED_ANDESITE);
+                        for (int y = baseY + 1; y <= baseY + airHeight; y++) {
                             setBlock(world, px, y, pz, Material.AIR);
                         }
-                        setBlock(world, px, BASE_Y + RoomGen.ROOM_HEIGHT + 1, pz, Material.STONE_BRICKS);
+                        setBlock(world, px, baseY + airHeight + 1, pz, Material.STONE_BRICKS);
                     }
                 }
             }
         }
     }
-
     /** World coordinate of a room's outer wall on side {@code d} (0=N,1=E,2=S,3=W), for a structure room. */
     private int facingWallAlong(Floor.RoomNode n, int d, RoomBounds t) {
         boolean horiz = d == 1 || d == 3;
+        return structureWallAlong(horiz ? baseX(n) : baseZ(n), t, d, horiz);
+    }
+
+    static int structureWallAlong(int baseAlong, RoomBounds t, int d, boolean horiz) {
         int half = horiz ? t.width() : t.depth();
-        int along = horiz ? baseX(n) : baseZ(n);
-        return along + (d == 1 || d == 2 ? half : 0);
+        return baseAlong + (d == 1 || d == 2 ? half - 1 : 0);
     }
 
     /** World coordinate of a procedural room's outer wall on side {@code d}. */
     private int facingWallAlongProcedural(Floor.RoomNode n, int d) {
         boolean horiz = d == 1 || d == 3;
-        int mw = n.sizeW + 2 * RoomGen.WALL;
-        int mh = n.sizeH + 2 * RoomGen.WALL;
-        int along = horiz ? baseX(n) : baseZ(n);
-        return along + (d == 1 ? mw : (d == 2 ? mh : 0));
+        return proceduralWallAlong(horiz ? baseX(n) : baseZ(n), n.sizeW, n.sizeH, d, horiz);
+    }
+
+    static int proceduralWallAlong(int baseAlong, int sizeW, int sizeH, int d, boolean horiz) {
+        int mw = sizeW + 2 * RoomGen.WALL;
+        int mh = sizeH + 2 * RoomGen.WALL;
+        return baseAlong + (d == 1 ? mw - 1 : (d == 2 ? mh - 1 : 0));
     }
 
     private StructureRegistry registry() {

@@ -1555,6 +1555,49 @@ tab = detailed build/run/progression).
 - [x] **Tests:** 3 new CombatPowerTest cases (weight-sum reference, off-curve sensitivity, 5+
       member cap). Suite: **239/239 green** (was 236); full `build` passes.
 
+## Iteration 66 — sealed starter room: silent structure-paste failures now fall back to procedural
+- [x] **Symptom (live, Bedrock):** a fresh run could spawn the player in the starter room with solid
+      walls where every corridor should be — no exits, run bricked. The floor graph was ruled out
+      (already proven by the 300-seed `SimulatedPlayerFloorTest`: reachable, bidirectional, one
+      boss).
+- [x] **Root cause:** in `enterFloor`'s build loop a room with a template was pasted and the
+      boolean result ignored; on any paste failure (or null clipboard) the cell was left as solid
+      mass with no procedural fallback, and the corridor stubs carved toward it dead-ended into
+      rock. Failures were also completely silent (`paste` swallowed the exception).
+- [x] **Fix:** two-pass build — paste all structure rooms first, and any room whose paste fails
+      (or has no clipboard) is cleared back to procedural (`structure/clipboard/structureId` reset)
+      before any procedural room builds, so neighbour carving reads final flags and every cell is
+      either pasted or procedurally built. Paste failures now log room type/coords/template id, and
+      the paste catch logs its cause instead of swallowing it.
+- [x] **Also:** `Dung.onEnable` catches `LinkageError` around structure init and logs the exact
+      missing WorldEdit class + the full-build-WorldEdit remedy instead of a bare trace (diagnosed
+      from a user log: ancient/stripped WE 7.2.5 vs required 7.3.x classes).
+- [x] **Live server:** Paper 1.21.11 + Dung 1.5.0 + Geyser/Floodgate/ViaVersion kept running for
+      Bedrock play; `allow-flight=true` (vanilla fly-kick on Bedrock joins).
+
+## Iteration 67 — room detection missed teleports (pearls, chorus, Geyser resyncs)
+- [x] **Symptom:** rooms sometimes never registered as entered — no spawns, no lock, no boss —
+      bricking progression. `GameListener` only ran room detection on `PlayerMoveEvent`, but
+      teleports (ender pearls, chorus fruit, `/tp`, Geyser's Bedrock position resyncs) cross room
+      borders with zero move events, leaving `playerRoom` stale and `enterRoom` unfired.
+- [x] **Fix:** new `PlayerTeleportEvent` handler (MONITOR, ignoreCancelled) routing the destination
+      through the same `onPlayerMoved` detection as walking.
+- [x] Suite 239/239 green; live server restarted with the fix, Geyser on 19132.
+
+## Iteration 68 — sealed starter room, real cause: LOCKED room picked as start's only exit
+- [x] **Symptom (live, Java client):** fresh run spawns the player in the starter room with every
+      exit a solid wall. Run worlds are fresh void worlds per run (no stale geometry), pastes all
+      succeeded (no `[structures]` warnings), carves completed (teleport happened) — so the seal
+      was placed deliberately: the iron-block LOCKED-room barrier.
+- [x] **Root cause:** `FloorGenerator` picked LOCKED rooms from any 1-door non-boss combat room,
+      including rooms adjacent to START. With start having a single neighbour that got locked, the
+      only exit was iron-barred with no key anywhere — run bricked at spawn. (SECRET already had
+      the equivalent guard: its parent must keep ≥2 doors.)
+- [x] **Fix:** dead-ends adjacent to START are excluded from LOCKED candidacy (they stay COMBAT).
+      Regression test added to `SimulatedPlayerFloorTest`: no LOCKED room adjacent to START across
+      all 300 seeds — verified it FAILS on the old generator and passes with the fix.
+- [x] Suite 239/239 green (full re-run); live server restarted with the fix.
+
 ## Build / run
 ```
 gradlew build            # compiles + jars
