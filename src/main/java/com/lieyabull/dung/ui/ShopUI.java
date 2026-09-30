@@ -105,6 +105,7 @@ public final class ShopUI implements Listener {
     private static final int MENU_SUPPLIES_SLOT = 16; // run shop only
     private static final int MENU_POTION_FOREST_SLOT = 18; // persistent shop only
     private static final int MENU_REPAIR_SLOT = 20;
+    private static final int MENU_REPAIR_BROKEN_SLOT = 21;
     private static final int MENU_UPGRADES_SLOT = 22;
     private static final int MENU_REPAIR_ALL_SLOT = 24;
     private static final int MENU_POTION_STONE_SLOT = 26; // persistent shop only
@@ -291,7 +292,8 @@ public final class ShopUI implements Listener {
         inv.setItem(MENU_ARMOR_SLOT, menuEntry(p, s, Category.ARMOR, ACTION_MENU_ARMOR));
         inv.setItem(MENU_SHIELD_SLOT, menuEntry(p, s, Category.MANA_SHIELD, ACTION_MENU_SHIELD));
         if (s.type == ShopType.PERSISTENT) {
-            inv.setItem(MENU_REPAIR_SLOT, makeRepairItemButton(p));
+            inv.setItem(MENU_REPAIR_SLOT, makeRepairItemButton(p, s));
+            inv.setItem(MENU_REPAIR_BROKEN_SLOT, makeRepairBrokenButton(p, s));
             inv.setItem(MENU_UPGRADES_SLOT, makeButton(Material.NETHER_STAR,
                     clang(p, "shop.upgrades.name"),
                     List.of(clang(p, "shop.upgrades.lore")), ACTION_UPGRADES));
@@ -849,6 +851,12 @@ public final class ShopUI implements Listener {
             e.setCancelled(true);
             ShopSession ms = sessions.get(menuOwner);
             if (ms == null) return;
+            // Clicking own gear in the visible player inventory (bottom) while the persistent
+            // menu is open selects it as the repair target — no need to hold it in the main hand.
+            if (e.getClickedInventory() != null && e.getClickedInventory() != e.getInventory()) {
+                if (ms.type == ShopType.PERSISTENT) handleRepairSelect(p, ms, e.getRawSlot());
+                return;
+            }
             String menuAction = actionOf(e.getCurrentItem());
             if (menuAction == null || menuAction.isEmpty()) return;
             switch (menuAction) {
@@ -1013,39 +1021,57 @@ public final class ShopUI implements Listener {
         return cost;
     }
 
-    /** All damaged (but not broken) persistent gear across main inventory + armor slots. */
+    /** All damaged (but not broken) persistent gear across storage + armor + offhand (raw slots
+     *  0-40, the same scheme DungeonInstance uses). Broken pieces (durability 1) are excluded on
+     *  purpose — they must go through the dedicated Repair Broken flow, not a cheap Repair All. */
     private static List<ItemStack> damagedPersistentGear(Player p) {
         List<ItemStack> damaged = new ArrayList<>();
-        List<ItemStack> candidates = new ArrayList<>();
-        for (int slot = 0; slot < p.getInventory().getSize(); slot++) {
+        for (int slot = 0; slot <= 40; slot++) {
             ItemStack it = p.getInventory().getItem(slot);
-            if (it != null && it.getType() != Material.AIR) candidates.add(it);
-        }
-        for (org.bukkit.inventory.EquipmentSlot slot : List.of(
-                org.bukkit.inventory.EquipmentSlot.HEAD,
-                org.bukkit.inventory.EquipmentSlot.CHEST,
-                org.bukkit.inventory.EquipmentSlot.LEGS,
-                org.bukkit.inventory.EquipmentSlot.FEET)) {
-            ItemStack it = p.getInventory().getItem(slot);
-            if (it != null && it.getType() != Material.AIR) candidates.add(it);
-        }
-        for (ItemStack it : candidates) {
+            if (it == null || it.getType() == Material.AIR) continue;
+            if (!GearFactory.isPersistent(it)) continue;
             int d = GearFactory.getDurability(it);
             int m = GearFactory.getMaxDurability(it);
-            if (d > 0 && m > 0 && d < m) damaged.add(it);
+            if (d > 1 && m > 0 && d < m) damaged.add(it);
         }
         return damaged;
     }
 
+    /** The session-selected repair target, or null if none is selected (or it moved away). */
+    private static ItemStack repairTarget(Player p, ShopSession s) {
+        if (s.repairSlot < 0 || s.repairSlot > 40) return null;
+        ItemStack it = p.getInventory().getItem(s.repairSlot);
+        if (it == null || it.getType() == Material.AIR || !GearFactory.isPersistent(it)) return null;
+        return it;
+    }
+
+    /**
+     * Select a repair target by clicking gear in the player's own inventory while the persistent
+     * shop menu is open. The bottom view lists the 36 storage slots in vanilla chest order (main
+     * 9-35 first, hotbar 0-8 last), so the raw offset is converted back to the PlayerInventory
+     * slot. Clicking the already-selected piece deselects it again.
+     */
+    private void handleRepairSelect(Player p, ShopSession s, int rawSlot) {
+        int viewIndex = rawSlot - MENU_SIZE;
+        if (viewIndex < 0 || viewIndex >= 36) return;
+        int playerSlot = viewIndex < 27 ? viewIndex + 9 : viewIndex - 27;
+        ItemStack it = p.getInventory().getItem(playerSlot);
+        if (it == null || it.getType() == Material.AIR || !GearFactory.isPersistent(it)) return;
+        s.repairSlot = (s.repairSlot == playerSlot) ? -1 : playerSlot;
+        reopen(() -> open(p, s)); // refresh the menu so the Repair buttons show the selection
+    }
+
     private void repairHeld(Player p, ShopSession s) {
-        ItemStack target = p.getInventory().getItemInMainHand();
+        // A piece clicked inside the shop GUI wins over the main-hand item.
+        ItemStack target = repairTarget(p, s);
+        if (target == null) target = p.getInventory().getItemInMainHand();
         if (target == null || target.getType() == Material.AIR || !GearFactory.isPersistent(target)) {
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.holdDamaged"));
             return;
         }
         int dur = GearFactory.getDurability(target);
         int max = GearFactory.getMaxDurability(target);
-        if (dur <= 0 || max <= 0 || dur >= max) {
+        if (dur <= 1 || max <= 0 || dur >= max) {
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.notDamaged"));
             return;
         }
@@ -1090,7 +1116,9 @@ public final class ShopUI implements Listener {
     }
 
     private void repairBroken(Player p, ShopSession s) {
-        ItemStack target = p.getInventory().getItemInMainHand();
+        // Like Repair, a piece clicked inside the shop GUI wins over the main-hand item.
+        ItemStack target = repairTarget(p, s);
+        if (target == null) target = p.getInventory().getItemInMainHand();
         if (target == null || target.getType() == Material.AIR
                 || !GearFactory.isPersistent(target) || !GearFactory.isBroken(target)) {
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "repair.holdBroken"));
@@ -1132,22 +1160,27 @@ public final class ShopUI implements Listener {
         refresh(p, s);
     }
 
-    private ItemStack makeRepairItemButton(Player p) {
-        ItemStack held = p.getInventory().getItemInMainHand();
+    private ItemStack makeRepairItemButton(Player p, ShopSession s) {
+        // The session selection (clicked gear) wins; otherwise fall back to the main-hand item.
+        ItemStack held = repairTarget(p, s);
+        boolean selected = held != null;
+        if (held == null) held = p.getInventory().getItemInMainHand();
         List<String> lore = new ArrayList<>();
         lore.add(clang(p, "shop.repairItem.lore1"));
+        lore.add("§7Click a persistent item in your inventory to select it");
         if (held != null && held.getType() != Material.AIR && GearFactory.isPersistent(held)) {
             int dur = GearFactory.getDurability(held);
             int max = GearFactory.getMaxDurability(held);
-            if (dur > 0 && max > 0 && dur < max) {
+            if (dur > 1 && max > 0 && dur < max) {
                 String name = held.getItemMeta().getDisplayName();
                 lore.add("");
-                lore.add(clang(p, "shop.repairItem.held",
+                lore.add(selected ? "§7Selected: §f" + (name == null ? held.getType().name().toLowerCase() : name)
+                        : clang(p, "shop.repairItem.held",
                         name == null ? held.getType().name().toLowerCase() : name));
                 lore.add(clang(p, "shop.repairItem.durability", dur, max));
                 lore.add(clang(p, "shop.repairItem.repairNum",
                         GearFactory.getRepairCount(held) + 1, repairCost(held)));
-            } else if (dur <= 0) {
+            } else if (dur <= 1) {
                 lore.add("");
                 lore.add(clang(p, "shop.repairItem.broken"));
             } else {
@@ -1160,6 +1193,32 @@ public final class ShopUI implements Listener {
             lore.add(clang(p, "shop.repairItem.holdDamaged2"));
         }
         return makeButton(Material.ANVIL, clang(p, "shop.repairItem.name"), lore, ACTION_REPAIR);
+    }
+
+    /** Repair Broken button: restores 10 durability to a broken (durability 1) persistent piece —
+     *  the session selection wins, otherwise the main-hand item. Kept separate from Repair so the
+     *  flat 150-coin + 100-shard price can't be bypassed with a cheap scaling repair. */
+    private ItemStack makeRepairBrokenButton(Player p, ShopSession s) {
+        ItemStack held = repairTarget(p, s);
+        boolean selected = held != null;
+        if (held == null) held = p.getInventory().getItemInMainHand();
+        List<String> lore = new ArrayList<>();
+        lore.add("§7Restores §f10 durability §7to a broken persistent item");
+        lore.add("§7Cost: §6" + REPAIR_BROKEN_COINS + " coins §7+ §3" + REPAIR_BROKEN_SHARDS + " shards");
+        lore.add("§7Click a broken item in your inventory to select it");
+        if (held != null && held.getType() != Material.AIR && GearFactory.isPersistent(held)) {
+            String name = held.getItemMeta().getDisplayName();
+            String label = name == null ? held.getType().name().toLowerCase() : name;
+            lore.add("");
+            if (GearFactory.isBroken(held)) {
+                lore.add(selected ? "§7Selected: §f" + label : clang(p, "shop.repairItem.held", label));
+                lore.add("§7Durability: §cbroken §7(1/" + GearFactory.getMaxDurability(held) + ")");
+            } else {
+                lore.add(selected ? "§7Selected: §f" + label : clang(p, "shop.repairItem.held", label));
+                lore.add("§7Not broken — use Repair for damaged items");
+            }
+        }
+        return makeButton(Material.DAMAGED_ANVIL, "§cRepair Broken Item", lore, ACTION_REPAIR_BROKEN);
     }
 
     private ItemStack makeRepairAllButton(Player p) {
@@ -1232,6 +1291,8 @@ public final class ShopUI implements Listener {
         DungeonInstance di;
         Inventory inv;
         BukkitTask animationTask;
+        /** Player-inventory slot (raw 0-40) clicked as the repair target, or -1 for main-hand fallback. */
+        int repairSlot = -1;
         // Frozen final frames of the two slot-machine windows (item row, rarity row). Once the roll
         // lands, the result screen keeps the neighboring items/rarities that surrounded the result
         // visible until the player chooses KEEP or SALVAGE.

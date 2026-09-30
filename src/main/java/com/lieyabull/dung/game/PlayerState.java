@@ -31,8 +31,8 @@ public final class PlayerState {
     /** Timestamp (ms) of the last time the player took damage; used to gate natural regen. */
     private long lastDamageTime = 0;
     public int coins;
-    public int keys;   // placeholder: no sink yet; reserved for future locked-door/chest costs
-    public int bombs;  // placeholder: no sink yet; reserved for future destructible-wall costs
+    public int keys;   // run keys: unlock LOCKED rooms (iron-block barrier)
+    public int bombs;  // run bombs: blast SECRET walls (cracked bricks)
     // computed combat stats
     public double damage = 3;
     public double magicDamage = 0; // separate magic damage stat (for magic weapons)
@@ -109,6 +109,7 @@ public final class PlayerState {
         critMult = 1.5;
         fireRateTicks = 7;
         speedMult = 1.0;
+        shieldMax = 0;
         int healthBonus = 0;
         // weapon damage from mainhand — only a real weapon counts. Holding an armor piece in-hand
         // (which carries HEALTH/DEFENSE/RARITY tags) must NOT grant its stats; it only applies when
@@ -390,6 +391,11 @@ public final class PlayerState {
         var pdc = s.getItemMeta().getPersistentDataContainer();
         String v = pdc.get(org.bukkit.NamespacedKey.minecraft(ItemTags.RARITY),
                 org.bukkit.persistence.PersistentDataType.STRING);
-        return v == null ? null : Rarity.valueOf(v);
+        if (v == null) return null;
+        try {
+            return Rarity.valueOf(v);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 }

@@ -5,19 +5,20 @@ import com.lieyabull.dung.dungeon.RoomType;
 import com.lieyabull.dung.game.DungeonInstance;
 import com.lieyabull.dung.game.PlayerState;
 import com.lieyabull.dung.game.Run;
-import com.lieyabull.dung.items.GearFactory;
-import com.lieyabull.dung.util.TextUtil;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
-import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.scoreboard.*;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
- * Sidebar HUD: concise live info. Health/mana as hearts+pips, run coins/keys/bombs, floor,
- * current room type, and a class/ability hint. Detailed info lives in the Tab menu instead.
+ * Sidebar HUD: live-only info. HP/mana/shield live in the action bar ({@link #sendBar}, the
+ * single action-bar writer); the sidebar shows live run resources, room, worst-piece durability,
+ * boss/locked hints, and ability cooldowns. Static build info (DMG/DEF/CRIT/reach/speed/CP/class)
+ * lives in the Tab menu only — the sidebar never duplicates it.
  */
 public final class HUD {
     /** Number of fixed sidebar rows. Rows are registered ONCE per board and never cleared per
@@ -35,44 +36,60 @@ public final class HUD {
 
     public void reset(Player p, org.bukkit.scoreboard.Scoreboard board) {
         if (board == null) return;
+        // Unregister our own hN row teams so a reused board never hits "team already exists"
+        // on re-register. Match exactly h+digits (our rows) — never a broad prefix that could
+        // catch other plugins' teams on a shared board.
+        for (Team t : new ArrayList<>(board.getTeams())) {
+            String n = t.getName();
+            if (n != null && n.matches("h\\d+")) {
+                for (String entry : new ArrayList<>(t.getEntries())) board.resetScores(entry);
+                t.unregister();
+            }
+        }
         if (board.getObjective("dung") != null) board.getObjective("dung").unregister();
         java.util.Arrays.fill(lastText, null);
         lastDisplayName = null;
     }
 
+    /** Blank every sidebar row (used when there is no live state so no stale rows linger). */
+    private void clearAll(Objective o) {
+        for (int line = 0; line < ROWS; line++) setLine(o, line, "");
+    }
+
     public void update(Player p, DungeonInstance di, org.bukkit.scoreboard.Scoreboard board) {
         if (p == null || !p.isOnline() || board == null) return;
-        Run run = di.run();
-        if (run == null) return;
-        PlayerState st = run.playerStateOf(p.getUniqueId());
-        if (st == null) return;
         Objective o = board.getObjective("dung");
         if (o == null) {
             o = board.registerNewObjective("dung", Criteria.DUMMY, Component.text("Dung"));
             o.setDisplaySlot(DisplaySlot.SIDEBAR);
             registerRows(o);
         }
+        Run run = di.run();
+        // No live state — blank every row instead of early-returning so stale dungeon stats
+        // from a previous run can never linger on the sidebar.
+        if (run == null) {
+            clearAll(o);
+            return;
+        }
+        PlayerState st = run.playerStateOf(p.getUniqueId());
+        if (st == null) {
+            clearAll(o);
+            return;
+        }
         String display = com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.title", run.floorIndex + 1);
         if (!display.equals(lastDisplayName)) {
             o.setDisplayName(display);
             lastDisplayName = display;
         }
+        // Live-only sidebar (15 rows max): run resources, room, worst-piece durability,
+        // boss/locked hints, ability cooldowns. HP/mana/shield live in the action bar
+        // (sendBar, single writer). Static build info (DMG/DEF/CRIT/reach/speed/CP/class)
+        // lives in Tab only and is intentionally never duplicated here.
         setLine(o, 0, "§8§m                   ");
-        // combat stats — DMG always shows melee (red) and magic (blue) counters side by side
-        String dmgLine = com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.dmgDef",
-                TextUtil.fmt(st.damage), TextUtil.fmt(st.magicDamage), (int) st.defense);
-        setLine(o, 1, dmgLine);
-        setLine(o, 2, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.crit",
-                (int) (st.critChance * 100), TextUtil.fmt(st.critMult)));
-        setLine(o, 3, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.reachSpd",
-                TextUtil.fmt(st.reach), TextUtil.fmt(st.speedMult)));
-        // Combat Power (§11): cached on the PlayerState, refreshed on gear change.
-        setLine(o, 4, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.cp", (int) Math.round(st.combatPower)));
-        setLine(o, 5, "");
-        // consumables / run
-        setLine(o, 6, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.coinsLine", st.coins, st.keys));
-        setLine(o, 7, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bombsLine", st.bombs, run.killsOf(p.getUniqueId())));
-        setLine(o, 8, "");
+        // consumables / run (live)
+        setLine(o, 1, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.coinsLine", st.coins, st.keys));
+        setLine(o, 2, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bombsLine", st.bombs, run.killsOf(p.getUniqueId())));
+        setLine(o, 3, "");
         // Determine which room the player is physically inside. If they're in the corridor
         // (between rooms), show "Corridor" instead of the stale previous room.
         Floor.RoomNode physicalRoom = di.roomAt(p.getLocation());
@@ -82,14 +99,10 @@ public final class HUD {
         } else {
             roomLabel = com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.corridor");
         }
-        setLine(o, 9, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.room", roomLabel));
-        // Gear condition: show worst durability among persistent gear
-        String gearCond = gearCondition(p);
-        if (!gearCond.isEmpty()) {
-            setLine(o, 10, gearCond);
-        } else {
-            setLine(o, 10, "");
-        }
+        setLine(o, 4, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.room", roomLabel));
+        // Gear condition: worst piece + count from the shared helper (Tab shows per-piece detail).
+        List<UiDurability.Piece> pieces = UiDurability.collect(p.getInventory(), p);
+        setLine(o, 5, UiDurability.hudLine(com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.gear"), pieces));
         // Check if any adjacent room is a LOCKED room
         String lockedHint = "";
         Floor.RoomNode cur = physicalRoom;
@@ -105,10 +118,9 @@ public final class HUD {
                 }
             }
         }
-        setLine(o, 11, di.boss() != null ? com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bossActive") : lockedHint);
-        setLine(o, 12, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.class", className(p, st.classId)));
-        // Ability cooldowns on separate rows so they never overlap: the class ability always owns
-        // row 12; any in-hand item ability cooldown renders on row 13 right beneath it.
+        setLine(o, 6, di.boss() != null ? com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bossActive") : lockedHint);
+        setLine(o, 7, "");
+        // Ability cooldowns on separate rows so they never overlap.
         long now = System.currentTimeMillis();
         // Show class ability cooldown with a friendly name
         String classAbilityLabel = classAbilityName(p, st.classId);
@@ -116,9 +128,9 @@ public final class HUD {
         Long classCd = st.cooldowns.get(classKey);
         long classRem = classCd == null ? 0 : classCd - now;
         if (classRem > 0) {
-            setLine(o, 13, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.cd", classAbilityLabel, String.format("%.1f", classRem / 1000.0)));
+            setLine(o, 8, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.cd", classAbilityLabel, String.format("%.1f", classRem / 1000.0)));
         } else {
-            setLine(o, 13, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.ready", classAbilityLabel));
+            setLine(o, 8, com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.ready", classAbilityLabel));
         }
         // In-hand item ability cooldown, on the row below the class one.
         String itemCdRow = "";
@@ -136,7 +148,12 @@ public final class HUD {
                 }
             }
         }
-        setLine(o, 14, itemCdRow);
+        setLine(o, 9, itemCdRow);
+        setLine(o, 10, "");
+        setLine(o, 11, "");
+        setLine(o, 12, "");
+        setLine(o, 13, "");
+        setLine(o, 14, "");
     }
 
     /** Localized friendly name for a room type (used in the sidebar Room row). */
@@ -145,14 +162,6 @@ public final class HUD {
         String localized = com.lieyabull.dung.lang.Lang.get(com.lieyabull.dung.lang.Lang.languageOf(p), key);
         if (localized.equals(key)) return type.label;
         return "§f" + localized;
-    }
-
-    /** Localized friendly name of a player's class for the sidebar. */
-    private static String className(Player p, String classId) {
-        String key = "class." + classId;
-        String localized = com.lieyabull.dung.lang.Lang.get(com.lieyabull.dung.lang.Lang.languageOf(p), key);
-        if (!localized.equals(key)) return localized;
-        return TextUtil.capital(classId);
     }
 
     /** Localized name of the player's class ability for the cooldown row. */
@@ -186,40 +195,6 @@ public final class HUD {
         return raw.endsWith("!") ? raw.substring(0, raw.length() - 1) : raw;
     }
 
-    /** Check the player's persistent gear and return a durability condition string. */
-    private static String gearCondition(Player p) {
-        int total = 0;
-        int totalMax = 0;
-        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
-        // Check main hand + off hand
-        ItemStack[] hands = {inv.getItemInMainHand(), inv.getItemInOffHand()};
-        for (ItemStack s : hands) {
-            if (s == null || s.getType() == Material.AIR) continue;
-            int d = GearFactory.getDurability(s);
-            int m = GearFactory.getMaxDurability(s);
-            if (d >= 0 && m > 0) { total += d; totalMax += m; }
-        }
-        // Check armor
-        for (ItemStack s : inv.getArmorContents()) {
-            if (s == null || s.getType() == Material.AIR) continue;
-            int d = GearFactory.getDurability(s);
-            int m = GearFactory.getMaxDurability(s);
-            if (d >= 0 && m > 0) { total += d; totalMax += m; }
-        }
-        if (totalMax <= 0) return "";
-        double pct = (double) total / totalMax;
-        String color;
-        if (pct >= 0.67) color = "§a";
-        else if (pct >= 0.34) color = "§e";
-        else color = "§c";
-        int filled = (int) Math.round(pct * 10);
-        int empty = 10 - filled;
-        StringBuilder bar = new StringBuilder(com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.gear")).append(color);
-        bar.append("█".repeat(Math.max(0, filled)));
-        bar.append("§8░".repeat(Math.max(0, empty)));
-        return bar.toString();
-    }
-
     /** Action bar above the hotbar: red hearts + blue mana with current/max amounts (integer counts).
      *  A single writer owns the action bar (the per-tick HUD refresh) so transient hints are appended
      *  as a suffix here rather than issued from a second cadence, which fought the bar and flickered. */
@@ -238,14 +213,16 @@ public final class HUD {
     }
 
     /** Register all rows (team + invisible entry + static score) exactly once per objective so the
-     *  sidebar row set is stable; later updates only re-paint prefixes. */
+     *  sidebar row set is stable; later updates only re-paint prefixes. Reuses existing teams so
+     *  a re-register on a reused board never throws "team already exists". */
     private void registerRows(Objective o) {
         org.bukkit.scoreboard.Scoreboard b = o.getScoreboard();
         for (int line = 0; line < ROWS; line++) {
             String teamName = "h" + line;
             String entry = "§8" + " ".repeat(line + 1); // unique + invisible entry per line
-            org.bukkit.scoreboard.Team t = b.registerNewTeam(teamName);
-            t.addEntry(entry);
+            org.bukkit.scoreboard.Team t = b.getTeam(teamName);
+            if (t == null) t = b.registerNewTeam(teamName);
+            if (!t.getEntries().contains(entry)) t.addEntry(entry);
             o.getScore(entry).setScore(ROWS - line);
         }
     }

@@ -153,6 +153,9 @@ tab = detailed build/run/progression).
 - [x] **GameRule migration:** the four deprecated `GameRule` constants (`DO_MOB_SPAWNING`, `DO_DAYLIGHT_CYCLE`, `DO_WEATHER_CYCLE`, `DO_FIRE_TICK`) moved to the new `GameRules` API (`SPAWN_MOBS`, `ADVANCE_TIME`, `ADVANCE_WEATHER`, `FIRE_SPREAD_RADIUS_AROUND_PLAYER`=0) — clears the removal warnings.
 
 ### Iteration 9 — economy rebalance + ability global cooldown
+> **Superseded (August bump):** Defense cap is now **25** (was 15) and Speed cap is now **20**
+> (was 8); maxing all seven tracks costs **5,470 shards** (see README upgrades table). The curves
+> below are the original Iter 9 values, kept for history.
 - [x] **Upgrade economy rebalance:** upgraded tracks now give **less per level**, **cost more**, and
       have **higher caps** to absorb the generous per-floor income (60-100 shards, 30-60 coins/floor):
       Damage delta 2→1 (base 3/2→6/3, cap 10→15), Hearts 10→5 (4/3→8/4, cap 15), Defense 1→1
@@ -875,8 +878,8 @@ tab = detailed build/run/progression).
       whose CommandSyntaxException escaped `getLobby()` and killed every `lobbySpawn()` call
       (join teleport + `/lobby`). Replaced with the typed (deprecated-but-functional)
       `GameRule.DO_FIRE_TICK` constant under a targeted `@SuppressWarnings("removal")`.
-- [x] Supplies tab (in-run shop): direct purchases with run coins — Keys/Bombs (12c), Red Heart
-      heal (10c), Mana refill (8c), Damage/Defense Tonic (+2 for the rest of the run, 25c), with
+- [x] Supplies tab (in-run shop): direct purchases with run coins — Keys/Bombs (6c), Red Heart
+      heal (5c), Mana refill (4c), Damage/Defense Tonic (+2 for the rest of the run, 12c), with
       grayed-out unaffordable affordances; tonic bonuses survive gear swaps   via PlayerState.
 
 ### Iteration 39 — /dummy NPCs + admin lobby onboarding (v1.2.0)

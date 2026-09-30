@@ -20,7 +20,8 @@ import java.util.UUID;
 /**
  * The Grovekeeper — a forest-themed boss that replaces The Warden with a 20% chance per floor.
  * Uses a Ravager entity with 3 attacks: Root Burst (a moving line of logs that explodes on hit),
- * Timber Walls (slam), Poisonous Roots (radial). Drops a Forest Transmutation Elixir on defeat.
+ * Timber Walls (slam), Poisonous Roots (radial). Drops a Forest Transmutation Elixir on defeat
+ * (50% chance per kill).
  */
 public final class GrovekeeperController {
     private final World world;
@@ -190,7 +191,7 @@ public final class GrovekeeperController {
             if (spd != null) spd.setBaseValue(0.12);
         }
         boss.addScoreboardTag("dung.entity");
-        try { boss.setCustomName("§2Grovekeeper of Floor " + (floor + 1)); boss.setCustomNameVisible(true); } catch (Throwable ignored) {}
+        try { boss.setCustomName("§2Grovekeeper of Floor " + (floor + 1)); boss.setCustomNameVisible(true); } catch (Throwable t) { plugin.getLogger().warning("[Dung] Failed to set Grovekeeper boss name: " + t.getMessage()); }
         this.barKey = new org.bukkit.NamespacedKey(Dung.instance(), "dung_boss_" + UUID.randomUUID().toString().replace("-", ""));
         this.bar = Bukkit.createBossBar(barKey, "§2The Grovekeeper", BarColor.GREEN, BarStyle.SEGMENTED_10);
         this.bar.setProgress(1.0);

@@ -581,7 +581,8 @@ public final class DungeonInstance {
     }
 
     /** Find the slot of a matching persistent item in the inventory.
-     *  Returns int[2] where [0]=inventory slot index or -1, [1]=armor slot index or -1.
+     *  Returns int[2]: {@code [slot, -1]} for a main-inventory slot, {@code [-1, armorIndex]}
+     *  for an armor slot, {@code [-1, -2]} for the offhand.
      *  Returns null if no match is found. */
     private static int[] findPersistentSlot(PlayerInventory inv, ItemStack item) {
         for (int i = 0; i < inv.getSize(); i++) {
@@ -599,7 +600,8 @@ public final class DungeonInstance {
 
     /** Compare two persistent items by their UUID. If both items have UUIDs, they match
      *  only if the UUIDs are equal. If either item lacks a UUID (pre-migration), falls back
-     *  to comparing by type and dung PDC tags (kind, rarity, defense, damage). */
+     *  to comparing by type and dung PDC tags (kind, rarity, base, defense, damage, health,
+     *  magic damage, shield capacity, affixes). */
     private static boolean itemsMatchPersistent(ItemStack a, ItemStack b) {
         if (a.getType() != b.getType()) return false;
         // UUID-based matching: if both items have UUIDs, compare those directly
@@ -614,8 +616,12 @@ public final class DungeonInstance {
         if (pdcA == null || pdcB == null) return false;
         org.bukkit.NamespacedKey kindKey = org.bukkit.NamespacedKey.minecraft(ItemTags.KIND);
         org.bukkit.NamespacedKey rarityKey = org.bukkit.NamespacedKey.minecraft(ItemTags.RARITY);
+        org.bukkit.NamespacedKey baseKey = org.bukkit.NamespacedKey.minecraft(ItemTags.BASE);
         org.bukkit.NamespacedKey defKey = org.bukkit.NamespacedKey.minecraft(ItemTags.DEFENSE);
         org.bukkit.NamespacedKey dmgKey = org.bukkit.NamespacedKey.minecraft(ItemTags.DAMAGE);
+        org.bukkit.NamespacedKey healthKey = org.bukkit.NamespacedKey.minecraft(ItemTags.HEALTH);
+        org.bukkit.NamespacedKey magicKey = org.bukkit.NamespacedKey.minecraft(ItemTags.MAGIC_DAMAGE);
+        org.bukkit.NamespacedKey shieldKey = org.bukkit.NamespacedKey.minecraft(ItemTags.SHIELD_MAX);
         String kA = pdcA.get(kindKey, org.bukkit.persistence.PersistentDataType.STRING);
         String kB = pdcB.get(kindKey, org.bukkit.persistence.PersistentDataType.STRING);
         if (kA == null || kB == null || !kA.equals(kB)) return false;
@@ -628,6 +634,19 @@ public final class DungeonInstance {
         Integer dmA = pdcA.get(dmgKey, org.bukkit.persistence.PersistentDataType.INTEGER);
         Integer dmB = pdcB.get(dmgKey, org.bukkit.persistence.PersistentDataType.INTEGER);
         if (dmA != null && dmB != null && !dmA.equals(dmB)) return false;
+        String bA = pdcA.get(baseKey, org.bukkit.persistence.PersistentDataType.STRING);
+        String bB = pdcB.get(baseKey, org.bukkit.persistence.PersistentDataType.STRING);
+        if (bA != null && bB != null && !bA.equals(bB)) return false;
+        Integer hA = pdcA.get(healthKey, org.bukkit.persistence.PersistentDataType.INTEGER);
+        Integer hB = pdcB.get(healthKey, org.bukkit.persistence.PersistentDataType.INTEGER);
+        if (hA != null && hB != null && !hA.equals(hB)) return false;
+        Integer mA = pdcA.get(magicKey, org.bukkit.persistence.PersistentDataType.INTEGER);
+        Integer mB = pdcB.get(magicKey, org.bukkit.persistence.PersistentDataType.INTEGER);
+        if (mA != null && mB != null && !mA.equals(mB)) return false;
+        Integer sA = pdcA.get(shieldKey, org.bukkit.persistence.PersistentDataType.INTEGER);
+        Integer sB = pdcB.get(shieldKey, org.bukkit.persistence.PersistentDataType.INTEGER);
+        if (sA != null && sB != null && !sA.equals(sB)) return false;
+        if (!GearFactory.getAffixes(a).equals(GearFactory.getAffixes(b))) return false;
         return true;
     }
 
@@ -2122,7 +2141,7 @@ public final class DungeonInstance {
             if (broken) {
                 // Keep the broken item in the inventory (it can be repaired at the shop); it is no
                 // longer usable until repaired.
-                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.itemBroke", item.getItemMeta().getDisplayName())));
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.itemBroke", itemDisplayName(item))));
             }
         }
     }
@@ -2818,7 +2837,8 @@ public final class DungeonInstance {
     }
 
     /** PRESERVE: gamble to make a run item persistent. Paying run coins + persistent coins + shards
-     *  (all AND), a preserve attempt has a {@code PRESERVE_SUCCESS_CHANCE} chance to queue the item
+     *  (all AND, each scaled by floor tier via {@code WorkstationRules.scaledCost} to match the
+     *  workstation display tag), a preserve attempt has a {@code PRESERVE_SUCCESS_CHANCE} chance to queue the item
      *  for post-run delivery as persistent half-durability gear (via the existing pendingPersists
      *  delivery path); on failure the item is returned immediately, one rarity worse. */
     public boolean tryPreserve(Player p, int slot) {
@@ -2833,9 +2853,10 @@ public final class DungeonInstance {
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.cantPreserve"));
             return false;
         }
-        int coinCost = WorkstationRules.PRESERVE_COIN_COST;
-        int pcCost = WorkstationRules.PRESERVE_PERSISTENT_COIN_COST;
-        int shardCost = WorkstationRules.PRESERVE_SHARD_COST;
+        int floor = currentFloorNumber();
+        int coinCost = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_COIN_COST, floor);
+        int pcCost = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_PERSISTENT_COIN_COST, floor);
+        int shardCost = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_SHARD_COST, floor);
         if (st.coins < coinCost) {
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "ws.needRunCoins", coinCost, st.coins));
             return false;
@@ -4294,7 +4315,7 @@ public final class DungeonInstance {
                     p.getWorld().dropItemNaturally(p.getLocation(), ls);
                 }
             }
-            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.persistedDelivery", item.getItemMeta().getDisplayName()));
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.persistedDelivery", itemDisplayName(item)));
         }
         plugin.meta().save();
     }

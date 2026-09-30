@@ -59,14 +59,27 @@ public final class ShopPendingStore {
         for (String key : data.getKeys(false)) {
             try {
                 UUID uid = UUID.fromString(key);
-                Category category = Category.valueOf(data.getString(key + ".category", ""));
+                Category category;
+                try {
+                    category = Category.valueOf(data.getString(key + ".category", ""));
+                } catch (IllegalArgumentException | NullPointerException e) {
+                    plugin.getLogger().warning("[Dung] Dropping pending shop result " + key
+                            + ": bad category '" + data.getString(key + ".category", "") + "'.");
+                    continue;
+                }
                 String itemB64 = data.getString(key + ".item");
                 var item = StashUI.decode(itemB64);
-                if (item == null) continue;
+                if (item == null) {
+                    plugin.getLogger().warning("[Dung] Dropping pending shop result " + key
+                            + ": bad item data.");
+                    continue;
+                }
                 var rarity = GearFactory.getRarity(item);
                 int salvage = ShopRules.salvageValue(rarity, WorkstationRules.primaryStat(item));
                 pending.put(uid, new ServerSideRollResult(item, rarity, category, salvage));
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                plugin.getLogger().warning("[Dung] Dropping pending shop result " + key
+                        + ": " + e.getMessage());
             }
         }
     }

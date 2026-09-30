@@ -465,13 +465,13 @@ public final class Lang {
             entry("class.ranger", "Ranger", "Tolvaj"),
 
             // ---- in-run: weapon / gear state ----
-            entry("gear.weaponBroken", "§cYour weapon is broken — repair it at §6/shop§7 before attacking.", "§cA fegyvered eltört — javítsd meg a §6/shop§7 menüben, mielőtt támadsz."),
-            entry("gear.itemBroken", "§cThis item is broken — repair it at §6/shop§7 before using its ability.", "§cEz a tárgy eltört — javítsd meg a §6/shop§7 menüben, mielőtt a képességét használod."),
-            entry("gear.itemBroke", "§cYour %s §cbroke and can no longer be used! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability).", "§c%s §celtört, és már nem használható! §7Javítsd meg a §6/shop§7 menüben (150 érme + 100 szilánk 10 tartósságért)."),
-            entry("gear.armorBroke", "§cYour %s §cbroke%s! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability).", "§c%s §celtört%s! §7Javítsd meg a §6/shop§7 menüben (150 érme + 100 szilánk 10 tartósságért)."),
+            entry("gear.weaponBroken", "§cYour weapon is broken — repair it at §6/shop§7 between runs before attacking.", "§cA fegyvered eltört — javítsd meg a §6/shop§7 menüben futamok között, mielőtt támadsz."),
+            entry("gear.itemBroken", "§cThis item is broken — repair it at §6/shop§7 between runs before using its ability.", "§cEz a tárgy eltört — javítsd meg a §6/shop§7 menüben futamok között, mielőtt a képességét használod."),
+            entry("gear.itemBroke", "§cYour %s §cbroke and can no longer be used! §7Repair at §6/shop§7 between runs (150 coins + 100 shards for 10 durability).", "§c%s §celtört, és már nem használható! §7Javítsd meg a §6/shop§7 menüben futamok között (150 érme + 100 szilánk 10 tartósságért)."),
+            entry("gear.armorBroke", "§cYour %s §cbroke%s! §7Repair at §6/shop§7 between runs (150 coins + 100 shards for 10 durability).", "§c%s §celtört%s! §7Javítsd meg a §6/shop§7 menüben futamok között (150 érme + 100 szilánk 10 tartósságért)."),
             entry("gear.fromDescent", " from the descent", " a leszállás során"),
             entry("gear.soulSiphonFull", "§cSoul Siphon is full! Shift+left-click to heal yourself with its stored health.", "§cA Soul Siphon megtelt! Guggolás + bal kattintás a gyógyuláshoz a tárolt egészségből."),
-            entry("gear.manaShieldBroke", "§cYour mana shield broke! §7Repair at §6/shop§7 (150 coins + 100 shards for 10 durability).", "§cA mana pajzsod eltört! §7Javítsd meg a(z) §6/shop§7 menüben (150 érme + 100 szilánk 10 tartósságért)."),
+            entry("gear.manaShieldBroke", "§cYour mana shield broke! §7Repair at §6/shop§7 between runs (150 coins + 100 shards for 10 durability).", "§cA mana pajzsod eltört! §7Javítsd meg a(z) §6/shop§7 menüben futamok között (150 érme + 100 szilánk 10 tartósságért)."),
 
             // ---- in-run: ability feedback ----
             entry("ability.noAbility", "§cYour hand item has no ability.", "§cA kezedben lévő tárgynak nincs képessége."),

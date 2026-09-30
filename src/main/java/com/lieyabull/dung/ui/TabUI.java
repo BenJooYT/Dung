@@ -4,19 +4,21 @@ import com.lieyabull.dung.dungeon.Floor;
 import com.lieyabull.dung.game.DungeonInstance;
 import com.lieyabull.dung.game.PlayerState;
 import com.lieyabull.dung.game.Run;
-import com.lieyabull.dung.items.GearFactory;
 import com.lieyabull.dung.util.TextUtil;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
-import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.scoreboard.*;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Tab menu: detailed, layered info. Header shows run + progression; the player list is
  * repurposed to show combat build stats, class/abilities, and dungeon exploration status.
+ * Static build/CP/equipment detail lives here (never duplicated in the HUD sidebar, which
+ * stays live-only). Durability renders per-piece from the shared {@link UiDurability} helper.
  */
 public final class TabUI {
     public void refresh(Player p, DungeonInstance di, org.bukkit.scoreboard.Scoreboard board) {
@@ -49,9 +51,11 @@ public final class TabUI {
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.equipment"));
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.mainhand", itemName(p.getInventory().getItemInMainHand())));
             for (int a = 0; a < 4; a++) team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.armorSlot", armorSlot(p, a), itemName(p.getInventory().getArmorContents()[a])));
-            // Durability summary for persistent gear
-            String durSummary = durabilitySummary(p);
-            if (!durSummary.isEmpty()) team(o, i++, "   " + durSummary);
+            // Durability per-piece from the shared helper (HUD shows worst-piece + count).
+            // Prefix comes from the tab.durability Lang key — never hardcoded English.
+            String durPrefix = com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.durability");
+            List<UiDurability.Piece> pieces = UiDurability.collect(p.getInventory(), p);
+            for (String dl : UiDurability.tabLines(durPrefix, pieces)) team(o, i++, "   " + dl);
             team(o, i++, "");
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.dungeon", (run == null ? 0 : run.floorIndex + 1)));
             if (run != null && run.floor != null) {
@@ -101,6 +105,9 @@ public final class TabUI {
             team(o, i++, "");
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.controls"));
         }
+        // Clear any rows beyond this frame so a shrinking row count (or st == null with i == 0)
+        // never leaves stale dungeon stats visible from a previous longer frame.
+        clearBeyond(o, i);
         // hide real player name rows (single player)
     }
 
@@ -157,57 +164,43 @@ public final class TabUI {
         return s.hasItemMeta() && s.getItemMeta().hasDisplayName() ? s.getItemMeta().getDisplayName() : s.getType().name();
     }
 
-    /** Build a durability summary string for the player's persistent gear. */
-    private static String durabilitySummary(Player p) {
-        int total = 0;
-        int totalMax = 0;
-        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
-        ItemStack[] hands = {inv.getItemInMainHand(), inv.getItemInOffHand()};
-        for (ItemStack s : hands) {
-            if (s == null || s.getType() == Material.AIR) continue;
-            int d = GearFactory.getDurability(s);
-            int m = GearFactory.getMaxDurability(s);
-            if (d >= 0 && m > 0) { total += d; totalMax += m; }
-        }
-        for (ItemStack s : inv.getArmorContents()) {
-            if (s == null || s.getType() == Material.AIR) continue;
-            int d = GearFactory.getDurability(s);
-            int m = GearFactory.getMaxDurability(s);
-            if (d >= 0 && m > 0) { total += d; totalMax += m; }
-        }
-        if (totalMax <= 0) return "";
-        double pct = (double) total / totalMax;
-        String color;
-        if (pct >= 0.67) color = "§a";
-        else if (pct >= 0.34) color = "§e";
-        else color = "§c";
-        int filled = (int) Math.round(pct * 10);
-        int empty = 10 - filled;
-        StringBuilder bar = new StringBuilder("§7Durability: ").append(color);
-        bar.append("█".repeat(Math.max(0, filled)));
-        bar.append("§8░".repeat(Math.max(0, empty)));
-        bar.append(" §7").append(total).append("/").append(totalMax);
-        return bar.toString();
-    }
-
-    /** Remove the tab objective and all row teams so stale dungeon stats don't linger after a run. */
+    /** Remove the tab objective and all row teams so stale dungeon stats don't linger after a run.
+     *  Matches exactly our own {@code dung_dN} teams (plus legacy {@code dN} teams for migration
+     *  from before the rename) — never a broad startsWith("d") that could catch other teams. */
     public void reset(org.bukkit.scoreboard.Scoreboard board) {
         if (board == null) return;
-        for (Team t : board.getTeams()) {
-            if (t.getName().startsWith("d")) {
-                for (String entry : t.getEntries()) board.resetScores(entry);
+        for (Team t : new ArrayList<>(board.getTeams())) {
+            String n = t.getName();
+            if (n != null && (n.startsWith("dung_d") || n.matches("d\\d+"))) {
+                for (String entry : new ArrayList<>(t.getEntries())) board.resetScores(entry);
                 t.unregister();
             }
         }
         if (board.getObjective("dungtab") != null) board.getObjective("dungtab").unregister();
     }
 
+    /** Unregister row teams at/after {@code from} (both current and legacy prefixes) and reset
+     *  their entry scores so shrunken frames leave no stale rows. */
+    private void clearBeyond(Objective o, int from) {
+        org.bukkit.scoreboard.Scoreboard b = o.getScoreboard();
+        for (int idx = from; idx < 40; idx++) {
+            for (String name : new String[]{"dung_d" + idx, "d" + idx}) {
+                Team t = b.getTeam(name);
+                if (t == null) continue;
+                for (String entry : new ArrayList<>(t.getEntries())) b.resetScores(entry);
+                // Also reset the conventional invisible entry in case the team was emptied already.
+                b.resetScores("§0" + " ".repeat(idx + 1));
+                t.unregister();
+            }
+        }
+    }
+
     private void team(Objective o, int index, String text) {
-        String name = "d" + index;
+        String name = "dung_d" + index;
         Team t = o.getScoreboard().getTeam(name);
         if (t == null) t = o.getScoreboard().registerNewTeam(name);
         t.prefix(LegacyComponentSerializer.legacySection().deserialize(text));
-        // invisible entry name so no stray "dN" suffix shows beside the prefix text. Must NOT
+        // invisible entry name so no stray "dung_dN" suffix shows beside the prefix text. Must NOT
         // collide with HUD's invisible entries ("§8"+spaces) — the board is shared and an entry
         // string can belong to only one team. Use a different invisible color (§0) for Tab rows.
         t.addEntry("§0" + " ".repeat(index + 1));

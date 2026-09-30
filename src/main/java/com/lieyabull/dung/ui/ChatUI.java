@@ -55,6 +55,11 @@ public final class ChatUI {
     /** Full prompt, or one without the Start-a-Run button (for players already inside a run). */
     public static void startPrompt(Player p, boolean includeStartRun) {
         String lang = "lang";
+        boolean inRun = false;
+        try {
+            com.lieyabull.dung.Dung plugin = com.lieyabull.dung.Dung.instance();
+            if (plugin != null && plugin.game() != null) inRun = plugin.game().isInInstance(p);
+        } catch (Throwable ignored) {}
         p.sendMessage("");
         p.sendMessage(Component.text("═══════════════════════════", NamedTextColor.DARK_GRAY));
         p.sendMessage(Component.text("    Dung", NamedTextColor.RED, TextDecoration.BOLD)
@@ -70,8 +75,10 @@ public final class ChatUI {
                 NamedTextColor.AQUA, "/upgrades", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.upgrades.hover")));
         p.sendMessage(menuButton(com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.stats.label"),
                 NamedTextColor.YELLOW, "/dung stats", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.stats.hover")));
-        p.sendMessage(menuButton(com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.cp.label"),
-                NamedTextColor.GOLD, "/dung cp", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.cp.hover")));
+        if (inRun) {
+            p.sendMessage(menuButton(com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.cp.label"),
+                    NamedTextColor.GOLD, "/dung cp", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.cp.hover")));
+        }
         p.sendMessage(menuButton(com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.help.label"),
                 NamedTextColor.GRAY, "/dung help", com.lieyabull.dung.lang.Lang.forPlayer(p, "menu.help.hover")));
         p.sendMessage(Component.text("═══════════════════════════", NamedTextColor.DARK_GRAY));
@@ -107,11 +114,12 @@ public final class ChatUI {
 
     /** Commands the plugin mentions in chat that should be clickable (command + optional argument word). */
     private static final java.util.regex.Pattern COMMAND_PATTERN = java.util.regex.Pattern.compile(
-            "/(?:shop(?:\\s+weapon)?|\\bupgrades|\\bstash|\\bsalvage(?:\\s+favorite)?|\\bplots"
-            + "|\\bplot(?:\\s+(?:claim|home|name|warp|unclaim))?"
+            "/(?:shop(?:\\s+(?:weapon|armor|shield))?|\\bupgrades|\\bstash|\\bbalance|\\bsalvage(?:\\s+(?:all|favorite))?|\\bplots"
+            + "(?:\\s+warp(?:\\s+\\S+)?)?"
+            + "|\\bplot(?:\\s+(?:claim|home|name|warp|unclaim|convert|filllayers|settings|perm))?"
             + "|\\broom(?:\\s+[a-z]+)?"
-            + "|\\bdung(?:\\s+(?:start|leave|descend|stats|help|give|create|invite|accept|decline|kick|disband|info|shieldswitch|favorite))?"
-            + "|\\bparty(?:\\s+(?:create|invite|accept|decline|leave|kick|disband|info))?)");
+            + "|\\bdung(?:\\s+(?:start|leave|descend|stats|cp|help|give|create|invite|accept|decline|kick|disband|info|shieldswitch|favorite|stop|reset|tutorial|bossbar|forceboss|lobbykit|room))?"
+            + "|\\bparty(?:\\s+(?:create|invite|accept|decline|leave|kick|disband|info))?|\\blobby|\\bafk|\\bcheck|\\bdummy)");
 
     /** Turn a legacy-format message string into a Component where every recognized command is
      *  clickable (and hoverable) so players can run it instead of typing it out. */

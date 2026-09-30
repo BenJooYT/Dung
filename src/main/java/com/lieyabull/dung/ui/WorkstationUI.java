@@ -42,6 +42,16 @@ public final class WorkstationUI implements Listener {
     private static final String ACTION_SELECT = "select";
     private static final String ACTION_CONFIRM = "confirm";
     private static final String ACTION_BACK = "back";
+    private static final String ACTION_PREV = "prev";
+    private static final String ACTION_NEXT = "next";
+
+    // Gear list occupies the first three rows (0-26); the control row holds confirm/info.
+    private static final int PAGE_SIZE = 27;
+    private static final int INFO_SLOT = 32;
+    private static final int CONFIRM_SLOT = 31;
+    private static final int BACK_SLOT = 41;
+    private static final int PREV_SLOT = 36;
+    private static final int NEXT_SLOT = 44;
 
     private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.legacySection();
 
@@ -63,13 +73,18 @@ public final class WorkstationUI implements Listener {
         DungeonInstance di;
         // maps GUI gear slot -> player inventory slot (0-40; covers storage, armor and offhand)
         int[] guiToPlayer;
-        int selected = -1;      // player inventory slot currently selected
+        int selected = -1;      // player inventory slot currently selected (-1 = none)
         String selectedFp = ""; // identity fingerprint of the selected item, re-checked before applying
         boolean confirmed;      // for SALVAGE/PRESERVE: whether the confirm step is active
         boolean busy;           // set once an operation is executing, to guard against double-click re-apply
+        int page;               // zero-based page of the gear list (PAGE_SIZE entries per page)
     }
 
     public void openWorkstation(Player p, DungeonInstance di, WorkstationType type) {
+        openWorkstation(p, di, type, 0);
+    }
+
+    public void openWorkstation(Player p, DungeonInstance di, WorkstationType type, int page) {
         PlayerState st = di.playerStateOf(p);
         if (st == null) return;
         MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
@@ -86,9 +101,23 @@ public final class WorkstationUI implements Listener {
         List<Integer> slots = type == WorkstationType.STORAGE
                 ? di.persistentSlots(p)
                 : di.workstationSlots(p);
-        for (int i = 0; i < slots.size() && i < 27; i++) {
+        // PRESERVE/SALVAGE reject persistent gear server-side via WorkstationRules.isWorkstationGear
+        // (run gear only) — filter those pieces out of the list instead of letting CONFIRM refuse them.
+        // UPGRADE/REFORGE accept persistent gear (at double cost), so they keep the full list.
+        if (type == WorkstationType.PRESERVE || type == WorkstationType.SALVAGE) {
+            List<Integer> runOnly = new ArrayList<>();
+            for (int playerSlot : slots) {
+                if (WorkstationRules.isWorkstationGear(itemAt(p, playerSlot))) runOnly.add(playerSlot);
+            }
+            slots = runOnly;
+        }
+        int totalPages = Math.max(1, (slots.size() + PAGE_SIZE - 1) / PAGE_SIZE);
+        state.page = Math.max(0, Math.min(page, totalPages - 1));
+        int from = state.page * PAGE_SIZE;
+        int to = Math.min(slots.size(), from + PAGE_SIZE);
+        for (int i = from; i < to; i++) {
             int playerSlot = slots.get(i);
-            int guiIndex = i;
+            int guiIndex = i - from;
             ItemStack gear = itemAt(p, playerSlot);
             if (gear == null) continue;
             ItemStack display = gear.clone();
@@ -96,30 +125,36 @@ public final class WorkstationUI implements Listener {
                     key, org.bukkit.persistence.PersistentDataType.STRING, ACTION_SELECT));
             display.editMeta(meta -> meta.getPersistentDataContainer().set(
                     slotKey, org.bukkit.persistence.PersistentDataType.INTEGER, guiIndex));
-            inv.setItem(i, display);
+            inv.setItem(guiIndex, display);
             state.guiToPlayer[guiIndex] = playerSlot;
         }
 
-        // Info panel (shifted right by 1 slot)
-        int infoSlot = type == WorkstationType.STORAGE ? 32 : 31;
-        inv.setItem(infoSlot, makeInfo(p, type));
+        // Info panel stays anchored at INFO_SLOT in both the list and the confirm view.
+        inv.setItem(INFO_SLOT, makeInfo(p, type));
+        if (totalPages > 1) {
+            if (state.page > 0) {
+                inv.setItem(PREV_SLOT, makeItem(Material.ARROW, "§f← Previous",
+                        List.of("§7Page " + (state.page + 1) + " of " + totalPages), ACTION_PREV));
+            }
+            if (state.page < totalPages - 1) {
+                inv.setItem(NEXT_SLOT, makeItem(Material.ARROW, "§fNext →",
+                        List.of("§7Page " + (state.page + 1) + " of " + totalPages), ACTION_NEXT));
+            }
+        }
 
         fillEmpty(inv);
         openStates.put(inv, state);
         p.openInventory(inv);
     }
 
+    /**
+     * Raw-slot read using the exact scheme {@link DungeonInstance#workstationSlots} emits: 0-35
+     * storage, 36-39 armor, 40 offhand. There are no negative markers — DungeonInstance never
+     * produces them, so any out-of-range slot (including the -1 "nothing selected" sentinel)
+     * simply yields null.
+     */
     private ItemStack itemAt(Player p, int playerSlot) {
-        if (playerSlot < 0) {
-            org.bukkit.inventory.EquipmentSlot es = switch (playerSlot) {
-                case -1 -> org.bukkit.inventory.EquipmentSlot.HEAD;
-                case -2 -> org.bukkit.inventory.EquipmentSlot.CHEST;
-                case -3 -> org.bukkit.inventory.EquipmentSlot.LEGS;
-                case -4 -> org.bukkit.inventory.EquipmentSlot.FEET;
-                default -> null;
-            };
-            return es == null ? null : p.getInventory().getItem(es);
-        }
+        if (playerSlot < 0 || playerSlot > 40) return null;
         return p.getInventory().getItem(playerSlot);
     }
 
@@ -178,16 +213,17 @@ public final class WorkstationUI implements Listener {
 
         if (action == null) {
             // Clicked an item in the player's own inventory (bottom slots) — treat as a selection
-            // if it's workstation-eligible gear. The raw slot from InventoryClickEvent maps to the
-            // player's inventory slot for bottom-area clicks.
+            // if it is eligible for this workstation type. The bottom view lists the 36 storage
+            // slots in vanilla chest order (main 9-35 first, hotbar 0-8 last), so the raw offset
+            // must be converted back to the PlayerInventory slot DungeonInstance operates on.
             int rawSlot = e.getRawSlot();
             int invSize = e.getInventory().getSize();
             if (rawSlot >= invSize) {
-                // Bottom area click — map to player inventory slot
-                int playerSlot = rawSlot - invSize;
-                if (playerSlot >= 0 && playerSlot < 41) {
-                    ItemStack playerItem = p.getInventory().getItem(playerSlot);
-                    if (playerItem != null && WorkstationRules.isWorkstationGear(playerItem)) {
+                int viewIndex = rawSlot - invSize;
+                if (viewIndex >= 0 && viewIndex < 36) {
+                    int playerSlot = viewIndex < 27 ? viewIndex + 9 : viewIndex - 27;
+                    ItemStack playerItem = itemAt(p, playerSlot);
+                    if (playerItem != null && eligibleForType(playerItem, state.type)) {
                         state.selected = playerSlot;
                         state.confirmed = false;
                         renderDetail(p, state, e.getInventory());
@@ -199,7 +235,18 @@ public final class WorkstationUI implements Listener {
 
         if (ACTION_BACK.equals(action)) {
             state.confirmed = false;
-            reopen(() -> openWorkstation(p, state.di, state.type));
+            int page = state.page;
+            reopen(() -> openWorkstation(p, state.di, state.type, page));
+            return;
+        }
+        if (ACTION_PREV.equals(action)) {
+            int page = state.page;
+            reopen(() -> openWorkstation(p, state.di, state.type, page - 1));
+            return;
+        }
+        if (ACTION_NEXT.equals(action)) {
+            int page = state.page;
+            reopen(() -> openWorkstation(p, state.di, state.type, page + 1));
             return;
         }
         if (ACTION_SELECT.equals(action)) {
@@ -220,8 +267,26 @@ public final class WorkstationUI implements Listener {
                 return;
             }
             execute(state, p);
-            reopen(() -> openWorkstation(p, state.di, state.type));
+            int page = state.page;
+            reopen(() -> openWorkstation(p, state.di, state.type, page));
         }
+    }
+
+    /**
+     * Whether an item may be selected for the given workstation type. Mirrors the server-side
+     * validation in {@link DungeonInstance}: PRESERVE/SALVAGE accept run gear only
+     * ({@link WorkstationRules#isWorkstationGear}), UPGRADE/REFORGE additionally accept persistent
+     * gear (at double cost), and STORAGE is the persistent-only read-only view.
+     */
+    private static boolean eligibleForType(ItemStack item, WorkstationType type) {
+        if (item == null) return false;
+        return switch (type) {
+            case STORAGE -> com.lieyabull.dung.items.GearFactory.isPersistent(item);
+            case PRESERVE, SALVAGE -> WorkstationRules.isWorkstationGear(item);
+            case UPGRADE, REFORGE ->
+                    WorkstationRules.isWorkstationGear(item)
+                            || com.lieyabull.dung.items.GearFactory.isPersistent(item);
+        };
     }
 
     /** Render the detail panel for the currently selected item (costs + result preview + confirm/back). */
@@ -230,7 +295,8 @@ public final class WorkstationUI implements Listener {
         ItemStack item = currentItem(p, state, playerSlot);
         if (item == null) {
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "workstation.unavailable"));
-            reopen(() -> openWorkstation(p, state.di, state.type));
+            int page = state.page;
+            reopen(() -> openWorkstation(p, state.di, state.type, page));
             return;
         }
         state.selectedFp = fingerprint(item);
@@ -330,25 +396,16 @@ public final class WorkstationUI implements Listener {
                 confirmLore.add(confirmCostLine[0]);
             }
         }
-        inv.setItem(31, makeItem(Material.LIME_DYE, confirmName, confirmLore, ACTION_CONFIRM));
-        inv.setItem(41, makeItem(Material.ARROW, Lang(p, "ws.back.name"),
+        inv.setItem(CONFIRM_SLOT, makeItem(Material.LIME_DYE, confirmName, confirmLore, ACTION_CONFIRM));
+        inv.setItem(BACK_SLOT, makeItem(Material.ARROW, Lang(p, "ws.back.name"),
                 List.of(Lang(p, "ws.back.lore")), ACTION_BACK));
-        inv.setItem(32, makeInfo(p, state.type)); // keep the info panel anchored
+        inv.setItem(INFO_SLOT, makeInfo(p, state.type)); // keep the info panel anchored
     }
 
     private ItemStack currentItem(Player p, State state, int playerSlot) {
-        if (playerSlot < 0) {
-            // equipped armor slot requested via persistentSlots negative marker
-            org.bukkit.inventory.EquipmentSlot es = switch (playerSlot) {
-                case -1 -> org.bukkit.inventory.EquipmentSlot.HEAD;
-                case -2 -> org.bukkit.inventory.EquipmentSlot.CHEST;
-                case -3 -> org.bukkit.inventory.EquipmentSlot.LEGS;
-                case -4 -> org.bukkit.inventory.EquipmentSlot.FEET;
-                default -> null;
-            };
-            return es == null ? null : p.getInventory().getItem(es);
-        }
-        return p.getInventory().getItem(playerSlot);
+        // Same raw-slot scheme as DungeonInstance.workstationSlots(): 0-35 storage, 36-39 armor,
+        // 40 offhand. No negative markers — out-of-range slots (incl. the -1 sentinel) yield null.
+        return itemAt(p, playerSlot);
     }
 
     private void execute(State state, Player p) {

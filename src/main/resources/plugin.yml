@@ -63,7 +63,7 @@ commands:
     description: Open the OP-only troll item menu
     usage: /troll
   afk:
-    description: Toggle your AFK status right away; AFK players are not attacked or pushed by mobs
+    description: Mark yourself AFK right away; AFK players are not attacked or pushed by mobs
     usage: /afk
   check:
     description: Open the container you are looking at (op/dung.admin), bypassing plot protections

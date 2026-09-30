@@ -111,20 +111,8 @@ public final class Enemy {
     }
 
     private void scaleFor(MobType t) {
-        double s = t.isElite() ? 1.4 : 1.0;
-        try {
-            if (entity instanceof org.bukkit.entity.Bee bee) {
-                // Bees are naturally small — no setSize method, they're fine as-is
-            } else if (entity instanceof org.bukkit.entity.Spider sp) {
-                // Spiders are naturally the right size
-            } else if (entity instanceof org.bukkit.entity.Creeper cr) {
-                // Creepers are naturally the right size
-            } else if (entity instanceof org.bukkit.entity.Ravager rv) {
-                // Ravagers are naturally large
-            } else if (entity instanceof org.bukkit.entity.Warden wd) {
-                // Wardens are naturally large
-            }
-        } catch (Throwable ignored) {}
+        // Visual sizes are vanilla-correct per entity type (Bee/Spider/Creeper/Ravager/Warden).
+        // Elite toughness is handled via HP scaling, not model scale, so no resize here.
     }
 
     public void tick(Player p, long deltaMs, java.util.Set<java.util.UUID> deadPlayers) {
@@ -419,11 +407,9 @@ public final class Enemy {
     }
 
     private void faceTarget(Player p) {
-        try {
-            Location dir = p.getLocation().subtract(entity.getLocation());
-            ((org.bukkit.entity.LivingEntity) entity).setRotation(
-                    (float) (Math.toDegrees(Math.atan2(-dir.getX(), dir.getZ()))), 0);
-        } catch (Throwable ignored) {}
+        if (p == null || !(entity instanceof org.bukkit.entity.LivingEntity le)) return;
+        Location dir = p.getLocation().subtract(entity.getLocation());
+        le.setRotation((float) (Math.toDegrees(Math.atan2(-dir.getX(), dir.getZ()))), 0);
     }
 
     private void attackPlayer(Player p) {

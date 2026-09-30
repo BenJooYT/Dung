@@ -695,11 +695,14 @@ public final class GearFactory {
         for (String entry : raw.split(";")) {
             if (entry.isEmpty()) continue;
             int i = entry.indexOf(':');
-            String id = i < 0 ? entry : entry.substring(0, i);
-            int value = 0;
+            if (i < 0) continue; // malformed (no value part) — skip entirely
+            String id = entry.substring(0, i);
+            if (id.isEmpty()) continue;
+            int value;
             try {
-                value = Integer.parseInt(i < 0 ? "" : entry.substring(i + 1));
+                value = Integer.parseInt(entry.substring(i + 1));
             } catch (NumberFormatException ignored) {
+                continue; // malformed value — skip entirely instead of a value=0 roll
             }
             Affix affix = byId(id);
             if (affix != null) out.add(new Affix.AffixRoll(affix, value));

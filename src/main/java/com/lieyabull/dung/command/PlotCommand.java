@@ -23,6 +23,8 @@ import java.util.List;
 public final class PlotCommand implements CommandExecutor, TabCompleter {
 
     private final Dung plugin;
+    /** Players who ran bare /plot unclaim and must confirm within 30s via /plot unclaim confirm. */
+    private final java.util.Map<java.util.UUID, Long> unclaimPending = new java.util.HashMap<>();
 
     public PlotCommand(Dung plugin) {
         this.plugin = plugin;
@@ -172,6 +174,17 @@ public final class PlotCommand implements CommandExecutor, TabCompleter {
             }
             case "unclaim": {
                 if (blockIfInRun(p)) return true;
+                boolean confirmed = args.length >= 2 && args[1].equalsIgnoreCase("confirm");
+                if (!confirmed) {
+                    Long at = unclaimPending.get(p.getUniqueId());
+                    if (at == null || System.currentTimeMillis() - at > 30_000) {
+                        unclaimPending.put(p.getUniqueId(), System.currentTimeMillis());
+                        p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(
+                                "§eUnclaim the plot you're standing on? This frees it for anyone to claim. Run §f/plot unclaim confirm §ewithin 30s to confirm."));
+                        return true;
+                    }
+                }
+                unclaimPending.remove(p.getUniqueId());
                 String err = pm.unclaimPlot(p);
                 if (err != null) {
                     p.sendMessage(err);

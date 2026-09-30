@@ -61,8 +61,11 @@ clearing rooms banks persistent coins and kill/full-clear stats that survive dea
 /leaderboard      # top players by coins/shards/kills/clears/max floor (incl. offline)
 ```
 
-Requires permission `dung.admin` (default: OP) for the debug command `/dung give`; everything
-else (including `/shop`, `/upgrades`, `/salvage`) is open to all players.
+Requires permission `dung.admin` (default: OP) for the admin surface (`/dung
+give|stop|reset|forceboss|room|bossbar`, `/check`, `/setlobby`, `/dummy`, `/flyspeed`);
+`/troll` and `/plot filllayers` are OP-only (`isOp()`). Everything else — `/dung
+start|descend|leave|stats|cp|class|shieldswitch|tutorial`, `/shop`, `/upgrades`, `/salvage`,
+`/stash`, `/balance`, `/party`, `/plot`, `/convert`, `/afk`, `/lobby` — is open to all players.
 
 ---
 
@@ -75,7 +78,7 @@ at different coordinates. Each player has their own `PlayerState` (the single so
 for HP/mana/stats); gear is never duplicated — it stays in the real player inventory and stats
 are recomputed from it on every change. Dungeon geometry is generated purely as data (`Floor`,
 `FloorGenerator`, `RoomNode`) and then projected into the world by `RoomGen`, all at a fixed
-`BASE_Y = 80` in the resolved non-End world.
+`BASE_Y = 130` in the resolved non-End world.
 
 ```
  Dung (JavaPlugin)
@@ -92,9 +95,10 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
   │       ├─ structure    WorldEdit schematic library (structure package)
   │       ├─ Enemy        runtime mob + AI
   │       ├─ BossController  the Warden (HP scales with party size)
-  │       └─ GrovekeeperController  The Grovekeeper (20% chance per floor, drops Forest Potion)
+  │       └─ GrovekeeperController  The Grovekeeper (20% chance per floor, 50% Elixir drop)
   ├─ GameListener         Paper events -> GameManager -> correct DungeonInstance
-  ├─ DungCommand          /dung, /dungeon, /shop, /upgrades, /salvage, /party
+  ├─ DungCommand          /dung + /dungeon (run lifecycle + admin; delegates shop/party/… to MetaCommand)
+  ├─ MetaCommand          /shop, /upgrades, /salvage, /stash, /party, /balance, /leaderboard
   ├─ Upgrades             permanent stat-upgrade tracks (shards)
   ├─ ItemPool / GearFactory / ItemTags / Rarity   loot system
   ├─ Pickup               floor pickup identity & effects
@@ -107,23 +111,33 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 
 ## Commands
 
-`DungCommand` routes `/dung` + `/dungeon` (subcommands), and the top-level `/shop`,
-`/upgrades`, and `/salvage` commands. Only `/dung give` is admin-restricted.
+`DungCommand` owns `/dung` + `/dungeon` (run lifecycle, admin `give|stop|reset|forceboss|room|bossbar|lobbykit`,
+player `start|descend|leave|stats|cp|class|shieldswitch|tutorial|help`) and delegates `party|shop|upgrades|salvage|balance`
+back to `MetaCommand`. `MetaCommand` owns the non-dung commands `/shop`, `/upgrades`, `/salvage`, `/stash`, `/party`,
+`/balance`, `/leaderboard`. Admin-gated subcommands carry `dung.admin` (or OP-only) in the table below.
 
 | Command | Permission | Effect |
 |---|---|---|
 | `/dung start` | all | Begins a new run (errors if one is active). |
 | `/dung descend` | all | After beating the boss, generates and enters the next floor. |
 | `/dung leave` | all | Ends the current run (strips run gear, keeps persistent items). |
-| `/shop` | all | Opens the between-run gacha shop GUI: pick a tab (weapons/armor/mana shields), roll with persistent coins, then KEEP or SALVAGE the result. |
+| `/dung shieldswitch` | all (mid-run) | Swap the equipped mana shield (slot 9) with the best shield in your inventory (also offered as a clickable Switch prompt). |
+| `/shop` | all | Opens the between-run gacha shop GUI: pick a tab (weapons/armor/mana shields), roll with persistent coins, then KEEP or SALVAGE the result. Forest/Stone Transmutation Elixirs cost 55 persistent coins each. |
+| `/stash` | all (outside runs) | Opens your takeout-only stash (broken gear that couldn't fit in your bag). |
+| `/balance [player]` | all | Shows your persistent coins and shards (or another online player's). |
 | `/upgrades` | all | Opens the upgrades GUI: spend shards on permanent stat upgrades. |
 | `/salvage` | all | Break the held Dung armor piece into permanent shards. Outside a run, shards go straight to your persistent balance; in a run they're banked on boss defeat. |
 | `/salvage all` | all | Salvage every Dung armor piece in your bag outside the hotbar, equipped slots, and offhand — favorites are skipped. |
 | `/salvage favorite` | all | Toggle the favorite flag on the held armor piece (favorited gear can never be salvaged). |
 | `/language [language]` | all | Show or set your UI language (`english` or `magyar`). Re-localizes the lore on gear you already hold and your stash immediately. |
 | `/dung stats` | all | Prints the profile: class, coins, shards, deaths, best floor, kills, clears. |
-| `/dung class <w\|m\|r>` | all | Sets the class for the next run; persists immediately. |
+| `/dung cp` | all (mid-run) | Opens the Combat Power breakdown for your current build (stat weights + locked difficulty modifier). |
+| `/dung class <warrior\|mage\|ranger>` | all | Sets the class for the next run; persists immediately. |
 | `/dung give <t>` | `dung.admin` | Debug: `rareweapon`, `heal`, `coins`. |
+| `/dung stop` | `dung.admin` | Broadcasts a shutdown notice and stops the server. |
+| `/dung reset` | `dung.admin` | Wipes all player data (`saves.yml`, `plots.yml`) and disables natural mob spawning. |
+| `/dung lobbykit` | OP only | Grants the lobby building kit. |
+| `/dung tutorial <roomtype>` | all | Shows how to build the schematic for one room type (bare command lists them). |
 | `/dung help` | all | Shows clickable chat actions (`ChatUI.startPrompt`). |
 | `/party create` | all | Create a new party (you become leader). |
 | `/party invite <player>` | all | Invite a player to your party (leader only; 5s anti-spam cooldown). |
@@ -142,9 +156,12 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
 | `/plot pvp on\|off` | all | Toggle PVP on the plot you're standing on (off by default). |
 | `/plot fire on\|off` | all | Toggle fire spread/burning on the plot you're standing on. |
 | `/plot public on\|off` | all | Toggle public access (anyone may build/open containers). |
+| `/plot mobkill on\|off` | all | Toggle whether anyone (on) or only the owner/trusted (off, default) may kill mobs on the plot. |
 | `/plot perm` | all | Show the access lists (public, build, container, pickup, mobkill) of the plot you're standing on. |
 | `/plot perm <build\|container\|pickup\|mobkill> <player> [on\|off]` | all | Grant or revoke a per-player plot permission (`on\|grant` and `off\|remove\|revoke` work in either position, e.g. `/plot perm build remove <name>`). |
 | `/plot unclaim` | all | Unclaim the plot you're standing on (frees it for re-claiming). |
+| `/convert` | all | Toggle whether transformation potions may affect your player-placed blocks (off by default). |
+| `/plot filllayers` | OP only | Fill bedrock + stone layers (y=0–30) in generated plots-world chunks without touching builds above. |
 
 `/p` is an alias for `/plot`, so `/p perm build <name> on` works everywhere `/plot` does.
 | `/leaderboard [category] [page]` | all | Top players by `persistent_coins`/`shards`/`kills`/`clears`/`max_floor`, including offline players. |
@@ -165,7 +182,8 @@ run-coin pickups; `/dung give heal` calls vanilla `setHealth(20)`.
 
 ### Persistent economy
 
-- **Persistent coins** — earned by beating bosses (banked each floor), survive death, and are
+- **Persistent coins** — earned by beating bosses (banked each floor as `min(40, floor delta) / 2`,
+  so at most 20 per floor), survive death, and are
   spent in `/shop` on gear that persists between runs.
 - **Shards** — earned by breaking armor with `/salvage` (held piece) or `/salvage all`
   (every armor piece in the bag outside hotbar/equipment). Value scales with rarity and defense.
@@ -209,8 +227,8 @@ the setting is stored per player in `MetaManager` and persists across restarts.
 **`Dung`** (extends `JavaPlugin`) — plugin lifecycle & shared accessors.
 
 - `onEnable()` — saves default config, loads `MetaManager`, builds `GameManager`, registers
-  `GameListener`, `RoomTutorial`, and `ShopUI`, and binds `DungCommand` to `/dung`, `/dungeon`,
-  `/shop`, `/upgrades`, `/salvage`, and `/party`.
+  `GameListener`, `RoomTutorial`, and `ShopUI`, and binds `DungCommand` to `/dung` + `/dungeon`
+  and `MetaCommand` to `/shop`, `/upgrades`, `/salvage`, `/stash`, `/party`, `/balance`, `/leaderboard`.
 - `onDisable()` — shuts down the run (`game.shutdown()`) and saves meta.
 - `world()` / `resolveWorld()` — **lazy** world resolution: skips the End, falls back to the
   first world. Resolved lazily to avoid NPEs during `onEnable` before worlds load.
@@ -236,7 +254,8 @@ the setting is stored per player in `MetaManager` and persists across restarts.
   real tree, not a snake. Placement then guarantees exactly one `SHOP` (shallow), `TREASURE`,
   `SECRET` (a deep single-door dead-end, then **disconnected** from the door graph and wired to
   a `secretParent` combat room with a destructible wall), `ELITE` (deepest remaining combat
-  room), 1–2 `LOCKED` (key-gated dead-ends), and — every 5th floor — an `UPGRADE` (persist)
+  room), 1–2 `LOCKED` (key-gated dead-ends), and — every 5th floor — an `UPGRADE` (persist
+  room, deepest remaining combat room after ELITE is placed)
   room, all distinct, non-boss rooms.
 
 **`RoomType`** — enum mapping each room to its `kind` (0–8) and label. The kind index drives
@@ -256,7 +275,7 @@ every 5th floor).
   with solid stone (except the 3-wide passage) so corridors read as tunnels, hangs a lantern
   in odd-length corridors, and lights interiors with ceiling `GLOWSTONE`.
 - `center(w, n, baseY, spacing)` — the exact room floor center (+1 for the player).
-- Constants: `SQUARE=13`, `LONG=17`, `WALL=1`, `ROOM_HEIGHT=4`, `PERP_CENTER=9`.
+- Constants: `SQUARE=13`, `LONG=17`, `WALL=1`, `ROOM_HEIGHT=4`, `BOSS_INTERIOR=23`, `BOSS_ROOM_HEIGHT=7`, `PERP_CENTER=9`.
 
 ### `room` — shared room geometry
 
@@ -359,7 +378,7 @@ and an `id`. Elite variants use `id >= 100`.
 | Gaper / Elite Gaper | Zombie | 1 | shambles toward the player; occasionally stops to spit a short-range snowball; melees when close |
 | Fly | Bee | 2 | swarms erratically in an orbit, reversing direction every 0.5–1.25s; flees for 3s below 30% HP; dive-bombs when close |
 | Spider | Spider | 3 | faster at range, slower in melee; leaps at the player from 2–7 blocks away (every ~2.5s), damaging on landing |
-| Mulliboom | Creeper | 4 | slow walk; explodes on death for 5.4× damage AoE to all players within 3 blocks (visual only, no block damage) |
+| Mulliboom | Creeper | 4 | slow walk; explodes on death for 3.5× damage to all players within 2.25 blocks, bypassing invulnerability frames (visual only, no block damage) |
 | Charger / Elite Charger | Ravager | 5 | telegraphed dash (0.75s windup → fast lunge), walks slowly while on cooldown; melees when close |
 | Maw | Warden | 6 | stationary ranged; fires sonic-boom projectiles at the player every ~1.75s with a particle telegraph (1.5s first-volley delay) |
 
@@ -448,13 +467,14 @@ typos into compile errors instead of silent save incompatibility. All tags live 
   magic weapons — their ability damage scales with `dung.magic_damage`.
 - Armor base sets (Cloth → Netherite) with per-material defense.
 - `rollRarity(floor)` — rarity is eligible once `floor >= floorUnlock`; weights are
-  `baseChance * (1 + floor*0.05 * ordinal * 0.5)` so deep floors push toward rarer tiers (uncapped)
-  while low floors keep COMMON as the most common tier.
+  `baseChance * (1 + floor*0.03 * ordinal * 0.5)` so deep floors push toward rarer tiers (uncapped)
+  while low floors keep COMMON as the most common tier. `rollRarityNoMythic` (Doomblade mythic-halving)
+  uses the steeper `floor*0.05` push over the non-MYTHIC tiers.
 - `randomWeapon(floor)` / `randomArmor(floor, slot)` / `randomShield(floor)` — roll a template +
   rarity, scale damage/defense by `statMult`, add reach (Longsword 3.8, Arcane Staff 4.5,
   Doomblade 4.0) and health affixes; magic weapons scale their magic damage.
-- `roomReward(floor, roomKind)` — chance to drop gear per room kind (treasure/shop/elite/boss
-  always drop; combat 30%; secret 55%) plus coins. Gear rolls split 40% weapon / 35% armor /
+- `roomReward(floor, roomKind)` — chance to drop gear per room kind (treasure/elite/boss
+  always drop; combat 30%; shop 25%; secret 55%) plus coins. Gear rolls split 40% weapon / 35% armor /
   25% shield.
 
 **Health affix roll** — `rollWeaponHealth` (bruiser melee weapons only: war hammer, doomblade,
@@ -514,7 +534,7 @@ Lifecycle:
 - `startRun(party, seed)` — resolves world, creates `Run` + per-player `PlayerState` (loads
   class + permanent upgrades, applies held gear), sets up scoreboards, grants starter kits,
   fires tutorial (including key/bomb hotbar instructions) for new profiles, then `enterFloor(0)`.
-- `enterFloor(i)` — randomizes spacing (22–28), generates + builds the floor, teleports all
+- `enterFloor(i)` — randomizes spacing (25–28, +2 per party tier), generates + builds the floor, teleports all
   party members to the START room. When `custom-rooms` is on, structures from the library are
   selected per room, given a random allowed rotation for variety, and pasted via
   `StructureWorldEdit`; structure doorways and corridors are then carved procedurally on the shared
@@ -607,9 +627,9 @@ Combat:
   snapshot — so UPGRADE/REFORGE work on persistent gear is never silently reverted.
 
 Rooms/rewards:
-- `onRoomClear(n, k)` — clears the room, opens doors, awards coins + gear.
+- `onRoomClear(n, k)` — clears the room, opens doors, awards coins + gear, and heals living members by 30% HP.
 - `onRoomEnterBossCheck()` / `onBossDefeated()` — spawn/despawn the Warden, open doors, drop
-  guaranteed rare+ loot, bank coins into persistent wallet (delta capped at 40).
+  guaranteed rare+ loot, bank coins into persistent wallet (`min(40, floor delta) / 2`).
 - `stripRunGear(p)` — removes run loot (Dung gear without `dung.persistent` + coin nuggets)
   from storage/armor/offhand, plus key/bomb hotbar items; permanent purchases survive.
   Runs on death and quit.
@@ -647,7 +667,7 @@ The Warden. Uses a Ravager entity with a green boss bar and 3 attacks:
 Below 50% HP the Grovekeeper enrages (faster telegraphs, shorter cooldowns). On taking damage it
 teleports behind the attacker (flanking dash), and a **basic melee swing provokes it**: it hurls
 the attacker away for 3% max-HP backhand damage (once per second). Drops a **Forest Transmutation
-Elixir** (a persistent item) on defeat.
+Elixir** (a persistent item) on defeat (50% chance per kill).
 
 ### `listener` — Paper event wiring
 
@@ -763,13 +783,14 @@ Current curves (rebalanced for the high per-floor income):
 |---|---|---|---|---|---|
 | Damage | +1 | 6 / 3 | 15 | 405 | +15 dmg |
 | Hearts | +5 | 8 / 4 | 15 | 540 | +75 HP |
-| Defense | +1 | 8 / 5 | 15 | 645 | +15 def |
+| Defense | +1 | 8 / 5 | 25 | 1700 | +25 def |
 | Crit | +0.5% | 8 / 4 | 15 | 540 | +7.5% |
-| Speed | +3% | 10 / 6 | 8 | 248 | +24% |
+| Speed | +3% | 10 / 6 | 20 | 1340 | +60% |
 | Mana | +5 | 6 / 3 | 15 | 405 | +75 mana |
 | Magic Damage | +1 | 8 / 4 | 15 | 540 | +15 magic dmg |
 
-Maxing all seven tracks costs **3,323 shards** (~33–55 floors at typical income).
+Maxing all seven tracks costs **5,470 shards** (~55–91 floors at typical income). Defense (25) and
+Speed (20) caps were bumped by the August rebalance (see PROGRESS Iter 9, now superseded).
 
 The upgrades are applied in `PlayerState.applyUpgrades()` (after class passives):
 damage +1/lv, max hearts +5/lv, defense +1/lv, crit +0.5%/lv, move speed +3%/lv, max mana +5/lv,
@@ -842,6 +863,16 @@ status (rooms explored/cleared, boss state).
 | Mage | 160 max mana, 8 mana/s |
 | Ranger | +10% crit, faster fire rate |
 
+### Combat Power (CP)
+
+CP is a calculated measure of raw combat strength from real item/upgrade stats (`CombatPower`):
+weights are damage 4.0, magic damage 4.0, defense 2.0, health 0.5, shield capacity 1.0, reach 5.0,
+affix value 1.0/point, crit 3.0 per 1% (folded per item from its rarity). Player total = best usable
+weapon + all armor + equipped shield (slot 9 only) + permanent upgrade tracks + shop tonics.
+`/dung cp` opens the per-item breakdown mid-run. The difficulty modifier is computed once at run start
+and locked: `clamp((weightedPartyCP / referenceCP - 1), ±0.10 early / ±0.20 late)` feeding three capped
+shares (elite injection ≤25%/room, enemy damage, enemy health).
+
 ---
 
 ## Death & persistence model
@@ -866,8 +897,8 @@ the vanilla death screen:
   restarts you (and the message is true). Run gear can be converted before a death by breaking
   it with `/salvage` into permanent shards.
 
-Persistent coins are **banked** on boss defeat from the delta earned that floor (capped at 40),
-so the same run coins aren't re-banked on every floor. Shards earned via `/salvage` are added
+Persistent coins are **banked** on boss defeat as `min(40, floor delta) / 2` (at most 20 per floor),
+so the same run coins aren't re-banked on every floor and only half the haul is kept. Shards earned via `/salvage` are added
 immediately and spent in `/upgrades`.
 
 **Onboarding:**
@@ -883,18 +914,19 @@ immediately and spent in `/upgrades`.
 - **Multi-player parties, parallel dungeons.** `GameManager` is a registry of `DungeonInstance`s.
   Each party gets its own instance with its own floor, enemies, boss, and per-player state.
   Multiple parties can run dungeons simultaneously in the same world at different coordinates.
-- **Dungeon placement** — everything is built at `BASE_Y = 80` in the first non-End world and
+- **Dungeon placement** — everything is built at `BASE_Y = 130` in the first non-End world and
   fully torn down (`tearDownDungeon`) when a run ends, so no persistent world edits remain.
 - **Vanilla mobs as enemies** — Dung mobs/boss are real vanilla entities whose native AI is
   suppressed (slowness + manual steering), and all their vanilla damage is cancelled
   (`onEnemyDamage`/`isDungSource`). Their HP is tracked independently; the mob's own health bar
   is only cosmetic.
 - **Fixed corridor geometry** — door passages and barriers share the fixed `PERP_CENTER` line so
-  square + elongated neighbours carve aligned tunnels. `spacing` (22–28) leaves a 3–9-block
+  square + elongated neighbours carve aligned tunnels. `spacing` (25–28, +2 per party tier) leaves a 3–9-block
   corridor for any shape.
 - **Health reservoir** prevents the gear-swap heal exploit; natural healing is out-of-combat
   only.
-- **Keys and bombs** — purchasable in the in-run shop GUI for 4 coins each, and tracked in
+- **Keys and bombs** — purchasable in the in-run supplies GUI for 6/6 coins (hearts 5, mana 4,
+  damage/defense tonics 12 each), and tracked in
   `PlayerState`. Both now have real sinks: **keys** unlock `LOCKED` rooms (dead-end rooms sealed
   by an iron-block door barrier), and **bombs** blow through the `CRACKED_STONE_BRICKS`
   destructible wall of a hidden **SECRET** room.
@@ -927,7 +959,7 @@ immediately and spent in `/upgrades`.
   progression (costs scale with floor depth): **UPGRADE** raises an item's core stat by 10%/level
   (max 5) for run coins + shards; **REFORGE** rerolls an item's procedural affixes for shards, with
    a guaranteed max-affix **pity** roll every 10 rerolls; **PRESERVE** is a gamble costing 50 run
-   coins + 200 persistent coins + 100 shards (all AND): 55% chance queues a run item for post-run
+   coins + 200 persistent coins + 100 shards (all AND, ×floor tier): 55% chance queues a run item for post-run
    delivery as persistent half-durability gear, on failure it's returned one rarity worse;
    **SALVAGE** destroys an item for **run coins** (per-run, lost on death — not bankable shards)
   (two-click confirm); **STORAGE** is a read-only in-run view of your persistent items (withdraw
@@ -963,8 +995,9 @@ immediately and spent in `/upgrades`.
   when taking non-lethal damage, so players get audio-visual feedback.
 - **Pedestal armor equip fix** — Picking up rewards from a pedestal while holding an armor piece
   no longer equips the armor (pedestal check runs before the armor-equip check).
-- **Player attack cooldown reduced** — Player `fireRateTicks` reduced from 12 to 3 (quarter of
-  original); monster attack cooldown set to 12 ticks (the old player value).
+- **Player attack cooldown** — player `fireRateTicks` is 7 ticks (ranger 5 via the class passive);
+  monster attack cooldowns are per-type in `Enemy` (Gaper melee 20 / spit pause 25 + spit 60, Fly 15,
+  Spider melee 15 / leap 50, Mulliboom 30, Charger melee 12 / dash 45, Maw volley 35 / pause 10).
 - **Stained glass pane duplication fixed** — The black stained glass pane in empty key/bomb
   hotbar slots is now tagged as a run item, so inventory click/drag handlers block moving it.
 - **Revived players no longer re-die** — `reviveDeadPlayers()` now resets `PlayerState.dead`

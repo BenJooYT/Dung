@@ -1,5 +1,6 @@
 package com.lieyabull.dung.items;
 
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
 
@@ -104,12 +105,19 @@ public final class ItemPool {
 
     public static ItemStack randomWeapon(int floor) {
         // Weighted selection — Doomblade has half weight
+        int[] weights = WEAPON_WEIGHTS;
+        if (weights.length != WEAPONS.length) {
+            Bukkit.getLogger().warning("[Dung] WEAPONS/WEAPON_WEIGHTS length mismatch ("
+                    + WEAPONS.length + " vs " + weights.length + ") — falling back to uniform weights.");
+            weights = new int[WEAPONS.length];
+            java.util.Arrays.fill(weights, 1);
+        }
         int totalWeight = 0;
-        for (int wgt : WEAPON_WEIGHTS) totalWeight += wgt;
+        for (int wgt : weights) totalWeight += wgt;
         int roll = ThreadLocalRandom.current().nextInt(totalWeight);
         int idx = 0;
-        for (int i = 0; i < WEAPON_WEIGHTS.length; i++) {
-            roll -= WEAPON_WEIGHTS[i];
+        for (int i = 0; i < weights.length; i++) {
+            roll -= weights[i];
             if (roll < 0) { idx = i; break; }
         }
         String[] w = WEAPONS[idx];

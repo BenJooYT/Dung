@@ -81,7 +81,7 @@ public final class BossController {
         // Tag so the damage listener blocks the boss's native vanilla melee (Dung applies its own
         // PlayerState-based damage in tick()/fire(), so the vanilla hit must not reach real HP).
         boss.addScoreboardTag("dung.entity");
-        try { boss.setCustomName("§4Warden of Floor " + (floor + 1)); boss.setCustomNameVisible(true); } catch (Throwable ignored) {}
+        try { boss.setCustomName("§4Warden of Floor " + (floor + 1)); boss.setCustomNameVisible(true); } catch (Throwable t) { plugin.getLogger().warning("[Dung] Failed to set Warden boss name: " + t.getMessage()); }
         this.barKey = new org.bukkit.NamespacedKey(Dung.instance(), "dung_boss_" + UUID.randomUUID().toString().replace("-", ""));
         this.bar = Bukkit.createBossBar(barKey, "§4The Warden", BarColor.RED, BarStyle.SEGMENTED_10);
         this.bar.setProgress(1.0);
