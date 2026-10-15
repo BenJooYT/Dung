@@ -93,14 +93,18 @@ public final class PlotListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onBucketEmpty(PlayerBucketEmptyEvent e) {
-        if (!canModify(e.getPlayer(), e.getBlockClicked().getLocation())) {
+        // Liquid lands at clicked+face (getBlock), not the clicked block itself —
+        // both must be modifiable or players can pour across plot borders.
+        if (!canModify(e.getPlayer(), e.getBlockClicked().getLocation())
+                || !canModify(e.getPlayer(), e.getBlock().getLocation())) {
             e.setCancelled(true);
         }
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onBucketFill(PlayerBucketFillEvent e) {
-        if (!canModify(e.getPlayer(), e.getBlockClicked().getLocation())) {
+        if (!canModify(e.getPlayer(), e.getBlockClicked().getLocation())
+                || !canModify(e.getPlayer(), e.getBlock().getLocation())) {
             e.setCancelled(true);
         }
     }
@@ -186,7 +190,8 @@ public final class PlotListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPlayerDamage(EntityDamageByEntityEvent e) {
         if (!(e.getEntity() instanceof Player victim)) return;
-        if (!(e.getDamager() instanceof Player)) return;
+        Player attacker = resolveAttackingPlayer(e.getDamager());
+        if (attacker == null) return;
         PlotManager pm = plugin.plotManager();
         Location victimLoc = victim.getLocation();
         PlotManager.PlotCoord coord = pm.plotAt(victimLoc);
@@ -195,8 +200,17 @@ public final class PlotListener implements Listener {
         PlotManager.PlotInfo info = pm.getInfo(coord);
         if (info != null && !info.pvp) {
             e.setCancelled(true);
-            ((Player) e.getDamager()).sendMessage("§cPVP is disabled on this plot.");
+            attacker.sendMessage("§cPVP is disabled on this plot.");
         }
+    }
+
+    /** Resolve the attacking player from a direct hit or a projectile they fired
+     *  (bow/crossbow/trident/snowball/potion/TNT). Null if not player-caused. */
+    private static Player resolveAttackingPlayer(org.bukkit.entity.Entity damager) {
+        if (damager instanceof Player p) return p;
+        if (damager instanceof org.bukkit.entity.Projectile proj
+                && proj.getShooter() instanceof Player shooter) return shooter;
+        return null;
     }
 
     /** Mobs may only be killed on a plot by the owner, or by anyone if mobKill is enabled on the
@@ -205,7 +219,8 @@ public final class PlotListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onMobDamage(EntityDamageByEntityEvent e) {
         if (e.getEntity() instanceof Player) return; // handled by onPlayerDamage
-        if (!(e.getDamager() instanceof Player p)) return;
+        Player p = resolveAttackingPlayer(e.getDamager());
+        if (p == null) return;
         PlotManager pm = plugin.plotManager();
         Location loc = e.getEntity().getLocation();
         PlotManager.PlotCoord coord = pm.plotAt(loc);

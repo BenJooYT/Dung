@@ -599,7 +599,8 @@ public final class DungeonInstance {
 
     /** Compare two persistent items by their UUID. If both items have UUIDs, they match
      *  only if the UUIDs are equal. If either item lacks a UUID (pre-migration), falls back
-     *  to comparing by type and dung PDC tags (kind, rarity, defense, damage). */
+     *  to comparing by type and all dung PDC stat tags — two distinct items (different
+     *  health/shield/magic/affixes/upgrades) must never alias to the same saved slot. */
     private static boolean itemsMatchPersistent(ItemStack a, ItemStack b) {
         if (a.getType() != b.getType()) return false;
         // UUID-based matching: if both items have UUIDs, compare those directly
@@ -608,26 +609,24 @@ public final class DungeonInstance {
         if (uuidA != null && uuidB != null) {
             return uuidA.equals(uuidB);
         }
-        // Fallback for pre-UUID items: compare by type + PDC tags
+        // Fallback for pre-UUID items: compare by type + every PDC stat tag (strict —
+        // a tag present on one side but missing on the other is a mismatch).
         var pdcA = a.getItemMeta() == null ? null : a.getItemMeta().getPersistentDataContainer();
         var pdcB = b.getItemMeta() == null ? null : b.getItemMeta().getPersistentDataContainer();
         if (pdcA == null || pdcB == null) return false;
-        org.bukkit.NamespacedKey kindKey = org.bukkit.NamespacedKey.minecraft(ItemTags.KIND);
-        org.bukkit.NamespacedKey rarityKey = org.bukkit.NamespacedKey.minecraft(ItemTags.RARITY);
-        org.bukkit.NamespacedKey defKey = org.bukkit.NamespacedKey.minecraft(ItemTags.DEFENSE);
-        org.bukkit.NamespacedKey dmgKey = org.bukkit.NamespacedKey.minecraft(ItemTags.DAMAGE);
-        String kA = pdcA.get(kindKey, org.bukkit.persistence.PersistentDataType.STRING);
-        String kB = pdcB.get(kindKey, org.bukkit.persistence.PersistentDataType.STRING);
-        if (kA == null || kB == null || !kA.equals(kB)) return false;
-        String rA = pdcA.get(rarityKey, org.bukkit.persistence.PersistentDataType.STRING);
-        String rB = pdcB.get(rarityKey, org.bukkit.persistence.PersistentDataType.STRING);
-        if (rA == null || rB == null || !rA.equals(rB)) return false;
-        Integer dA = pdcA.get(defKey, org.bukkit.persistence.PersistentDataType.INTEGER);
-        Integer dB = pdcB.get(defKey, org.bukkit.persistence.PersistentDataType.INTEGER);
-        if (dA != null && dB != null && !dA.equals(dB)) return false;
-        Integer dmA = pdcA.get(dmgKey, org.bukkit.persistence.PersistentDataType.INTEGER);
-        Integer dmB = pdcB.get(dmgKey, org.bukkit.persistence.PersistentDataType.INTEGER);
-        if (dmA != null && dmB != null && !dmA.equals(dmB)) return false;
+        var ST = org.bukkit.persistence.PersistentDataType.STRING;
+        var IN = org.bukkit.persistence.PersistentDataType.INTEGER;
+        for (String key : new String[]{ItemTags.KIND, ItemTags.RARITY, ItemTags.AFFIXES}) {
+            String vA = pdcA.get(org.bukkit.NamespacedKey.minecraft(key), ST);
+            String vB = pdcB.get(org.bukkit.NamespacedKey.minecraft(key), ST);
+            if (!java.util.Objects.equals(vA, vB)) return false;
+        }
+        for (String key : new String[]{ItemTags.DEFENSE, ItemTags.DAMAGE, ItemTags.HEALTH,
+                ItemTags.SHIELD_MAX, ItemTags.MAGIC_DAMAGE, ItemTags.UPGRADE_LEVEL}) {
+            Integer vA = pdcA.get(org.bukkit.NamespacedKey.minecraft(key), IN);
+            Integer vB = pdcB.get(org.bukkit.NamespacedKey.minecraft(key), IN);
+            if (!java.util.Objects.equals(vA, vB)) return false;
+        }
         return true;
     }
 
@@ -842,17 +841,17 @@ public final class DungeonInstance {
             int spacing, int offsetX, int offsetZ, int corridorHalf) {
         int[] DX = {0, 1, 0, -1};
         int[] DZ = {-1, 0, 1, 0};
-        Set<Long> carved = new HashSet<>();
+        // Order-independent edge ids built from grid coords (never from Floor.keys: packing
+        // two keys into one long overflows once keys exceed 32 bits, colliding distinct
+        // edges so a corridor is skipped as "already carved" and its rooms disconnect).
+        Set<String> carved = new HashSet<>();
         for (Floor.RoomNode n : floor.rooms()) {
             if (n.structure == null) continue;
             for (int d = 0; d < 4; d++) {
                 if (!n.doors[d]) continue;
                 Floor.RoomNode m = floor.at(n.x + DX[d], n.z + DZ[d]);
                 if (m == null) continue;
-                long k1 = floor.key(n.x, n.z);
-                long k2 = floor.key(m.x, m.z);
-                long e = (Math.min(k1, k2) << 32) | Math.max(k1, k2);
-                if (!carved.add(e)) continue;
+                if (!carved.add(edgeId(n.x, n.z, m.x, m.z))) continue;
                 boolean horiz = d == 1 || d == 3;
                 RoomBounds ta = n.structure.total();
                 RoomBounds tb = m.structure == null ? null : m.structure.total();
@@ -889,6 +888,14 @@ public final class DungeonInstance {
                 }
             }
         }
+    }
+
+    /** Order-independent id for the corridor edge between two grid cells. String-based so it
+     *  stays exact for any coordinate magnitude (bit-packing two keys overflows). */
+    static String edgeId(int ax, int az, int bx, int bz) {
+        return ax < bx || (ax == bx && az < bz)
+                ? ax + "," + az + ";" + bx + "," + bz
+                : bx + "," + bz + ";" + ax + "," + az;
     }
     /** World coordinate of a room's outer wall on side {@code d} (0=N,1=E,2=S,3=W), for a structure room. */
     private int facingWallAlong(Floor.RoomNode n, int d, RoomBounds t) {
@@ -1335,7 +1342,8 @@ public final class DungeonInstance {
         workstationTags.add(stand);
     }
 
-    /** Build a one-line cost annotation for a workstation type, scaled by the current floor. */
+    /** Build a one-line cost annotation for a workstation type. Shows the exact base costs
+     *  charged by the workstation handlers. */
     private static String costAnnotation(WorkstationType wt, int floor) {
         return switch (wt) {
             case UPGRADE -> {
@@ -1348,9 +1356,9 @@ public final class DungeonInstance {
                 yield "§3" + shard + " shards";
             }
             case PRESERVE -> {
-                int coin = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_COIN_COST, floor);
-                int pcoin = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_PERSISTENT_COIN_COST, floor);
-                int shard = WorkstationRules.scaledCost(WorkstationRules.PRESERVE_SHARD_COST, floor);
+                int coin = WorkstationRules.PRESERVE_COIN_COST;
+                int pcoin = WorkstationRules.PRESERVE_PERSISTENT_COIN_COST;
+                int shard = WorkstationRules.PRESERVE_SHARD_COST;
                 yield "§e" + coin + " coins §6" + pcoin + " pcoins §3" + shard + " shards";
             }
             case SALVAGE -> "§7Gives run coins";
@@ -1674,7 +1682,9 @@ public final class DungeonInstance {
         }
         // Also include any rooms that still have enemies (orphaned by player death/leave)
         for (java.util.Map.Entry<Long, List<Enemy>> entry : roomEnemies.entrySet()) {
-            // Reconstruct x,z from the key (same formula as Floor.key)
+            // Reconstruct x,z from the key (same formula as Floor.key).
+            // Coords are always in-bounds (0..width/height) by FloorGenerator,
+            // so truncating / and % decode exactly here.
             long k = entry.getKey();
             int rx = (int) (k / 4096);
             int rz = (int) (k % 4096);
@@ -2122,7 +2132,7 @@ public final class DungeonInstance {
             if (broken) {
                 // Keep the broken item in the inventory (it can be repaired at the shop); it is no
                 // longer usable until repaired.
-                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.itemBroke", item.getItemMeta().getDisplayName())));
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.itemBroke", itemDisplayName(item))));
             }
         }
     }
@@ -2950,8 +2960,9 @@ public final class DungeonInstance {
             Player leader = Bukkit.getPlayer(party.leader());
             if (leader == null) leader = party.onlineMembers().stream().findFirst().orElse(null);
             if (leader == null) return;
-            // Scale boss HP by party size
-            int partySize = Math.max(1, party.onlineMembers().size());
+            // Scale boss HP by living party members (not the full party), so a
+            // 1-alive/3-dead party doesn't fight a 4-player boss.
+            int partySize = Math.max(1, alivePartySize());
             // Locked CP difficulty shares reach bosses too — regular mobs already take them
             // via hpMult/dmgMult; without this a strong party got harder trash but identical
             // bosses, silently undoing the modifier's intent for boss floors.
@@ -3028,9 +3039,10 @@ public final class DungeonInstance {
             }
             isGrovekeeperFloor = false;
         }
-        // Bank coins for each player — calculate once, distribute to all
+        // Bank coins for each player — calculate once, distribute to all.
+        // Round half up so odd earnings aren't silently truncated (3 -> 2, not 1).
         int earned = run.runCoinsEarned - run.bankedCoins;
-        int bank = Math.min(40, Math.max(0, earned)) / 2;
+        int bank = (int) Math.round(Math.min(40, Math.max(0, earned)) / 2.0);
         run.bankedCoins += bank;
         for (Player p : party.onlineMembers()) {
             MetaManager.MetaProfile prof = plugin.meta().profile(p.getUniqueId());
@@ -4030,8 +4042,10 @@ public final class DungeonInstance {
         return s;
     }
 
-    /** True if the item is our green "Equip Shield" indicator pane. */
-    private static boolean isEquipIndicator(ItemStack s) {
+    /** True if the item is our green "Equip Shield" indicator pane. Public so event handlers
+     *  can keep it inside the player inventory (it is swappable within it, but must never
+     *  reach chests/shulkers/the ground, or the slot sync mints a fresh copy each tick). */
+    public static boolean isEquipIndicator(ItemStack s) {
         if (s == null || s.getItemMeta() == null) return false;
         var pdc = s.getItemMeta().getPersistentDataContainer();
         return pdc.has(org.bukkit.NamespacedKey.minecraft(ItemTags.EQUIP_INDICATOR),
@@ -4294,7 +4308,7 @@ public final class DungeonInstance {
                     p.getWorld().dropItemNaturally(p.getLocation(), ls);
                 }
             }
-            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.persistedDelivery", item.getItemMeta().getDisplayName()));
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.persistedDelivery", itemDisplayName(item)));
         }
         plugin.meta().save();
     }
@@ -4557,7 +4571,7 @@ public final class DungeonInstance {
             // Move into a free main-inventory slot, or the stash if the bag is full.
             com.lieyabull.dung.ui.StashUI.placeOrStash(p, item);
         }
-        String name = item.getItemMeta() != null ? item.getItemMeta().getDisplayName() : item.getType().name();
+        String name = itemDisplayName(item);
         p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.armorBroke", name, reasonKey(p, reason))));
     }
 

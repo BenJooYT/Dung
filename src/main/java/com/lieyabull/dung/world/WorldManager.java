@@ -161,10 +161,28 @@ public final class WorldManager {
         if (w == null) return;
         try {
             Location out = lobbySpawn();
-            for (Player p : w.getPlayers()) p.teleport(out);
-            Bukkit.unloadWorld(w, false);
+            for (Player p : java.util.List.copyOf(w.getPlayers())) {
+                if (!p.teleport(out)) {
+                    plugin.getLogger().warning("Failed to teleport " + p.getName()
+                            + " out of run world " + w.getName() + " — keeping world to avoid data loss.");
+                    return;
+                }
+            }
+            if (!w.getPlayers().isEmpty()) {
+                plugin.getLogger().warning("Players still in run world " + w.getName()
+                        + " after teleport — keeping world to avoid data loss.");
+                return;
+            }
+            boolean unloaded = Bukkit.unloadWorld(w, false);
+            if (!unloaded) {
+                plugin.getLogger().warning("Failed to unload run world " + w.getName()
+                        + " — keeping folder on disk for manual cleanup.");
+                return;
+            }
             File dir = new File(Bukkit.getWorldContainer(), w.getName());
-            if (dir.exists()) deleteRecursively(dir);
+            if (dir.exists() && !deleteRecursively(dir)) {
+                plugin.getLogger().warning("Failed to delete run world folder " + dir.getPath());
+            }
         } catch (Exception ex) {
             plugin.getLogger().warning("Failed to delete run world " + w.getName() + ": " + ex.getMessage());
         }
@@ -180,13 +198,14 @@ public final class WorldManager {
         return getLobby().getSpawnLocation();
     }
 
-    private static void deleteRecursively(File f) {
+    private static boolean deleteRecursively(File f) {
+        boolean ok = true;
         File[] children = f.listFiles();
         if (children != null) {
-            for (File c : children) deleteRecursively(c);
+            for (File c : children) ok &= deleteRecursively(c);
         }
         //noinspection ResultOfMethodCallIgnored
-        f.delete();
+        return f.delete() && ok;
     }
 
     /** Minimal void generator: no noise, surface, carvers, structures, decorations or mobs —

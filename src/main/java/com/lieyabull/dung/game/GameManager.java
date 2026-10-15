@@ -92,12 +92,27 @@ public final class GameManager {
         // region math to keep parallel parties apart.
         String runId = "r" + System.nanoTime();
         org.bukkit.World runWorld = plugin.worldManager().createRunWorld(runId);
+        if (runWorld == null) {
+            for (org.bukkit.entity.Player p : party.onlineMembers()) {
+                p.sendMessage("§cFailed to create dungeon world.");
+            }
+            return false;
+        }
         DungeonInstance di = new DungeonInstance(plugin, party, 0, 0, runWorld);
         instances.put(di.instanceId(), di);
         for (UUID uid : party.members()) {
             playerInstance.put(uid, di);
         }
-        di.startRun(seed);
+        try {
+            di.startRun(seed);
+        } catch (RuntimeException ex) {
+            instances.remove(di.instanceId());
+            for (UUID uid : party.members()) {
+                playerInstance.remove(uid, di);
+            }
+            plugin.worldManager().deleteRunWorld(runWorld);
+            throw ex;
+        }
         return true;
     }
 

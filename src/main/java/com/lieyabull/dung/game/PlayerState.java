@@ -104,6 +104,8 @@ public final class PlayerState {
         damage = 3;
         magicDamage = 0;
         defense = 0;
+        shieldMax = 0;
+        pendingHealthAffixes = 0;
         reach = 3.0;
         critChance = 0.05;
         critMult = 1.5;
@@ -390,6 +392,11 @@ public final class PlayerState {
         var pdc = s.getItemMeta().getPersistentDataContainer();
         String v = pdc.get(org.bukkit.NamespacedKey.minecraft(ItemTags.RARITY),
                 org.bukkit.persistence.PersistentDataType.STRING);
-        return v == null ? null : Rarity.valueOf(v);
+        if (v == null) return null;
+        try {
+            return Rarity.valueOf(v);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 }

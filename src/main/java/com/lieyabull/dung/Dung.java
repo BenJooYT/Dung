@@ -141,6 +141,7 @@ public final class Dung extends JavaPlugin {
         if (meta != null) meta.save();
         if (stashUI != null) stashUI.save();
         if (plotManager != null) plotManager.save();
+        if (provenanceManager != null) provenanceManager.flush();
         if (compost != null) compost.save();
         if (dummyManager != null) dummyManager.shutdown();
         instance = null;

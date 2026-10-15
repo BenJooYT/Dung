@@ -895,8 +895,9 @@ public final class PlotManager {
         int baseY = origin.getBlockY();
 
         // Ensure borders and paths exist for this plot (handles plots outside the pre-generated area)
-        // Check if the top-left corner slab exists; if not, this plot wasn't pre-generated
-        if (w.getBlockAt(ox, baseY, oz).getType() != Material.OAK_SLAB) {
+        // Check if the top-left corner slab exists (slabs sit at baseY+1); if not, this plot
+        // wasn't pre-generated and needs its borders/paths built.
+        if (w.getBlockAt(ox, baseY + 1, oz).getType() != Material.OAK_SLAB) {
             buildPlotBordersAndPaths(w, coord.x(), coord.z(), baseY);
         }
 
