@@ -33,6 +33,10 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
     private final Dung plugin;
     /** Non-run commands (/shop, /party, /leaderboard, …) live here; /dung <sub> delegates to it. */
     private final MetaCommand meta;
+    /** Players who ran bare /dung class <c> and must confirm within 30s (/dung class <c> confirm). */
+    private final java.util.Map<java.util.UUID, PendingClass> classPending = new java.util.HashMap<>();
+    private static final long CLASS_CONFIRM_WINDOW = 30_000L;
+    private record PendingClass(String classId, long stagedAt) {}
 
     public DungCommand(Dung plugin, MetaCommand meta) {
         this.plugin = plugin;
@@ -705,6 +709,25 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "dung.unknownClass"));
             return;
         }
+        // Class choice persists instantly and shapes every future run — demand a confirm step.
+        boolean confirmed = args.length >= 3 && args[2].equalsIgnoreCase("confirm");
+        PendingClass staged = classPending.get(p.getUniqueId());
+        boolean stagedFresh = staged != null && staged.classId().equals(c)
+                && System.currentTimeMillis() - staged.stagedAt() <= CLASS_CONFIRM_WINDOW;
+        if (!confirmed) {
+            // Bare (attempts never apply anything): always (re)stage + warn, never fall through.
+            classPending.put(p.getUniqueId(), new PendingClass(c, System.currentTimeMillis()));
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "dung.classPermanent",
+                    TextUtil.capital(c)));
+            return;
+        } else if (!stagedFresh) {
+            // Confirm given but nothing staged (or a different class staged): stage it and warn.
+            classPending.put(p.getUniqueId(), new PendingClass(c, System.currentTimeMillis()));
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "dung.classPermanent",
+                    TextUtil.capital(c)));
+            return;
+        }
+        classPending.remove(p.getUniqueId());
         plugin.meta().profile(p.getUniqueId()).classId = c;
         plugin.meta().save(); // persist immediately so a crash/restart can't roll the choice back
         p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "dung.classSet", TextUtil.capital(c)));

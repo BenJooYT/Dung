@@ -38,6 +38,8 @@ public final class BossController {
     private int warning = 0;     // warning ticks remaining (boss holds still during these)
     private int pending = 0;     // attack to fire once the warning ends
     private double warnAngle = 0;// threatened direction for the telegraphed beam
+    /** True once the past-50% enrage announcement has been made this fight (announced once). */
+    private boolean rageAnnounced = false;
 
     /** Enrage past 50% HP: faster patterns, extra hurt. */
     private boolean enraged() {
@@ -118,9 +120,21 @@ public final class BossController {
         if (warning > 0) {
             warning--;
             if (pending == ATTACK_BEAM) warnLane(center, warnAngle);
-            else warnRing(center);
+            else if (pending == ATTACK_SLAM) warnSlam(center);
+            else warnRadial(center);
             if (warning == 0) fire(p, center, rage);
             return;
+        }
+
+        // --- enrage announcement: one chat line + a hotter bar color the tick we cross 50% ---
+        if (rage && !rageAnnounced) {
+            rageAnnounced = true;
+            bar.setColor(BarColor.PINK);
+            if (plugin != null) {
+                String msg = com.lieyabull.dung.lang.Lang.forPlayer(p, "boss.enraged");
+                p.sendMessage(msg);
+                for (Player v : viewers) if (v.isOnline()) v.sendMessage(msg);
+            }
         }
 
         // only a small contact sting if the player walks into the boss
@@ -179,19 +193,49 @@ public final class BossController {
         attackCd = rage ? 25 : 40;
     }
 
-    /** Show which direction a beam will fire: a red lane across the arena from the boss. */
+    /** Show which direction a beam will fire: a red lane across the arena from the boss.
+     *  The lane also encodes its DIMENSIONS so the player can judge the safe zone:
+     *  faint edge dots at ±1 block mark the 2-block-wide damage column, and a dotted
+     *  END_ROD post at 12 blocks marks where the beam stops. */
     private void warnLane(Location center, double angle) {
         double dx = Math.cos(angle), dz = Math.sin(angle);
+        // left/right perpendicular offsets = the beam's damage half-width (perp < 2.0 in fire())
+        double ex = dz, ez = -dx;
         for (int i = 1; i <= 12; i++) {
             Location l = center.clone().add(dx * i, 1, dz * i);
             world.spawnParticle(org.bukkit.Particle.FLAME, l, 1, 0, 0, 0);
+            if (i % 3 == 0) { // edge dots every 3 blocks so the width reads without flooding particles
+                world.spawnParticle(org.bukkit.Particle.ASH,
+                        center.clone().add(dx * i + ex, 1, dz * i + ez), 1, 0, 0, 0);
+                world.spawnParticle(org.bukkit.Particle.ASH,
+                        center.clone().add(dx * i - ex, 1, dz * i - ez), 1, 0, 0, 0);
+            }
         }
+        // clear end-of-range marker beyond the lane's last step
+        world.spawnParticle(org.bukkit.Particle.END_ROD,
+                center.clone().add(dx * 13, 1.5, dz * 13), 3, 0.2, 0.4, 0.2, 0.01);
     }
 
-    /** Show an expanding ring for radial/slam (no safe direction). */
-    private void warnRing(Location center) {
-        double r = 2 + (warning % 4);
-        world.spawnParticle(org.bukkit.Particle.CRIT, center.clone().add(0, 1, 0), 20, r, 0, r, 0);
+    /** SLAM telegraph: compact white ring pulsing just at the slam's danger radius (< 3 blocks).
+     *  Reads "get further than arm's length from its body". */
+    private void warnSlam(Location center) {
+        double r = 1 + (warning % 3);       // pulse outward 1→3, like the 5.0 ring did pre-split
+        world.spawnParticle(org.bukkit.Particle.CRIT, center.clone().add(0, 0.5, 0), 14, r, 0.1, r, 0);
+    }
+
+    /** RADIAL telegraph: large orange/red zone flickering at the burst's danger radius (< 5 blocks).
+     *  Deliberately bigger and "hotter" than the slam ring so the two can't be confused at a glance. */
+    private void warnRadial(Location center) {
+        double r = 2 + (warning % 4);       // pulse outward 2→5
+        world.spawnParticle(org.bukkit.Particle.FLAME, center.clone().add(0, 1, 0), 16, r, 0, r, 0.02);
+        world.spawnParticle(org.bukkit.Particle.CRIT,
+                center.clone().add(r, 0.5, 0), 2, 0.3, 0.1, 0.3, 0);
+        world.spawnParticle(org.bukkit.Particle.CRIT,
+                center.clone().add(-r, 0.5, 0), 2, 0.3, 0.1, 0.3, 0);
+        world.spawnParticle(org.bukkit.Particle.CRIT,
+                center.clone().add(0, 0.5, r), 2, 0.3, 0.1, 0.3, 0);
+        world.spawnParticle(org.bukkit.Particle.CRIT,
+                center.clone().add(0, 0.5, -r), 2, 0.3, 0.1, 0.3, 0);
     }
 
     public boolean isActive() {

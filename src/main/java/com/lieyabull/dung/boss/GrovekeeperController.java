@@ -36,6 +36,8 @@ public final class GrovekeeperController {
     private final java.util.List<Player> viewers = new java.util.ArrayList<>();
     private final Runnable onDefeated;
     private boolean defeated = false;
+    /** True once the past-50% enrage announcement has been made this fight (announced once). */
+    private boolean rageAnnounced = false;
     private int patternTimer = 0;
     // attack state machine
     private static final int ATTACK_ROOT_BURST = 1, ATTACK_TIMBER_WALLS = 2, ATTACK_POISON_ROOTS = 3;
@@ -244,6 +246,17 @@ public final class GrovekeeperController {
             else warnRing(center);
             if (warning == 0) fire(p, center, rage);
             return;
+        }
+
+        // --- enrage announcement: one chat line + a hotter bar color the tick we cross 50% ---
+        if (rage && !rageAnnounced) {
+            rageAnnounced = true;
+            bar.setColor(BarColor.PURPLE);
+            if (plugin != null) {
+                String msg = com.lieyabull.dung.lang.Lang.forPlayer(p, "boss.enragedGk");
+                p.sendMessage(msg);
+                for (Player v : viewers) if (v.isOnline()) v.sendMessage(msg);
+            }
         }
 
         // contact sting

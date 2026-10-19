@@ -1642,7 +1642,43 @@ tab = detailed build/run/progression).
 - [x] **Shield CP:** breakdown summed every shield in storage/offhand, so shield-muling
       inflated difficulty with zero combat benefit (and dumping shields eased attunement).
       Only the equipped shield (hotbar slot 9) counts now; mock-inventory tests pin both.
-- [x] Suite 246/246 green; live server restarted with the fix.
+- [x]       Suite 246/246 green; live server restarted with the fix.
+
+## Iteration 72 — critic docs sweep: every remaining open finding closed (except roomeditor)
+- [x] **Boss telegraphs now read at a glance (`critic/boss.md`, user chose visuals-only):**
+      SLAM draws a compact white CRIT ring pulsing at its 3-block radius; RADIAL draws a large
+      orange FLAME zone flickering out to its 5-block radius — the two are no longer the same
+      expanding white ring. The BEAM lane encodes its dimensions: ASH edge dots every 3 blocks
+      mark the 2-block damage width and an END_ROD post marks where the beam stops (12 blocks).
+- [x] **One-time enrage announcement (`critic/boss.md` #2):** the tick the boss crosses 50% HP it
+      says so in chat (localized `boss.enraged` / `boss.enragedGk`) and its bar turns PINK
+      (Warden) / PURPLE (Grovekeeper) so the difficulty jump is visible, announced once per fight.
+- [x] **`/salvage all` confirm (`critic/commands.md` #2):** bare `/salvage all` now previews the
+      exact destruction (pieces + shards) and stages a 30s window — only `/salvage all confirm`
+      executes. Same pattern as `/plot unclaim confirm`.
+- [x] **`/dung class` confirm (`critic/commands.md` #4):** the class choice persists instantly and
+      shapes every run, so bare `/dung class <c>` warns "PERMANENT" (localized) and requires
+      `/dung class <c> confirm` within 30s; a stale/staged-another-class confirm never applies.
+- [x] **Tab boss status from the player's physical room (`critic/tab.md` #2):** AWAITING is
+      per-player via `di.roomAt(p.getLocation())` + a direct `RoomType == BOSS` compare (the
+      fragile `.type.name().equals("BOSS")` + global `curRoom()` read is gone).
+- [x] **Equipment section shows the offhand (`critic/tab.md` #3):** a localized `tab.offhand` row
+      between mainhand and armor completes the loadout picture.
+- [x] **`tab.build` CRIT cosmetics (`critic/tab.md` #6):** the melee/magic pair now labels both
+      numbers (`DMG <m>  MAG <b>  DEF <d>  CRIT <c>% x<m>`) — no more slash-as-fraction ambiguity
+      and no dead `§f` before the label.
+- [x] **HUD shield-slot hint (`critic/hud.md` #6):** sidebar row shows the localized
+      "🛡 Mana Shield goes in [slot 9]" whenever hotbar slot 9 is empty, so the guidance survives
+      a skipped tutorial and disappears once the slot is filled.
+- [x] **Workstation info panel names the group order (`critic/workstation.md` #5):** the info
+      panel lists the eligible counts per group in display order (`List: N worn · N in bag · N in
+      hotbar`), so armor-first/hotbar-last ordering is self-explanatory in the 27-slot page.
+- Not done by choice: shop-roll double-confirm (user opted to keep the reworked gacha's single-click
+      roll, which already persists every purchase server-side) and roomeditor.md (its RoomCommand/
+      RoomEditor/RoomTutorial surface no longer exists — replaced by sign-marker `/dung room` flows).
+- Environment note: on-device suite = 254 tests, 243 green; the 11 failures are all
+      `MockMaker` init errors (Mockito agent can't load on this Termux/Android JVM — same suites
+      run green on CI). CI run is the authoritative verdict for this iteration.
 
 ## Build / run
 ```

@@ -119,7 +119,7 @@ public final class HUD {
             }
         }
         setLine(o, 6, di.boss() != null ? com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.bossActive") : lockedHint);
-        setLine(o, 7, "");
+        setLine(o, 7, shieldHint(p));
         // Ability cooldowns on separate rows so they never overlap.
         long now = System.currentTimeMillis();
         // Show class ability cooldown with a friendly name
@@ -154,6 +154,19 @@ public final class HUD {
         setLine(o, 12, "");
         setLine(o, 13, "");
         setLine(o, 14, "");
+    }
+
+    /** Persistent on-screen clue for the Mana Shield's dedicated slot (critic hud.md #6): shown on
+     *  the sidebar whenever hotbar slot 9 is empty, so the hint survives a skipped tutorial. */
+    private static String shieldHint(Player p) {
+        try {
+            if (p != null && p.getInventory().getItem(8) == null) {
+                return com.lieyabull.dung.lang.Lang.forPlayer(p, "hud.shieldHint");
+            }
+        } catch (Exception ignored) {
+            // Mocked inventories in tests may not support slot indexing — the row just stays blank.
+        }
+        return "";
     }
 
     /** Localized friendly name for a room type (used in the sidebar Room row). */

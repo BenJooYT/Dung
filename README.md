@@ -51,10 +51,10 @@ clearing rooms banks persistent coins and kill/full-clear stats that survive dea
 
 # In-game
 /dung start       # begin a run
-/dung class mage  # pick a class (warrior | mage | ranger) before starting
+/dung class mage  # pick a class (warrior | mage | ranger) before starting; /dung class mage confirm sets it (a one-time permanent choice)
 /shop             # between runs: spend persistent coins on gear
 /upgrades         # between runs: spend shards on permanent upgrades
-/salvage          # break held armor into permanent shards
+/salvage          # break held armor into permanent shards (bulk /salvage all needs a 30s confirm)
 /party create     # create a party for multiplayer dungeons
 /plots            # teleport to the plots world
 /plot claim       # claim a plot (250 shards or 150 coins; ×1.25 per plot you own)
@@ -127,7 +127,7 @@ back to `MetaCommand`. `MetaCommand` owns the non-dung commands `/shop`, `/upgra
 | `/balance [player]` | all | Shows your persistent coins and shards (or another online player's). |
 | `/upgrades` | all | Opens the upgrades GUI: spend shards on permanent stat upgrades. |
 | `/salvage` | all | Break the held Dung armor piece into permanent shards. Outside a run, shards go straight to your persistent balance; in a run they're banked on boss defeat. |
-| `/salvage all` | all | Salvage every Dung armor piece in your bag outside the hotbar, equipped slots, and offhand — favorites are skipped. |
+| `/salvage all` | all | Preview, then salvage every Dung armor piece in your bag outside the hotbar, equipped slots, and offhand — must be repeated as `/salvage all confirm` within 30s. Favorites are skipped. |
 | `/salvage favorite` | all | Toggle the favorite flag on the held armor piece (favorited gear can never be salvaged). |
 | `/language [language]` | all | Show or set your UI language (`english` or `magyar`). Re-localizes the lore on gear you already hold and your stash immediately. |
 | `/dung stats` | all | Prints the profile: class, coins, shards, deaths, best floor, kills, clears. |
@@ -644,13 +644,19 @@ Utilities:
 tagged `dung.entity`, anchored in the boss room. `tick()` runs an attack state machine: the boss
 holds still while warning, then fires:
 
-- **ATTACK_BEAM** — a red lane telegraphed toward the player (dodge perpendicular).
-- **ATTACK_SLAM** — hits within 3 blocks.
-- **ATTACK_RADIAL** — enrage-only (below 50% HP): expands a ring, hits within 5 blocks.
+- **ATTACK_BEAM** — a red lane telegraphed with **edge dots marking the 2-block damage width** and an
+  END_ROD marker at the lane's 12-block end (dodge perpendicular, or outrange it).
+- **ATTACK_SLAM** — hits within 3 blocks; telegraphed as a **compact white CRIT ring pulsing at that
+  3-block radius** ("stay an arm's length away").
+- **ATTACK_RADIAL** — enrage-only (below 50% HP): expands a ring, hits within 5 blocks; telegraphed
+  as a **large orange FLAME zone flickering out to the 5-block radius** so it can't be confused with
+  the slam ring.
 
 A contact sting damages if you walk into the boss. `enraged()` past 50% HP speeds up patterns and
-raises damage. `damage(dmg)` updates the boss bar, plays hit feedback (`ENTITY_PLAYER_HURT`
-sound + `CRIT` particles), and at 0, despawns + calls `GameManager.onBossDefeated()`.
+raises damage — the crossing is announced once with a chat line and the boss bar turns
+**pink** (`boss.enraged`). `damage(dmg)` updates the boss bar, plays hit feedback
+(`ENTITY_PLAYER_HURT` sound + `CRIT` particles), and at 0, despawns + calls
+`GameManager.onBossDefeated()`.
 
 **`GrovekeeperController`** — a forest-themed boss that has a **20% chance per floor** to replace
 The Warden. Uses a Ravager entity with a green boss bar and 3 attacks:
@@ -664,7 +670,8 @@ The Warden. Uses a Ravager entity with a green boss bar and 3 attacks:
 - **Poisonous Roots (radial)** — sends dense crimson-stem snakes snaking across the floor;
   stepping on one applies a **3-second poison DoT** (bypasses i-frames, mitigated by defense).
 
-Below 50% HP the Grovekeeper enrages (faster telegraphs, shorter cooldowns). On taking damage it
+Below 50% HP the Grovekeeper enrages (faster telegraphs, shorter cooldowns) — announced once with a
+chat line as its boss bar turns **purple** (`boss.enragedGk`). On taking damage it
 teleports behind the attacker (flanking dash), and a **basic melee swing provokes it**: it hurls
 the attacker away for 3% max-HP backhand damage (once per second). Drops a **Forest Transmutation
 Elixir** (a persistent item) on defeat (50% chance per kill).

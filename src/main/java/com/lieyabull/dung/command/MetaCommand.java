@@ -31,6 +31,9 @@ import java.util.UUID;
 public final class MetaCommand implements CommandExecutor, TabCompleter {
     private final Dung plugin;
     private final Map<UUID, Long> lastPartyInvite = new HashMap<>();
+    /** Players who ran bare /salvage all and must confirm within 30s via /salvage all confirm. */
+    private final Map<UUID, Long> salvageAllPending = new HashMap<>();
+    private static final long SALVAGE_ALL_CONFIRM_WINDOW = 30_000L;
     private static final long PARTY_INVITE_COOLDOWN_MS = 5000;
 
     public MetaCommand(Dung plugin) {
@@ -212,7 +215,19 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
     // ---------- /salvage ----------
 
     public boolean salvageCmd(Player p, String[] args) {
-        if (args.length > 0 && args[0].equalsIgnoreCase("all")) return salvageAll(p);
+        if (args.length > 0 && args[0].equalsIgnoreCase("all")) {
+            // Destructive bulk op — stage a one-shot confirm instead of salvaging instantly.
+            if (args.length > 1 && args[1].equalsIgnoreCase("confirm")) {
+                Long since = salvageAllPending.remove(p.getUniqueId());
+                if (since == null || System.currentTimeMillis() - since > SALVAGE_ALL_CONFIRM_WINDOW) {
+                    // Expired/stale confirm: drop it and re-stage (the bare command warns again).
+                    return salvageAllPreview(p);
+                }
+                return salvageAllConfirmed(p);
+            }
+            salvageAllPending.put(p.getUniqueId(), System.currentTimeMillis());
+            return salvageAllPreview(p);
+        }
         if (args.length > 0 && (args[0].equalsIgnoreCase("fav") || args[0].equalsIgnoreCase("favorite"))) {
             return toggleFavorite(p);
         }
@@ -273,10 +288,35 @@ public final class MetaCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    /** Preview what bare /salvage all WOULD destroy, then demand /salvage all confirm within 30s. */
+    private boolean salvageAllPreview(Player p) {
+        int[] counts = bulkSalvageScan(p);
+        if (counts[0] == 0) {
+            p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "salvage.nothing"));
+            return true;
+        }
+        p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "salvage.allConfirm",
+                counts[0], counts[1]));
+        return true;
+    }
+
+    /** main-inventory slots 9-35 that would actually be destroyed by bulk salvage: [pieces, value]. */
+    private int[] bulkSalvageScan(Player p) {
+        org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+        int pieces = 0, totalValue = 0;
+        for (int slot = 9; slot < 36; slot++) {
+            org.bukkit.inventory.ItemStack s = inv.getItem(slot);
+            if (!WorkstationRules.isBulkSalvageable(s)) continue;
+            pieces++;
+            totalValue += WorkstationRules.salvageValueOf(s);
+        }
+        return new int[]{pieces, totalValue};
+    }
+
     /** Salvage every salvable armor piece in the main inventory OUTSIDE the hotbar, armor slots,
      *  and offhand. Favorited pieces are always skipped. Shards go to the persistent balance outside
-     *  a run, or to the per-floor counter during a run. */
-    private boolean salvageAll(Player p) {
+     *  a run, or to the per-floor counter during a run. Reached only via the /salvage all confirm step. */
+    private boolean salvageAllConfirmed(Player p) {
         org.bukkit.inventory.PlayerInventory inv = p.getInventory();
         int pieces = 0, totalValue = 0;
         // main storage only (0-35); slots 36+ are armor/offhand which getSize() ALSO includes,

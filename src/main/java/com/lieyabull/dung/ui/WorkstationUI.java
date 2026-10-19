@@ -78,6 +78,7 @@ public final class WorkstationUI implements Listener {
         boolean confirmed;      // for SALVAGE/PRESERVE: whether the confirm step is active
         boolean busy;           // set once an operation is executing, to guard against double-click re-apply
         int page;               // zero-based page of the gear list (PAGE_SIZE entries per page)
+        int[] groups = new int[3]; // eligible counts {hotbar, bag(main), armor+offhand} for the info panel
     }
 
     public void openWorkstation(Player p, DungeonInstance di, WorkstationType type) {
@@ -113,6 +114,15 @@ public final class WorkstationUI implements Listener {
         }
         int totalPages = Math.max(1, (slots.size() + PAGE_SIZE - 1) / PAGE_SIZE);
         state.page = Math.max(0, Math.min(page, totalPages - 1));
+        // Eligible items arrive armor-first, bag, hotbar last (see dungeon.slotScheme). Surface the
+        // group sizes in the info panel so the ordering is self-explanatory in a 27-slot page grid.
+        int hotbar = 0, bag = 0, worn = 0;
+        for (int playerSlot : slots) {
+            if (playerSlot >= 36) worn++;
+            else if (playerSlot >= 9) bag++;
+            else hotbar++;
+        }
+        state.groups = new int[]{hotbar, bag, worn};
         int from = state.page * PAGE_SIZE;
         int to = Math.min(slots.size(), from + PAGE_SIZE);
         for (int i = from; i < to; i++) {
@@ -130,7 +140,7 @@ public final class WorkstationUI implements Listener {
         }
 
         // Info panel stays anchored at INFO_SLOT in both the list and the confirm view.
-        inv.setItem(INFO_SLOT, makeInfo(p, type));
+        inv.setItem(INFO_SLOT, makeInfo(p, type, state.groups));
         if (totalPages > 1) {
             if (state.page > 0) {
                 inv.setItem(PREV_SLOT, makeItem(Material.ARROW, "§f← Previous",
@@ -158,10 +168,15 @@ public final class WorkstationUI implements Listener {
         return p.getInventory().getItem(playerSlot);
     }
 
-    private ItemStack makeInfo(Player p, WorkstationType type) {
+    /** Info panel builder. {@code groups} = eligible counts {hotbar, bag, armor+offhand} from the
+     *  list that this state is rendering; null renders without the group summary line. */
+    private ItemStack makeInfo(Player p, WorkstationType type, int[] groups) {
         List<String> lines = new ArrayList<>();
         lines.add("§7" + wsDesc(p, type));
-        lines.add("");
+        if (groups != null) {
+            lines.add(Lang(p, "ws.groupCounts", groups[2], groups[1], groups[0]));
+            lines.add("");
+        }
         switch (type) {
             case UPGRADE -> {
                 lines.add(Lang(p, "ws.info.upgrade.cost"));
@@ -399,7 +414,7 @@ public final class WorkstationUI implements Listener {
         inv.setItem(CONFIRM_SLOT, makeItem(Material.LIME_DYE, confirmName, confirmLore, ACTION_CONFIRM));
         inv.setItem(BACK_SLOT, makeItem(Material.ARROW, Lang(p, "ws.back.name"),
                 List.of(Lang(p, "ws.back.lore")), ACTION_BACK));
-        inv.setItem(INFO_SLOT, makeInfo(p, state.type)); // keep the info panel anchored
+        inv.setItem(INFO_SLOT, makeInfo(p, state.type, state.groups)); // keep the info panel anchored
     }
 
     private ItemStack currentItem(Player p, State state, int playerSlot) {

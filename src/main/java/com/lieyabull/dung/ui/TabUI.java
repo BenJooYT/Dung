@@ -1,6 +1,7 @@
 package com.lieyabull.dung.ui;
 
 import com.lieyabull.dung.dungeon.Floor;
+import com.lieyabull.dung.dungeon.RoomType;
 import com.lieyabull.dung.game.DungeonInstance;
 import com.lieyabull.dung.game.PlayerState;
 import com.lieyabull.dung.game.Run;
@@ -50,6 +51,7 @@ public final class TabUI {
             team(o, i++, "");
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.equipment"));
             team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.mainhand", itemName(p.getInventory().getItemInMainHand())));
+            team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.offhand", itemName(p.getInventory().getItemInOffHand())));
             for (int a = 0; a < 4; a++) team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.armorSlot", armorSlot(p, a), itemName(p.getInventory().getArmorContents()[a])));
             // Durability per-piece from the shared helper (HUD shows worst-piece + count).
             // Prefix comes from the tab.durability Lang key — never hardcoded English.
@@ -65,8 +67,15 @@ public final class TabUI {
                 team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.roomsExplored", vis, total, cleared));
                 String bossState;
                 if (di.boss() != null) bossState = com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.boss.engaged");
-                else if (di.curRoom() != null && di.curRoom().type.name().equals("BOSS")) bossState = com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.boss.awaiting");
-                else bossState = com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.boss.hidden");
+                else {
+                    // "Awaiting" is per-player: the boss only starts when the whole party is in the
+                    // boss room, so a member elsewhere must not read AWAITING. Physical room + a
+                    // direct RoomType compare (never fragile .name().equals()).
+                    Floor.RoomNode phys = di.roomAt(p.getLocation());
+                    bossState = phys != null && phys.type == RoomType.BOSS
+                            ? com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.boss.awaiting")
+                            : com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.boss.hidden");
+                }
                 team(o, i++, com.lieyabull.dung.lang.Lang.forPlayer(p, "tab.boss", bossState));
             }
             // Class ability info
