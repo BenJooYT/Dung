@@ -38,10 +38,11 @@ public final class ChatUI {
                             .append(ser.deserialize(line).colorIfAbsent(NamedTextColor.GRAY));
                 }
             }
-            if (meta instanceof Damageable dmg) {
-                int remaining = dmg.hasDamage() ? dmg.getMaxDamage() - dmg.getDamage() : dmg.getMaxDamage();
+            if (meta instanceof Damageable dmg && dmg.hasMaxDamage()) {
+                int maxDamage = dmg.getMaxDamage();
+                int remaining = dmg.hasDamage() ? maxDamage - dmg.getDamage() : maxDamage;
                 hover = hover.append(Component.newline())
-                        .append(Component.text("Durability: " + remaining + " / " + dmg.getMaxDamage(),
+                        .append(Component.text("Durability: " + remaining + " / " + maxDamage,
                                 NamedTextColor.GRAY));
             }
         }

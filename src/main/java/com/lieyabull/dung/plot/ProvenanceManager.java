@@ -34,6 +34,8 @@ public final class ProvenanceManager implements Listener {
     private final YamlConfiguration data = new YamlConfiguration();
     /** Packed block positions: ((long)x & 0x3FFFFFF) << 38 | ((long)y & 0xFFF) << 26 | ((long)z & 0x3FFFFFF) */
     private final Set<Long> placedBlocks = new HashSet<>();
+    /** Debounced async save task so rapid place/break bursts only write once. */
+    private org.bukkit.scheduler.BukkitTask pendingSave;
 
     public ProvenanceManager(Dung plugin) {
         this.plugin = plugin;
@@ -61,21 +63,21 @@ public final class ProvenanceManager implements Listener {
     }
 
     /** True if the block was placed by a player. */
-    public boolean isPlayerPlaced(Block block) {
+    public synchronized boolean isPlayerPlaced(Block block) {
         if (block == null) return false;
         if (!isPlotsWorld(block)) return false;
         return placedBlocks.contains(pack(block));
     }
 
     /** Record a player-placed block. */
-    public void markPlaced(Block block) {
+    public synchronized void markPlaced(Block block) {
         if (block == null) return;
         if (!isPlotsWorld(block)) return;
         placedBlocks.add(pack(block));
     }
 
     /** Remove a block from the provenance set (e.g., when broken). */
-    public void unmark(Block block) {
+    public synchronized void unmark(Block block) {
         if (block == null) return;
         placedBlocks.remove(pack(block));
     }
@@ -92,7 +94,7 @@ public final class ProvenanceManager implements Listener {
         Block block = e.getBlock();
         if (!isPlotsWorld(block)) return;
         markPlaced(block);
-        save();
+        scheduleSave();
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -100,6 +102,34 @@ public final class ProvenanceManager implements Listener {
         Block block = e.getBlock();
         if (!isPlotsWorld(block)) return;
         unmark(block);
+        scheduleSave();
+    }
+
+    /** Coalesce rapid edits into one async disk write 5s later — never blocks the tick thread. */
+    private synchronized void scheduleSave() {
+        if (pendingSave != null) return; // already scheduled, will pick up latest state
+        try {
+            pendingSave = Bukkit.getScheduler().runTaskLaterAsynchronously(
+                    plugin, () -> {
+                        synchronized (ProvenanceManager.this) {
+                            pendingSave = null;
+                        }
+                        save();
+                    }, 100L);
+        } catch (IllegalStateException ex) {
+            // Scheduler unavailable (shutdown/tests) — fall back to direct save.
+            save();
+        }
+    }
+
+    /** Flush any pending debounced save immediately (e.g. on plugin disable). */
+    public synchronized void flush() {
+        if (pendingSave != null) {
+            try {
+                pendingSave.cancel();
+            } catch (IllegalStateException ignored) {}
+            pendingSave = null;
+        }
         save();
     }
 
@@ -122,14 +152,18 @@ public final class ProvenanceManager implements Listener {
     }
 
     public void save() {
+        final Set<Long> snapshot;
+        synchronized (this) {
+            snapshot = new HashSet<>(placedBlocks);
+        }
+        YamlConfiguration out = new YamlConfiguration();
         try {
-            for (String k : data.getKeys(false)) data.set(k, null);
-            for (long packed : placedBlocks) {
-                data.set(String.valueOf(packed), true);
+            for (long packed : snapshot) {
+                out.set(String.valueOf(packed), true);
             }
             dataFile.getParentFile().mkdirs();
             File tmp = new File(dataFile.getParentFile(), dataFile.getName() + ".tmp");
-            Files.write(tmp.toPath(), data.saveToString().getBytes(StandardCharsets.UTF_8));
+            Files.write(tmp.toPath(), out.saveToString().getBytes(StandardCharsets.UTF_8));
             try {
                 Files.move(tmp.toPath(), dataFile.toPath(),
                         StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);

@@ -127,15 +127,20 @@ public final class GameListener implements Listener {
         // Safety reset: a player joining outside a run can never carry stuck spectator/invisible
         // state into the lobby (e.g. a dead run member whose removePlayer never restored them).
         // Mid-run reconnects keep their state — they are still mapped to a live instance.
-        if (plugin.game().instanceOf(p) == null) {
+        boolean inLiveRun = plugin.game().liveInstanceOf(p) != null;
+        if (!inLiveRun) {
             p.setInvisible(false);
             p.setInvulnerable(false);
             if (p.getGameMode() == GameMode.SPECTATOR) p.setGameMode(GameMode.SURVIVAL);
+            // A player who quit during a run must never re-enter the lobby carrying run loot,
+            // even if the run's quit cleanup was skipped (crash, duplicate plugin, stale mapping,
+            // etc.). Persistent gear is untouched.
+            DungeonInstance.stripLeftoverRunGear(p);
         }
         if (!p.hasPlayedBefore()) {
             ChatUI.startPrompt(p);
         } else {
-            ChatUI.startPrompt(p, plugin.game().instanceOf(p) == null);
+            ChatUI.startPrompt(p, !inLiveRun);
         }
         // Migrate any persistent items in the player's inventory that lack UUIDs
         plugin.migratePersistentItemUuids();
@@ -374,6 +379,20 @@ public final class GameListener implements Listener {
             e.setCancelled(true);
             return;
         }
+        // The green "Equip Shield" pane is swappable inside the player inventory, but must
+        // never leave it: anything parked in a chest/shulker survives the slot sync, which
+        // then mints a fresh pane every tick (infinite worthless panes). Block moves into
+        // foreign inventories and shift-clicks; stray panes in the bag are swept by the sync.
+        if (DungeonInstance.isEquipIndicator(e.getCurrentItem())
+                || DungeonInstance.isEquipIndicator(e.getCursor())) {
+            // Shift-click always relocates; a click targeting a non-player inventory
+            // (chest open, crafting grid, click outside) relocates — cancel both.
+            // Plain clicks inside the own inventory stay allowed (swappable).
+            if (e.isShiftClick() || !(e.getClickedInventory() instanceof PlayerInventory)) {
+                e.setCancelled(true);
+                return;
+            }
+        }
         // Broken armor/shield cannot be equipped. A click that places a broken piece onto an armor
         // slot is cancelled and the piece is routed to a free inventory slot (or the stash if the
         // bag is full). A shift-click auto-equip from the main inventory is cancelled, leaving the
@@ -482,10 +501,11 @@ public final class GameListener implements Listener {
         if (!(e.getWhoClicked() instanceof Player p)) return;
         DungeonInstance di = instanceOf(p);
         if (di == null) {
-            // Outside a run: a drag that would place non-Dung armor into an armor slot (raw 36-39)
-            // is cancelled so vanilla armor can't be equipped.
+            // Outside a run: a drag that would place non-Dung armor into an armor slot
+            // is cancelled so vanilla armor can't be equipped. Raw drag slots must be
+            // mapped through the view — raw 36-39 is only armor when no GUI is open.
             if (e.getNewItems().entrySet().stream().anyMatch(en ->
-                    en.getKey() >= 36 && en.getKey() <= 39
+                    isPlayerArmorSlot(e.getView(), en.getKey())
                             && isArmorItem(en.getValue()) && !isDungArmor(en.getValue()))) {
                 e.setCancelled(true);
                 p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(
@@ -499,17 +519,26 @@ public final class GameListener implements Listener {
             e.setCancelled(true);
             return;
         }
-        // A drag that would place a broken armor/shield piece into an armor slot (raw 36-39) must
+        // The "Equip Shield" pane may move inside the player inventory, but a drag that
+        // would drop it into a foreign inventory (chest/shulker) is cancelled — parked
+        // panes survive the slot sync, which then mints fresh copies every tick.
+        if (e.getNewItems().entrySet().stream().anyMatch(en ->
+                DungeonInstance.isEquipIndicator(en.getValue())
+                        && !(e.getView().getInventory(en.getKey()) instanceof PlayerInventory))) {
+            e.setCancelled(true);
+            return;
+        }
+        // A drag that would place a broken armor/shield piece into an armor slot must
         // not equip it — cancel so the pieces stay in the main inventory.
         if (e.getNewItems().entrySet().stream().anyMatch(en ->
-                en.getKey() >= 36 && en.getKey() <= 39 && isBrokenEquippable(en.getValue()))) {
+                isPlayerArmorSlot(e.getView(), en.getKey()) && isBrokenEquippable(en.getValue()))) {
             e.setCancelled(true);
             p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "gear.armorBrokenEquip")));
             return;
         }
-        // The offhand slot is disabled. If a drag targets it (raw slot 45), cancel the drag and route
+        // The offhand slot is disabled. If a drag targets it, cancel the drag and route
         // the whole dragged stack to the first available inventory slot instead.
-        if (e.getRawSlots().contains(45)) {
+        if (e.getRawSlots().stream().anyMatch(raw -> isPlayerOffhandSlot(e.getView(), raw))) {
             e.setCancelled(true);
             ItemStack old = e.getOldCursor();
             if (old != null && !old.getType().isAir()) {
@@ -517,6 +546,21 @@ public final class GameListener implements Listener {
             }
             e.setCursor(null);
         }
+    }
+
+    /** True if a raw drag slot maps to a PlayerInventory armor slot (36-39). */
+    private static boolean isPlayerArmorSlot(org.bukkit.inventory.InventoryView view, int rawSlot) {
+        if (view.getInventory(rawSlot) == null
+                || !(view.getInventory(rawSlot) instanceof PlayerInventory)) return false;
+        int slot = view.convertSlot(rawSlot);
+        return slot >= 36 && slot <= 39;
+    }
+
+    /** True if a raw drag slot maps to the PlayerInventory offhand slot (40). */
+    private static boolean isPlayerOffhandSlot(org.bukkit.inventory.InventoryView view, int rawSlot) {
+        if (view.getInventory(rawSlot) == null
+                || !(view.getInventory(rawSlot) instanceof PlayerInventory)) return false;
+        return view.convertSlot(rawSlot) == 40;
     }
 
     /** Keys and bombs are materials that can be placed as blocks (TRIPWIRE_HOOK / TNT). Placing one
@@ -583,8 +627,10 @@ public final class GameListener implements Listener {
         Player p = e.getPlayer();
         DungeonInstance di = instanceOf(p);
         if (di == null) return;
-        // Prevent dropping key/bomb run items
-        if (DungeonInstance.isRunItem(e.getItemDrop().getItemStack())) {
+        // Prevent dropping key/bomb run items, and the "Equip Shield" pane (dropped panes
+        // survive the slot sync, which then mints fresh copies every tick).
+        if (DungeonInstance.isRunItem(e.getItemDrop().getItemStack())
+                || DungeonInstance.isEquipIndicator(e.getItemDrop().getItemStack())) {
             e.setCancelled(true);
             return;
         }
@@ -620,7 +666,7 @@ public final class GameListener implements Listener {
         if (item == null || item.getType().isAir()) return false;
         if (GearFactory.isBroken(item)) return false;
         String kind = item.getItemMeta().getPersistentDataContainer().get(
-                new org.bukkit.NamespacedKey(plugin, ItemTags.KIND),
+                org.bukkit.NamespacedKey.minecraft(ItemTags.KIND),
                 org.bukkit.persistence.PersistentDataType.STRING);
         return "weapon".equals(kind);
     }

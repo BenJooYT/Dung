@@ -85,4 +85,32 @@ public class UiDurabilityTest {
     void tabLinesEmptyWhenNoGear() {
         assertTrue(UiDurability.tabLines("§7Durability: ", List.of()).isEmpty());
     }
+
+    @Test
+    void slotBarIsFiveSegmentsAndVanishesAtZero() {
+        String full = UiDurability.slotBar(1.0);
+        assertTrue(full.startsWith("§a"));
+        assertEquals(5, full.replace("§a", "").length());
+        assertEquals("§a" + "█".repeat(5), full);
+
+        String worn = UiDurability.slotBar(0.4);
+        assertTrue(worn.startsWith("§6"));
+        assertEquals(2, worn.replace("§6", "").length());
+        assertFalse(worn.contains("░"));
+
+        assertEquals("", UiDurability.slotBar(0.0));
+    }
+
+    @Test
+    void slotRowHasLabelAndNoNumbers() {
+        String line = UiDurability.hudSlotLine(new UiDurability.Piece("Chest", 12, 85));
+        assertEquals("§7Chest §6█", line);
+        assertFalse(line.contains("12/85"));
+        assertFalse(line.contains("░"));
+    }
+
+    @Test
+    void slotRowIsBareLabelWhenMissing() {
+        assertEquals("§7Helmet", UiDurability.hudSlotLine(new UiDurability.Piece("Helmet", 0, 0)));
+    }
 }

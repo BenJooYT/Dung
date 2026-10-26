@@ -104,6 +104,8 @@ public final class PlayerState {
         damage = 3;
         magicDamage = 0;
         defense = 0;
+        shieldMax = 0;
+        pendingHealthAffixes = 0;
         reach = 3.0;
         critChance = 0.05;
         critMult = 1.5;

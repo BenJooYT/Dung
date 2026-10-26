@@ -438,6 +438,7 @@ public final class Lang {
             entry("hud.room", "§6Room: §f%s", "§6Szoba: §f%s"),
             entry("hud.corridor", "§7Corridor", "§7Folyosó"),
             entry("hud.gear", "§7Gear: ", "§7Felszerelés: "),
+            entry("hud.hand", "Hand", "Kéz"),
             entry("hud.lockedHint", "§e🔒 Locked nearby (need key)", "§e🔒 Zárt szoba a közelben (kulcs kell)"),
             entry("hud.bossActive", "§4!! BOSS ACTIVE", "§4!! FŐNÖK AKTÍV"),
             entry("hud.class", "§7Class §f%s", "§7Osztály §f%s"),

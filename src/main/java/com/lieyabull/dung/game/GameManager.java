@@ -42,6 +42,20 @@ public final class GameManager {
         return playerInstance.get(p.getUniqueId());
     }
 
+    /** Like {@link #instanceOf(Player)}, but only returns an instance that is still registered
+     *  and running. A mapping left behind by an ended run (e.g. the player quit and the run was
+     *  cleaned up while they were offline) is purged instead of being treated as a live run. */
+    public DungeonInstance liveInstanceOf(Player p) {
+        UUID uid = p.getUniqueId();
+        DungeonInstance di = playerInstance.get(uid);
+        if (di == null) return null;
+        if (instances.get(di.instanceId()) != di || !di.isRunning()) {
+            playerInstance.remove(uid, di);
+            return null;
+        }
+        return di;
+    }
+
     /** Get a dungeon instance by its ID. */
     public DungeonInstance instanceById(UUID id) {
         return instances.get(id);
@@ -92,12 +106,27 @@ public final class GameManager {
         // region math to keep parallel parties apart.
         String runId = "r" + System.nanoTime();
         org.bukkit.World runWorld = plugin.worldManager().createRunWorld(runId);
+        if (runWorld == null) {
+            for (org.bukkit.entity.Player p : party.onlineMembers()) {
+                p.sendMessage("§cFailed to create dungeon world.");
+            }
+            return false;
+        }
         DungeonInstance di = new DungeonInstance(plugin, party, 0, 0, runWorld);
         instances.put(di.instanceId(), di);
         for (UUID uid : party.members()) {
             playerInstance.put(uid, di);
         }
-        di.startRun(seed);
+        try {
+            di.startRun(seed);
+        } catch (RuntimeException ex) {
+            instances.remove(di.instanceId());
+            for (UUID uid : party.members()) {
+                playerInstance.remove(uid, di);
+            }
+            plugin.worldManager().deleteRunWorld(runWorld);
+            throw ex;
+        }
         return true;
     }
 
