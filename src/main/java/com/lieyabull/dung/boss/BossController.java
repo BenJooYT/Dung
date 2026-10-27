@@ -195,47 +195,58 @@ public final class BossController {
 
     /** Show which direction a beam will fire: a red lane across the arena from the boss.
      *  The lane also encodes its DIMENSIONS so the player can judge the safe zone:
-     *  faint edge dots at ±1 block mark the 2-block-wide damage column, and a dotted
+     *  faint edge dots at ±2 blocks mark the 4-block-wide damage column, and a dotted
      *  END_ROD post at 12 blocks marks where the beam stops. */
     private void warnLane(Location center, double angle) {
         double dx = Math.cos(angle), dz = Math.sin(angle);
-        // left/right perpendicular offsets = the beam's damage half-width (perp < 2.0 in fire())
-        double ex = dz, ez = -dx;
-        for (int i = 1; i <= 12; i++) {
-            Location l = center.clone().add(dx * i, 1, dz * i);
-            world.spawnParticle(org.bukkit.Particle.FLAME, l, 1, 0, 0, 0);
-            if (i % 3 == 0) { // edge dots every 3 blocks so the width reads without flooding particles
+        // fire() checks -1 < along < 12 and abs(perp) < 2.0. Draw that exact
+        // rectangle: the old center line made the dangerous lane look much narrower.
+        double px = -dz, pz = dx;
+        double halfWidth = 2.0;
+        double start = -1.0, end = 12.0;
+        for (double along = start; along <= end; along += 0.5) {
+            for (double side : new double[]{-halfWidth, halfWidth}) {
                 world.spawnParticle(org.bukkit.Particle.ASH,
-                        center.clone().add(dx * i + ex, 1, dz * i + ez), 1, 0, 0, 0);
-                world.spawnParticle(org.bukkit.Particle.ASH,
-                        center.clone().add(dx * i - ex, 1, dz * i - ez), 1, 0, 0, 0);
+                        center.clone().add(dx * along + px * side, 1, dz * along + pz * side),
+                        1, 0, 0, 0);
+            }
+            if (along >= 0 && Math.abs(along - Math.rint(along)) < 0.01) {
+                world.spawnParticle(org.bukkit.Particle.FLAME,
+                        center.clone().add(dx * along, 1, dz * along), 1, 0, 0, 0);
             }
         }
-        // clear end-of-range marker beyond the lane's last step
-        world.spawnParticle(org.bukkit.Particle.END_ROD,
-                center.clone().add(dx * 13, 1.5, dz * 13), 3, 0.2, 0.4, 0.2, 0.01);
+        for (double side = -halfWidth; side <= halfWidth; side += 0.5) {
+            world.spawnParticle(org.bukkit.Particle.END_ROD,
+                    center.clone().add(dx * start + px * side, 1.2, dz * start + pz * side),
+                    1, 0, 0, 0);
+            world.spawnParticle(org.bukkit.Particle.END_ROD,
+                    center.clone().add(dx * end + px * side, 1.2, dz * end + pz * side),
+                    1, 0, 0, 0);
+        }
     }
 
     /** SLAM telegraph: compact white ring pulsing just at the slam's danger radius (< 3 blocks).
      *  Reads "get further than arm's length from its body". */
     private void warnSlam(Location center) {
-        double r = 1 + (warning % 3);       // pulse outward 1→3, like the 5.0 ring did pre-split
-        world.spawnParticle(org.bukkit.Particle.CRIT, center.clone().add(0, 0.5, 0), 14, r, 0.1, r, 0);
+        // fire() uses a horizontal distance check of < 3.0 blocks.
+        spawnCircle(center.clone().add(0, 0.15, 0), 3.0, org.bukkit.Particle.CRIT, 40);
     }
 
     /** RADIAL telegraph: large orange/red zone flickering at the burst's danger radius (< 5 blocks).
      *  Deliberately bigger and "hotter" than the slam ring so the two can't be confused at a glance. */
     private void warnRadial(Location center) {
-        double r = 2 + (warning % 4);       // pulse outward 2→5
-        world.spawnParticle(org.bukkit.Particle.FLAME, center.clone().add(0, 1, 0), 16, r, 0, r, 0.02);
-        world.spawnParticle(org.bukkit.Particle.CRIT,
-                center.clone().add(r, 0.5, 0), 2, 0.3, 0.1, 0.3, 0);
-        world.spawnParticle(org.bukkit.Particle.CRIT,
-                center.clone().add(-r, 0.5, 0), 2, 0.3, 0.1, 0.3, 0);
-        world.spawnParticle(org.bukkit.Particle.CRIT,
-                center.clone().add(0, 0.5, r), 2, 0.3, 0.1, 0.3, 0);
-        world.spawnParticle(org.bukkit.Particle.CRIT,
-                center.clone().add(0, 0.5, -r), 2, 0.3, 0.1, 0.3, 0);
+        // fire() uses a horizontal distance check of < 5.0 blocks.
+        spawnCircle(center.clone().add(0, 0.15, 0), 5.0, org.bukkit.Particle.FLAME, 64);
+    }
+
+    /** Draw a stable horizontal circumference for a radial hitbox. */
+    private void spawnCircle(Location center, double radius, org.bukkit.Particle particle, int points) {
+        for (int i = 0; i < points; i++) {
+            double a = (Math.PI * 2.0 * i) / points;
+            world.spawnParticle(particle,
+                    center.clone().add(Math.cos(a) * radius, 0, Math.sin(a) * radius),
+                    1, 0, 0, 0);
+        }
     }
 
     public boolean isActive() {

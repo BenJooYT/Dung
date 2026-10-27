@@ -290,14 +290,17 @@ public final class PlayerState {
     public void hurt(double dmg, boolean bypassInvuln) {
         if ((!bypassInvuln && isInvuln()) || dead) return;
         double mitigated = Math.max(1.0, dmg * (100.0 / (100.0 + defense)));
+        boolean shieldDepletedByHit = false;
         // Mana Shield: absorb damage with shield first if active
         if (shieldActive && shield > 0) {
             if (shield >= mitigated) {
                 shield -= mitigated;
+                if (shield <= 0) shieldDepletedByHit = true;
                 mitigated = 0;
             } else {
                 mitigated -= shield;
                 shield = 0;
+                shieldDepletedByHit = true;
             }
             // Track shield uses. Run shields wear fast (1-3 durability per 2 absorptions);
             // persistent shields wear slow (1 per 5). The shield takes durability damage whether
@@ -323,6 +326,11 @@ public final class PlayerState {
                     }
                 }
             }
+        }
+        if (shieldDepletedByHit) {
+            com.lieyabull.dung.game.DungeonInstance di =
+                    com.lieyabull.dung.game.GameManager.instance().instanceOf(player);
+            if (di != null) di.activateEmberguard(player);
         }
         if (mitigated > 0) {
             hearts -= mitigated;

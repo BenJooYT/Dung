@@ -248,7 +248,7 @@ public final class GearFactory {
             case RARE -> 60;
             case EPIC -> 90;
             case LEGENDARY -> 130;
-            case MYTHIC -> 180;
+            case MYTHIC, EMBER -> 180;
         };
     }
 
@@ -541,7 +541,7 @@ public final class GearFactory {
      *  without a rarity are returned unchanged. Used when a Persist attempt fails. */
     public static ItemStack downgradeRarity(ItemStack s) {
         Rarity cur = getRarity(s);
-        if (cur == null || cur == Rarity.COMMON) return s.clone();
+        if (cur == null || cur == Rarity.COMMON || cur == Rarity.EMBER) return s.clone();
         Rarity target = Rarity.values()[cur.ordinal() - 1];
         double scale = target.statMult / cur.statMult;
         ItemStack out = s.clone();
@@ -991,6 +991,39 @@ public final class GearFactory {
         return s;
     }
 
+    /** Build one Emberguard armor piece. The set uses vanilla leather armor with a fixed
+     * charcoal-red dye; its Ember rarity trim is applied when the item reaches a pedestal. */
+    public static ItemStack emberArmor(int slot, int defense, int health) {
+        Material mat = switch (slot) {
+            case 0 -> Material.LEATHER_HELMET;
+            case 1 -> Material.LEATHER_CHESTPLATE;
+            case 2 -> Material.LEATHER_LEGGINGS;
+            default -> Material.LEATHER_BOOTS;
+        };
+        ItemStack s = armor("emberguard_" + slot, "Emberguard", mat, Rarity.EMBER, defense, health);
+        s.editMeta(meta -> {
+            if (meta instanceof org.bukkit.inventory.meta.LeatherArmorMeta leather) {
+                leather.setColor(org.bukkit.Color.fromRGB(38, 24, 22));
+            }
+        });
+        return s;
+    }
+
+    /** True for one Emberguard armor piece. */
+    public static boolean isEmberguard(ItemStack s) {
+        if (s == null || s.getItemMeta() == null) return false;
+        String kind = kindOf(s);
+        String base = strTagOf(s, ItemTags.BASE);
+        return "armor".equals(kind) && base != null && base.startsWith("emberguard_") && !isBroken(s);
+    }
+
+    /** True when all four armor slots contain Emberguard pieces. */
+    public static boolean hasFullEmberguard(org.bukkit.inventory.PlayerInventory inv) {
+        if (inv == null) return false;
+        for (ItemStack s : inv.getArmorContents()) if (!isEmberguard(s)) return false;
+        return true;
+    }
+
     /** Apply the rarity-themed cosmetics to a finalized gear item: armor trims for armor, banner
      *  gradient colors for mana shields (no-op otherwise). Call this only when an item is
      *  FINALIZED — never on shop-roll decoys, whose look would leak the not-yet-revealed rarity. */
@@ -1012,12 +1045,14 @@ public final class GearFactory {
                 case EPIC -> TrimMaterial.AMETHYST;
                 case LEGENDARY -> TrimMaterial.GOLD;
                 case MYTHIC -> TrimMaterial.REDSTONE;
+                case EMBER -> TrimMaterial.COPPER;
             };
             TrimPattern trimPattern = switch (r) {
                 case COMMON -> TrimPattern.SENTRY;
                 case UNCOMMON -> TrimPattern.DUNE;
                 case RARE -> TrimPattern.COAST;
                 case EPIC, LEGENDARY, MYTHIC -> TrimPattern.EYE;
+                case EMBER -> TrimPattern.RIB;
             };
             armorMeta.setTrim(new ArmorTrim(trimMat, trimPattern));
             s.setItemMeta(armorMeta);
@@ -1033,6 +1068,7 @@ public final class GearFactory {
                 case EPIC -> org.bukkit.DyeColor.PURPLE;
                 case LEGENDARY -> org.bukkit.DyeColor.ORANGE;
                 case MYTHIC -> org.bukkit.DyeColor.RED;
+                case EMBER -> org.bukkit.DyeColor.WHITE;
             };
             banner.addPattern(new Pattern(org.bukkit.DyeColor.WHITE, PatternType.FLOW));
             banner.addPattern(new Pattern(patternColor, PatternType.GRADIENT_UP));
@@ -1054,7 +1090,7 @@ public final class GearFactory {
             case RARE -> 60;
             case EPIC -> 80;
             case LEGENDARY -> 100;
-            case MYTHIC -> 130;
+            case MYTHIC, EMBER -> 130;
         };
         s.editMeta(meta -> {
             meta.setDisplayName(r.legacy + "Mana Shield");
@@ -1091,6 +1127,7 @@ public final class GearFactory {
                     case EPIC -> org.bukkit.DyeColor.PURPLE;
                     case LEGENDARY -> org.bukkit.DyeColor.ORANGE;
                     case MYTHIC -> org.bukkit.DyeColor.RED;
+                    case EMBER -> org.bukkit.DyeColor.WHITE;
                 };
                 banner.addPattern(new Pattern(org.bukkit.DyeColor.WHITE, PatternType.FLOW));
                 banner.addPattern(new Pattern(patternColor, PatternType.GRADIENT_UP));
@@ -1260,6 +1297,7 @@ public final class GearFactory {
             case EPIC: return Lang.get(lang, "gear.rar.epic");
             case LEGENDARY: return Lang.get(lang, "gear.rar.legendary");
             case MYTHIC: return Lang.get(lang, "gear.rar.mythic");
+            case EMBER: return "Ember";
         }
         return r.name();
     }

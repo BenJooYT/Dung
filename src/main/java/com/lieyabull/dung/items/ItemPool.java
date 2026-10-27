@@ -181,9 +181,17 @@ public final class ItemPool {
 
     /** Roll a random armor piece. slot: 0=head,1=chest,2=legs,3=boots. */
     public static ItemStack randomArmor(int floor, int slot) {
+        Rarity r = rollRarity(floor);
+        // Emberguard is an endgame armor-only branch for now. It uses exactly half of the
+        // Mythic outcome rate, while leaving the other half as ordinary Mythic armor. Keeping
+        // Ember out of rollRarity() itself leaves the rarity reusable for future Ember weapons.
+        if (floor >= 7 && r == Rarity.MYTHIC && ThreadLocalRandom.current().nextBoolean()) {
+            int def = (int) Math.round(14 * Rarity.EMBER.statMult);
+            int health = (int) Math.round(ARMOR_HEALTH[5] * SLOT_HEALTH[slot] * Rarity.EMBER.statMult);
+            return GearFactory.emberArmor(slot, def, health);
+        }
         int set = ThreadLocalRandom.current().nextInt(ARMOR_BASES.length);
         String[] b = ARMOR_BASES[set];
-        Rarity r = rollRarity(floor);
         int base = Integer.parseInt(b[5]);
         int def = (int) Math.round(base * r.statMult);
         String id = b[0].toLowerCase().replace(' ', '_') + "_" + slot;

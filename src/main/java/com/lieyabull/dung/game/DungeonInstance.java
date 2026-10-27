@@ -145,6 +145,26 @@ public final class DungeonInstance {
     // Per-player transient status messages shown in the action bar (with expiry timestamps)
     private static final long STATUS_DURATION_MS = 3000;
     private final Map<UUID, StatusMessage> statusMessages = new HashMap<>();
+    private final Map<UUID, EmberBurn> emberBurns = new HashMap<>();
+    private final Map<UUID, Integer> emberSphereTicks = new HashMap<>();
+
+    private static final int EMBER_BURN_TICKS = 100;
+    private static final int EMBER_BURN_INTERVAL = 20;
+    private static final double EMBER_BURN_RADIUS = 1.0; // 2-block diameter
+
+    private static final class EmberBurn {
+        final UUID source;
+        final Entity target;
+        int remaining;
+        int untilDamage;
+
+        EmberBurn(UUID source, Entity target) {
+            this.source = source;
+            this.target = target;
+            this.remaining = EMBER_BURN_TICKS;
+            this.untilDamage = 0;
+        }
+    }
 
     private static final class StatusMessage {
         final String text;
@@ -1777,6 +1797,8 @@ public final class DungeonInstance {
             if (nearest != null) grovekeeper.tick(nearest);
         }
 
+        tickEmberBurns();
+
         // Make each shopkeeper look at the nearest party member so the villager faces players
         // on every client's side (no-AI villagers don't naturally track players).
         for (Villager v : shopkeepers) {
@@ -1840,6 +1862,7 @@ public final class DungeonInstance {
 
             // Perfection particles: END_ROD sparkles around items at max upgrade level
             spawnPerfectionParticles(p);
+            spawnEmberguardParticles(p);
         }
 
         // Spectator effect: white smoke sprinkles from the heads of dead (spectator) players
@@ -1853,6 +1876,109 @@ public final class DungeonInstance {
         }
 
         refreshUI();
+    }
+
+    /** Activate Emberguard when a mana shield is broken by incoming damage. */
+    public void activateEmberguard(Player source) {
+        if (source == null || !source.isOnline() || !GearFactory.hasFullEmberguard(source.getInventory())) return;
+        UUID sourceId = source.getUniqueId();
+        emberSphereTicks.put(sourceId, 12); // brief activation sphere
+        world.playSound(source.getLocation(), org.bukkit.Sound.ITEM_FIRECHARGE_USE, 0.8f, 0.8f);
+        world.spawnParticle(org.bukkit.Particle.FLAME, source.getLocation().add(0, 1, 0), 28, 1.0, 1.0, 1.0, 0.04);
+        world.spawnParticle(org.bukkit.Particle.SMOKE, source.getLocation().add(0, 1, 0), 8, 0.6, 0.8, 0.6, 0.02);
+
+        Location origin = source.getLocation();
+        for (List<Enemy> enemies : roomEnemies.values()) {
+            for (Enemy enemy : enemies) {
+                if (!enemy.alive() || enemy.entity.getLocation().distance(origin) > EMBER_BURN_RADIUS) continue;
+                emberBurns.put(enemy.entity.getUniqueId(), new EmberBurn(sourceId, enemy.entity));
+            }
+        }
+        if (boss != null && boss.isActive() && boss.location().distance(origin) <= EMBER_BURN_RADIUS) {
+            emberBurns.put(boss.entity().getUniqueId(), new EmberBurn(sourceId, boss.entity()));
+        }
+        if (grovekeeper != null && grovekeeper.isActive()
+                && grovekeeper.location().distance(origin) <= EMBER_BURN_RADIUS) {
+            emberBurns.put(grovekeeper.entity().getUniqueId(), new EmberBurn(sourceId, grovekeeper.entity()));
+        }
+    }
+
+    /** Tick active Emberguard burns, recalculating damage once per second from current stats. */
+    private void tickEmberBurns() {
+        if (emberBurns.isEmpty() && emberSphereTicks.isEmpty()) return;
+        for (UUID id : emberSphereTicks.keySet()) {
+            Player p = Bukkit.getPlayer(id);
+            if (p != null && p.isOnline()) spawnEmberSphere(p.getLocation().clone().add(0, 1, 0));
+        }
+        emberSphereTicks.replaceAll((id, ticks) -> ticks - 1);
+        emberSphereTicks.entrySet().removeIf(e -> e.getValue() <= 0);
+
+        java.util.Iterator<Map.Entry<UUID, EmberBurn>> it = emberBurns.entrySet().iterator();
+        while (it.hasNext()) {
+            EmberBurn burn = it.next().getValue();
+            if (burn.remaining-- <= 0 || burn.target == null || !burn.target.isValid()) {
+                it.remove();
+                continue;
+            }
+            Location flame = burn.target.getLocation().clone().add(0, 1, 0);
+            if (tickCounter % 2 == 0) {
+                world.spawnParticle(org.bukkit.Particle.FLAME, flame, 3, 0.35, 0.65, 0.35, 0.02);
+                world.spawnParticle(org.bukkit.Particle.LAVA, flame, 1, 0.25, 0.45, 0.25, 0);
+            }
+            if (burn.untilDamage > 0) {
+                burn.untilDamage--;
+                continue;
+            }
+            Player source = Bukkit.getPlayer(burn.source);
+            PlayerState st = source == null || run == null ? null : run.playerStateOf(burn.source);
+            if (source == null || !source.isOnline() || st == null || st.dead) {
+                it.remove();
+                continue;
+            }
+            double damage = st.defense * 0.30 + st.magicDamage * 0.50;
+            if (damage > 0) {
+                Enemy enemy = findEnemy(burn.target.getUniqueId());
+                if (enemy != null && enemy.alive()) enemy.damage(damage, source, 0, 0);
+                else if (boss != null && boss.isActive() && boss.entity().getUniqueId().equals(burn.target.getUniqueId())) {
+                    boss.damage(damage, source);
+                } else if (grovekeeper != null && grovekeeper.isActive()
+                        && grovekeeper.entity().getUniqueId().equals(burn.target.getUniqueId())) {
+                    grovekeeper.damage(damage, source);
+                }
+            }
+            burn.untilDamage = EMBER_BURN_INTERVAL - 1;
+        }
+    }
+
+    private Enemy findEnemy(UUID id) {
+        for (List<Enemy> enemies : roomEnemies.values()) {
+            for (Enemy enemy : enemies) if (enemy.entity.getUniqueId().equals(id)) return enemy;
+        }
+        return null;
+    }
+
+    private void spawnEmberSphere(Location center) {
+        final double radius = 1.25;
+        for (int i = 0; i < 24; i++) {
+            double u = (i + 0.5) / 24.0;
+            double phi = Math.acos(1.0 - 2.0 * u);
+            double theta = Math.PI * (1.0 + Math.sqrt(5.0)) * i;
+            Location point = center.clone().add(
+                    radius * Math.sin(phi) * Math.cos(theta),
+                    radius * Math.cos(phi),
+                    radius * Math.sin(phi) * Math.sin(theta));
+            world.spawnParticle(org.bukkit.Particle.FLAME, point, 1, 0, 0, 0, 0);
+        }
+    }
+
+    /** Subtle molten drips for a complete Emberguard set, independent of upgrade level. */
+    private void spawnEmberguardParticles(Player p) {
+        if (!GearFactory.hasFullEmberguard(p.getInventory()) || tickCounter % 4 != 0) return;
+        Location base = p.getLocation();
+        double x = (ThreadLocalRandom.current().nextDouble() - 0.5) * 0.7;
+        double z = (ThreadLocalRandom.current().nextDouble() - 0.5) * 0.7;
+        double y = 0.9 + ThreadLocalRandom.current().nextDouble() * 1.0;
+        world.spawnParticle(org.bukkit.Particle.DRIPPING_LAVA, base.clone().add(x, y, z), 1, 0.02, 0.02, 0.02, 0);
     }
 
     /** Reflect the current shield charge on the active slot-9 shield's durability bar. The charge is a
@@ -1888,9 +2014,24 @@ public final class DungeonInstance {
         ItemStack held = inv.getItemInMainHand();
         if (held != null && !held.getType().isAir()
                 && GearFactory.getUpgradeLevel(held) >= WorkstationRules.UPGRADE_MAX) {
-            // Around the hand — offset slightly forward and to the right
-            Location handLoc = p.getLocation().add(p.getEyeLocation().getDirection().multiply(0.5))
-                    .add(0, -0.3, 0);
+            // Main-hand position relative to the player's eye: forward + right in the
+            // direction the player is facing, then down to hand height. Using a horizontal
+            // facing vector keeps the hand stable while looking up/down, while the right
+            // vector makes the effect follow the player's yaw instead of drifting on X/Z.
+            Location eye = p.getEyeLocation();
+            org.bukkit.util.Vector forward = eye.getDirection().clone().setY(0);
+            if (forward.lengthSquared() < 1.0e-6) {
+                forward = new org.bukkit.util.Vector(-Math.sin(Math.toRadians(p.getLocation().getYaw())),
+                        0, Math.cos(Math.toRadians(p.getLocation().getYaw())));
+            } else {
+                forward.normalize();
+            }
+            org.bukkit.util.Vector right = new org.bukkit.util.Vector(0, 1, 0)
+                    .crossProduct(forward).normalize();
+            Location handLoc = eye.clone()
+                    .add(forward.multiply(0.35))
+                    .add(right.multiply(0.28))
+                    .add(0, -0.55, 0);
             world.spawnParticle(org.bukkit.Particle.END_ROD, handLoc, 2, 0.15, 0.15, 0.15, 0.001);
         }
         // Check armor slots: 36=boots, 37=leggings, 38=chestplate, 39=helmet

@@ -112,7 +112,7 @@ public enum Affix {
             case RARE -> 1;
             case EPIC -> 2;
             case LEGENDARY -> 2;
-            case MYTHIC -> 3;
+            case MYTHIC, EMBER -> 3;
         };
     }
 

@@ -725,6 +725,7 @@ public final class ShopUI implements Listener {
             case EPIC -> Material.PURPLE_STAINED_GLASS_PANE;
             case LEGENDARY -> Material.ORANGE_STAINED_GLASS_PANE;
             case MYTHIC -> Material.RED_STAINED_GLASS_PANE;
+            case EMBER -> Material.BLACK_STAINED_GLASS_PANE;
         };
         ItemStack icon = new ItemStack(pane);
         icon.editMeta(meta -> meta.displayName(LEGACY.deserialize(r.legacy + r.name())));

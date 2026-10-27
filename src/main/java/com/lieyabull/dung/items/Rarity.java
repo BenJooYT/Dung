@@ -9,7 +9,9 @@ public enum Rarity {
     RARE(NamedTextColor.AQUA, "§b", 1.35, 1.0, 0.18),
     EPIC(NamedTextColor.LIGHT_PURPLE, "§d", 1.60, 2.0, 0.16),
     LEGENDARY(NamedTextColor.GOLD, "§6", 1.90, 3.0, 0.12),
-    MYTHIC(NamedTextColor.DARK_RED, "§4", 2.30, 4.0, 0.07);
+    MYTHIC(NamedTextColor.DARK_RED, "§4", 2.30, 4.0, 0.07),
+    /** Ember is a special endgame rarity; its visuals are item-specific, not rarity-trim based. */
+    EMBER(NamedTextColor.DARK_GRAY, "§8", 2.07, 7.0, 0.0);
 
     public final NamedTextColor text;
     public final String legacy;

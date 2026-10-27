@@ -665,6 +665,9 @@ public final class GrovekeeperController {
         }
         world.spawnParticle(org.bukkit.Particle.BLOCK, center.clone().add(0, 1, 0), 32, 3, 0, 3, Material.CRIMSON_STEM.createBlockData());
         world.spawnParticle(org.bukkit.Particle.ITEM, center.clone().add(0, 1, 0), 24, 3, 0, 3, new org.bukkit.inventory.ItemStack(Material.SPORE_BLOSSOM));
+        // poisonTick() checks a one-block horizontal expansion around every real root cell.
+        // Outline those exact cells after placement instead of implying a damaging circle.
+        for (PoisonBlock pb : poisonBlocks) drawPoisonHitbox(pb);
         world.playSound(center, org.bukkit.Sound.BLOCK_GRASS_BREAK, 1.0f, 0.5f);
         poisonActive = true;
         final int[] poisonElapsed = {0};
@@ -774,9 +777,20 @@ private void poisonTick(boolean rage) {
     /** Show root burst direction: green particles along the threatened lane. */
     private void warnRootBurst(Location center, double angle) {
         double dx = Math.cos(angle), dz = Math.sin(angle);
-        for (int i = 1; i <= 12; i++) {
-            Location l = center.clone().add(dx * i, 1, dz * i);
-            world.spawnParticle(org.bukkit.Particle.ITEM, l, 2, 0, 0, 0, new org.bukkit.inventory.ItemStack(Material.VINE));
+        // checkRootHits() uses abs(player.x - tip.x) < 1 and the same test on Z.
+        // Draw both edges of that square lane instead of a single decorative center line.
+        double px = -dz, pz = dx;
+        for (double along = 0; along <= 12; along += 0.5) {
+            for (double side : new double[]{-ROOT_DMG_RADIUS, ROOT_DMG_RADIUS}) {
+                Location edge = center.clone().add(dx * along + px * side, 0.15, dz * along + pz * side);
+                world.spawnParticle(org.bukkit.Particle.ITEM, edge, 1, 0, 0, 0,
+                        new org.bukkit.inventory.ItemStack(Material.VINE));
+            }
+            if (Math.abs(along - Math.rint(along)) < 0.01) {
+                world.spawnParticle(org.bukkit.Particle.DUST,
+                        center.clone().add(dx * along, 0.15, dz * along), 1, 0, 0, 0, 0,
+                        new org.bukkit.Particle.DustOptions(org.bukkit.Color.fromRGB(86, 58, 32), 0.8f));
+            }
         }
     }
 
@@ -792,7 +806,32 @@ private void poisonTick(boolean rage) {
     /** Show an expanding ring for timber walls / poison roots. */
     private void warnRing(Location center) {
         double r = 2 + (warning % 4);
-        world.spawnParticle(org.bukkit.Particle.BLOCK, center.clone().add(0, 1, 0), 20, r, 0, r, Material.OAK_LEAVES.createBlockData());
+        // Poisonous Roots has no radial damage check: it creates individual root cells and
+        // poisonTick() checks overlap with those cells. This is only a setup-area telegraph;
+        // the exact hitboxes are outlined by drawPoisonHitbox() as soon as the roots exist.
+        for (int i = 0; i < 24; i++) {
+            double a = Math.PI * 2.0 * i / 24.0;
+            world.spawnParticle(org.bukkit.Particle.BLOCK,
+                    center.clone().add(Math.cos(a) * r, 0.15, Math.sin(a) * r),
+                    1, 0, 0, 0, Material.OAK_LEAVES.createBlockData());
+        }
+    }
+
+    /** Outline the horizontal one-block expansion used by poisonTick() for one root cell. */
+    private void drawPoisonHitbox(PoisonBlock pb) {
+        double minX = pb.x - 0.5, maxX = pb.x + 1.5;
+        double minZ = pb.z - 0.5, maxZ = pb.z + 1.5;
+        org.bukkit.Particle.DustOptions dust =
+                new org.bukkit.Particle.DustOptions(org.bukkit.Color.fromRGB(170, 255, 190), 0.45f);
+        for (int i = 0; i <= 8; i++) {
+            double t = i / 8.0;
+            double x = minX + (maxX - minX) * t;
+            double z = minZ + (maxZ - minZ) * t;
+            world.spawnParticle(org.bukkit.Particle.DUST, new Location(world, x, pb.y + 0.08, minZ), 1, 0, 0, 0, 0, dust);
+            world.spawnParticle(org.bukkit.Particle.DUST, new Location(world, x, pb.y + 0.08, maxZ), 1, 0, 0, 0, 0, dust);
+            world.spawnParticle(org.bukkit.Particle.DUST, new Location(world, minX, pb.y + 0.08, z), 1, 0, 0, 0, 0, dust);
+            world.spawnParticle(org.bukkit.Particle.DUST, new Location(world, maxX, pb.y + 0.08, z), 1, 0, 0, 0, 0, dust);
+        }
     }
 
     public boolean isActive() {
