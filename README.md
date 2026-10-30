@@ -67,6 +67,24 @@ give|stop|reset|forceboss|room|bossbar`, `/check`, `/setlobby`, `/dummy`, `/flys
 start|descend|leave|stats|cp|class|shieldswitch|tutorial`, `/shop`, `/upgrades`, `/salvage`,
 `/stash`, `/balance`, `/party`, `/plot`, `/convert`, `/afk`, `/lobby` — is open to all players.
 
+### Floor generation profiles
+
+`config.yml` now controls the generation pipeline:
+
+- `floor-layout: classic|hub` — the original random-walk tree or the hub layout (four cardinal arms plus a ring).
+- `hub-rooms: 15` — room budget for the hub layout.
+- `floor-archetype: random|none|ruins|caverns|temple|overgrown|inferno|crypt` — classic-layout theme. Ignored by the hub layout.
+- `floor-modifiers: random|none|<comma list>` — up to two of `flooded`, `collapsing`, `corrupted`, `overgrown`, `darkness`, `infested`, `frozen`.
+
+Rooms support rectangle/L/cave/cross/ring/arena shapes, safe and hazard features (pools, pits, pillars, rubble, spikes, roots, altar, chest platform, stairs, bridges, terraces), archetype palettes, one-time event rooms, and the Four Pillar Arena / The Ring / The Altar / The Platforms templates.
+
+Admin floor tools:
+
+- `/dung floor seed` — print the current floor seed, run seed, and profile.
+- `/dung floor preview` — ASCII map of the current floor.
+- `/dung floor inspect [x z]` — room type, role, shape, size, template, features, and doors.
+- `/dung floor regenerate` — rebuild the current floor.
+
 ---
 
 ## Architecture overview

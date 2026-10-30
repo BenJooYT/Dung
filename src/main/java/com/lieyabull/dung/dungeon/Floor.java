@@ -3,6 +3,7 @@ package com.lieyabull.dung.dungeon;
 import com.lieyabull.dung.game.PlayerState;
 
 import java.util.ArrayDeque;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -15,6 +16,9 @@ public final class Floor {
     public final int floorIndex;
     public final int width;
     public final int height;
+    /** Optional theme used for graph tuning and normal-room palettes. */
+    public Archetype archetype;
+    public final Set<FloorModifier> modifiers = EnumSet.noneOf(FloorModifier.class);
     private final Map<Long, RoomNode> nodes = new HashMap<>();
     public final RoomNode start;
     public RoomNode boss;
@@ -57,11 +61,19 @@ public final class Floor {
     public static final class RoomNode {
         public final int x, z;
         public RoomType type;
+        /** Graph purpose: normal room, hub chamber, required destination, or optional side room. */
+        public RoomRole role = RoomRole.NORMAL;
         /** interior dimensions (width along x, depth along z); rooms may be square or elongated */
         public int sizeW = RoomGen.SQUARE;
         public int sizeH = RoomGen.SQUARE;
-        /** room shape: 0=rectangle, 1=L-shaped, 2=pillar room, 3=split room */
-        public int shape;
+        /** Interior footprint shape. */
+        public RoomShape shape = RoomShape.RECTANGLE;
+        /** Interior features placed after the shell is built. */
+        public final Set<RoomFeature> features = EnumSet.noneOf(RoomFeature.class);
+        /** Stable seed for deterministic feature placement. */
+        public long featureSeed;
+        /** Optional layout template applied to this room. */
+        public RoomTemplate template;
         public boolean cleared;
         public boolean shopBought;
         public boolean visited;
@@ -90,16 +102,78 @@ public final class Floor {
 
         /** Randomize the room shape: mostly square, sometimes longer (wider or deeper). */
         public void randomizeShape(java.util.Random rng) {
+            randomizeShape(rng, null);
+        }
+
+        /** Prefer an archetype signature shape for roughly half of the rooms. */
+        public void randomizeShape(java.util.Random rng, RoomShape preferred) {
             int r = rng.nextInt(4);
             if (r == 1) { sizeW = RoomGen.LONG; sizeH = RoomGen.SQUARE; }   // longer along x
             else if (r == 2) { sizeW = RoomGen.SQUARE; sizeH = RoomGen.LONG; } // longer along z
             else { sizeW = RoomGen.SQUARE; sizeH = RoomGen.SQUARE; }         // square (r==0 or 3)
-            // randomize shape type: 60% rectangle, 15% L, 15% pillar, 10% split
+            // shape type: 60% rectangle, 15% L, 15% pillar, 10% split; preferred replaces
+            // the first 55% of the roll.
             int s = rng.nextInt(100);
-            if (s < 60)      shape = 0; // rectangle
-            else if (s < 75) shape = 1; // L-shaped
-            else if (s < 90) shape = 2; // pillar room
-            else             shape = 3; // split room
+            if (preferred != null && s < 55) {
+                shape = preferred;
+            } else if (s < 60) {
+                shape = RoomShape.RECTANGLE;
+            } else if (s < 75) {
+                shape = RoomShape.L_SHAPED;
+            } else if (s < 90) {
+                shape = RoomShape.PILLAR;
+            } else {
+                shape = RoomShape.SPLIT;
+            }
+        }
+
+        /** Pick zero or one safe feature, preferring an archetype/shape signature feature. */
+        public void randomizeFeatures(java.util.Random rng, Archetype archetype) {
+            features.clear();
+            featureSeed = rng.nextLong();
+            RoomFeature preferred = signatureFeature(archetype);
+            if (preferred != null && rng.nextInt(100) < 55) {
+                features.add(preferred);
+            } else if (rng.nextInt(100) < 35) {
+                RoomFeature extra = randomSafeFeature(rng);
+                if (extra != null) features.add(extra);
+            }
+        }
+
+        private RoomFeature signatureFeature(Archetype archetype) {
+            if (archetype != null) {
+                return switch (archetype) {
+                    case RUINS -> RoomFeature.RUBBLE;
+                    case CAVERNS -> RoomFeature.PLATFORMS;
+                    case TEMPLE -> RoomFeature.ALTAR;
+                    case OVERGROWN -> RoomFeature.ROOTS;
+                    case INFERNO -> RoomFeature.LAVA_POOL;
+                    case CRYPT -> shape == RoomShape.RING
+                            ? RoomFeature.CENTRAL_PIT : RoomFeature.SPIKES;
+                };
+            }
+            return switch (shape) {
+                case CAVE -> RoomFeature.WATER_POOL;
+                case RING -> RoomFeature.CENTRAL_PIT;
+                case CROSS -> RoomFeature.PILLARS;
+                case L_SHAPED -> RoomFeature.RUBBLE;
+                case ARENA -> RoomFeature.CHEST_PLATFORM;
+                case SPLIT -> RoomFeature.RUBBLE;
+                default -> null;
+            };
+        }
+
+        private RoomFeature randomSafeFeature(java.util.Random rng) {
+            RoomFeature[] all = RoomFeature.values();
+            int start = rng.nextInt(all.length);
+            for (int i = 0; i < all.length; i++) {
+                RoomFeature feature = all[(start + i) % all.length];
+                if (!feature.safe()) continue;
+                if (feature == RoomFeature.PILLARS && shape == RoomShape.PILLAR) continue;
+                if (feature == RoomFeature.PLATFORMS && shape == RoomShape.RING) continue;
+                return feature;
+            }
+            return null;
         }
 
         public void open(int dir) {

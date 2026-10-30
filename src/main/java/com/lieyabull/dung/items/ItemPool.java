@@ -241,6 +241,7 @@ public final class ItemPool {
             case 4 -> 0.55;  // secret
             case 5 -> 1.0;   // elite
             case 6 -> 1.0;   // boss
+            case 9 -> 0.75;  // event
             default -> 0.0;
         };
         if (ThreadLocalRandom.current().nextDouble() < gearChance) {

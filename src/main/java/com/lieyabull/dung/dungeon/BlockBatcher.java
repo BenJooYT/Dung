@@ -6,6 +6,7 @@ import com.sk89q.worldedit.math.BlockVector3;
 import com.sk89q.worldedit.world.block.BlockState;
 import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.block.data.BlockData;
 
 import java.util.EnumMap;
 import java.util.Map;
@@ -59,6 +60,33 @@ public final class BlockBatcher {
         } else {
             w.getBlockAt(x, y, z).setType(m);
         }
+    }
+
+    /** Set a block with explicit data (used for ceiling-hanging lanterns). */
+    public static void setBlock(World w, int x, int y, int z, BlockData data) {
+        if (session != null) {
+            BlockState bs = com.sk89q.worldedit.bukkit.BukkitAdapter.adapt(data);
+            try {
+                session.setBlock(BlockVector3.at(x, y, z), bs);
+            } catch (MaxChangedBlocksException ignored) {
+                // unreachable — no block limit is set on the session
+            }
+        } else {
+            w.getBlockAt(x, y, z).setBlockData(data, false);
+        }
+    }
+
+    /** Place a lantern hanging from the block above it instead of a standing lantern. */
+    public static void setHangingLantern(World w, int x, int y, int z) {
+        if (org.bukkit.Bukkit.getServer() == null) {
+            // Headless tests have no Bukkit server to create block data; physics is not simulated.
+            setBlock(w, x, y, z, Material.LANTERN);
+            return;
+        }
+        org.bukkit.block.data.type.Lantern lantern =
+                (org.bukkit.block.data.type.Lantern) Material.LANTERN.createBlockData();
+        lantern.setHanging(true);
+        setBlock(w, x, y, z, lantern);
     }
 
     /** Convenience: set a block followed by setting another. */

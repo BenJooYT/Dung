@@ -1,12 +1,22 @@
 # Dung configuration
-# Only `rooms-per-floor` and `custom-rooms` are read by the plugin (see DungeonInstance.enterFloor).
-# The remaining keys below (`floors`, `base-player-damage`, `base-fire-rate-ticks`,
-# `mana-regen-per-tick`, `coin-drop-base`, `permanent-coin-bonus`) are dead knobs: they are kept
-# for backwards compatibility but ignored at runtime. Combat/economy tuning lives in code
-# (PlayerState, ItemPool, WorkstationRules, CombatPower).
+# Read by the plugin: `rooms-per-floor`, `floor-layout`, `hub-rooms`, `floor-archetype`,
+# `floor-modifiers`, and `custom-rooms` (see DungeonInstance.enterFloor). The remaining keys below (`floors`, `base-player-damage`,
+# `base-fire-rate-ticks`, `mana-regen-per-tick`, `coin-drop-base`, `permanent-coin-bonus`) are
+# dead knobs: they are kept for backwards compatibility but ignored at runtime. Combat/economy
+# tuning lives in code (PlayerState, ItemPool, WorkstationRules, CombatPower).
 # Dungeon tuning
 floors: 8
 rooms-per-floor: 7
+# classic = the original random-walk tree; hub = central rounded chamber + cardinal arms/ring.
+floor-layout: classic
+# Room budget for the hub layout (ignored by classic).
+hub-rooms: 15
+# Classic-layout floor theme: random, none/classic, or
+# ruins|caverns|temple|overgrown|inferno|crypt. Ignored by the hub layout.
+floor-archetype: random
+# Per-floor environmental modifiers: random, none/classic, or a comma list of
+# flooded|collapsing|corrupted|overgrown|darkness|infested|frozen (max two).
+floor-modifiers: random
 # Custom room structures (drop <id>.schem + <id>.yml into plugins/Dung/structures/; id = schematic name)
 custom-rooms: true
 # Combat

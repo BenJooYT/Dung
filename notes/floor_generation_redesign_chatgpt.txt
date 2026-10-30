@@ -1,0 +1,1265 @@
+# Dung — Floor Generation Redesign (ChatGPT proposal)
+
+Source: ChatGPT, imported 2026-10-29.
+Provenance note: the proposal assumes BASE_Y = 80. The current code builds runs at
+`DungeonInstance.BASE_Y = 130`; SQUARE=13, LONG=17 and PERP_CENTER=9 do match the current
+RoomGen constants. Reference-image links from the ChatGPT answer were omitted (ephemeral
+search images); captions remain.
+
+---
+
+39s ideig dolgozott rajta
+
+### Dung — Floor Generation Redesign
+
+My recommendation is to evolve Dung from a random room-placement generator into a multi-stage procedural dungeon generation system.
+
+The important distinction:
+
+* The floor graph determines where players can go.
+
+* Room generation determines what those places look and play like.
+
+* Environmental generation determines what makes the floor unique.
+
+* Gameplay generation determines what happens inside it.
+
+These should be separate systems, but they should share a common generation context.
+
+I would preserve your existing `FloorGenerator → RoomNode → RoomGen → Minecraft world` architecture rather than replace it.
+
+### 1. Existing architecture and what changes
+
+Based on the previous design, the existing responsibilities are approximately:
+
+| Component      | Current responsibility                                  |
+| -------------- | ------------------------------------------------------- |
+| FloorGenerator | Generates connected room graph, branches and room types |
+| RoomNode       | Stores grid position, dimensions, doors and room state  |
+| RoomGen        | Projects rooms, geometry and corridors into Minecraft   |
+| Floor          | Holds the generated floor and its rooms                 |
+
+Your existing constraints remain:
+
+* `BASE_Y = 80`
+
+* Approximately 13×13 standard rooms.
+
+* Occasional 17-block dimensions.
+
+* N/E/S/W door connectivity.
+
+* Procedural corridors remain authoritative.
+
+* Optional WorldEdit `.schem + .yml` structures remain supported.
+
+* Boss selection uses graph distance.
+
+* Secret and locked rooms retain their special access mechanics.
+
+The biggest architectural change: introduce a generation profile and a room geometry description between graph generation and world placement.
+
+New architecture:
+
+FloorGenerator
+
+Orchestrates generation
+
+FloorProfile
+
+Archetype, modifiers, difficulty, generation rules
+
+FloorGraphGenerator
+
+Topology and connectivity
+
+RoomAssignment
+
+Types and gameplay
+
+RoomNode + RoomGeometry
+
+Logical room and physical layout description
+
+RoomGen
+
+Geometry, corridors, decorations, hazards
+
+Minecraft world
+
+Generated floor
+
+This is an evolution, not a complete rewrite.
+
+### 2. Floor archetypes
+
+Every floor should receive an archetype before graph generation.
+
+An archetype isn't just a visual theme. It changes the topology, room distribution, geometry selection and environmental rules.
+
+I'd initially implement six archetypes.
+
+[Image: Beneath the ruins | The Corruption of Lani – St-Cyr Thoughts]
+
+1. RUINS
+
+* Irregular room shapes.
+
+* Broken corridors and collapsed walls.
+
+* Pillars, rubble and ancient structures.
+
+* More secret passages.
+
+* Moderate room density.
+
+[Image: Mystical cave glowing with crystals, underground lake and ancient carvings]
+
+2. CAVERNS
+
+* Larger, irregular rooms.
+
+* Natural stone formations.
+
+* Pools, cliffs and bridges.
+
+* More vertical geometry.
+
+* Fewer but more spacious rooms.
+
+[Image: AI Generated Ancient chamber Photos and Artwork | Deep Dream Generator]
+
+3. TEMPLE
+
+* Symmetrical and geometric rooms.
+
+* Central chambers.
+
+* Pillars and altars.
+
+* More puzzles and locked areas.
+
+* Deliberate progression through the floor.
+
+[Image: ハイファンタジー_古代遺跡の各種ビジュアル - benibuta2024's blog]
+
+4. OVERGROWN
+
+* Vegetation-filled rooms.
+
+* Roots obstructing corridors.
+
+* Water and natural hazards.
+
+* Hidden passages.
+
+* More environmental encounters.
+
+[Image: Dwarven City, David Metzger | Dwarven city, Fantasy landscape, Fantasy city]
+
+5. INFERNO
+
+* Lava pits and narrow bridges.
+
+* Heat-related hazards.
+
+* More combat-focused rooms.
+
+* Riskier optional paths.
+
+* Distinctive boss approach.
+
+[Image: Escape game - Profiter des activités à Paris 14e]
+
+6. CRYPT
+
+* Tombs and burial chambers.
+
+* Narrow corridors.
+
+* Grave-themed encounters.
+
+* Hidden treasure chambers.
+
+* More undead encounters.
+
+I'd make archetypes data-driven, so adding a seventh doesn't require modifying the main generation algorithm.
+
+Example configuration:
+
+```yaml
+id: CAVERNS
+display-name: "The Caverns"
+
+graph:
+  room-count: [11, 17]
+  branch-count: [2, 5]
+  loop-chance: 0.30
+  max-path-length: 10
+
+room-selection:
+  weights:
+    COMBAT: 45
+    TREASURE: 12
+    ELITE: 12
+    SHOP: 5
+    EVENT: 10
+    UPGRADE: 4
+
+geometry:
+  shapes:
+    SQUARE: 15
+    RECTANGLE: 20
+    CAVE: 45
+    SPLIT: 10
+    PILLAR: 10
+
+environment:
+  water-chance: 0.25
+  elevation-variation: 0.60
+  rubble-chance: 0.40
+
+features:
+  secret-rooms: true
+  shortcuts: true
+  environmental-hazards: true
+```
+
+The exact values should be balanced through testing.
+
+### 3. Redesign the graph generation
+
+Your existing random walk is a reasonable starting point, but I'd make it a more deliberate graph-generation algorithm.
+
+The goal is to generate interesting exploration paths rather than simply placing connected rooms.
+
+### Proposed graph structure
+
+[Image: The Finer Details of Dungeon Generation news - TinyKeep - IndieDB]
+
+I would generate the graph in five steps.
+
+Step A — Generate a main route
+
+Create a path from START to BOSS.
+
+For example:
+
+```text
+START → COMBAT → COMBAT → ELITE → BOSS
+```
+
+The path should have a configurable length based on floor size and difficulty.
+
+Step B — Generate branches
+
+Attach optional paths to existing rooms.
+
+```text
+                  TREASURE
+                     |
+START → COMBAT → COMBAT → ELITE → BOSS
+                     |
+                   SHOP
+                     |
+                   EVENT
+```
+
+These branches should have different purposes, not just be random dead ends.
+
+Step C — Add loops
+
+This is particularly important.
+
+A graph containing only branches and dead ends becomes predictable. Additional connections create multiple routes through the floor.
+
+```text
+START ─── A ─── B ─── BOSS
+          |     |
+          C ─── D
+          |
+        TREASURE
+```
+
+Now players can navigate around previously explored areas.
+
+Step D — Assign special rooms
+
+After the topology is generated, assign room types using constraints.
+
+For example:
+
+* START must have at least one connection.
+
+* BOSS should be at the end of a sufficiently long route.
+
+* SHOP shouldn't spawn directly beside START.
+
+* TREASURE should favor optional branches.
+
+* SECRET remains disconnected from the normal graph until discovered.
+
+* LOCKED should have a valid key or unlock path.
+
+* UPGRADE keeps your existing every-fifth-floor rule.
+
+Step E — Validate the graph
+
+Run BFS and graph analysis to ensure:
+
+* Every normal room is reachable.
+
+* The boss is reachable.
+
+* No accidental isolated rooms exist.
+
+* Branch lengths are sensible.
+
+* Special room requirements are fulfilled.
+
+* Every intended loop actually connects.
+
+One important distinction: the logical graph should be generated before physical room placement. Room geometry must not dictate the graph.
+
+### Suggested graph-generation parameters
+
+| Parameter            | Initial range |
+| -------------------- | ------------- |
+| Main path length     | 5–9           |
+| Total rooms          | 11–18         |
+| Optional branches    | 2–5           |
+| Additional loops     | 1–3           |
+| Secret rooms         | 0–2           |
+| Optional elite rooms | 1–2           |
+
+These are starting targets, not hard limits.
+
+### 4. Give RoomNode a geometry identity
+
+This is probably the most important change to your existing `RoomNode`.
+
+Currently, it already holds information such as:
+
+* `x`, `z`
+
+* `RoomType`
+
+* `sizeW`, `sizeH`
+
+* `doors[4]`
+
+* `cleared`, `visited`, `looted`, `shopBought`
+
+I'd preserve all of that.
+
+Instead of making `RoomGen` randomly decide what geometry to construct, give each node a generated room layout description.
+
+For example:
+
+```java
+public enum RoomShape {
+    SQUARE,
+    RECTANGLE,
+    LONG,
+    L_SHAPED,
+    CAVE,
+    PILLAR,
+    SPLIT,
+    CROSS,
+    RING,
+    ARENA
+}
+```
+
+And a separate feature enum:
+
+```java
+public enum RoomFeature {
+    WATER_POOL,
+    LAVA_POOL,
+    CENTRAL_PIT,
+    PILLARS,
+    STAIRS,
+    BRIDGES,
+    RUBBLE,
+    SPIKES,
+    ROOTS,
+    ALTAR,
+    CHEST_PLATFORM
+}
+```
+
+Then introduce a `RoomGeometry` object:
+
+```java
+public class RoomGeometry {
+
+    private RoomShape shape;
+
+    private int width;
+    private int depth;
+    private int height;
+
+    private Set<RoomFeature> features;
+
+    private int elevationVariation;
+
+    private boolean symmetrical;
+}
+```
+
+`RoomNode` would hold a reference to its geometry description.
+
+The distinction matters:
+
+* `RoomNode` represents a room in the dungeon.
+
+* `RoomGeometry` describes its physical construction.
+
+* `RoomGen` builds that construction.
+
+This prevents your logical dungeon model from becoming full of Minecraft block-placement code.
+
+### 5. Build a procedural room composition system
+
+Instead of writing an entirely separate generator for every possible room, use composable geometry modules.
+
+Think of each room as a combination of:
+
+* Base shape.
+
+* Structural elements.
+
+* Terrain.
+
+* Gameplay features.
+
+* Decoration.
+
+[Image: Crystal Cave [Dungeon] Minecraft Map]
+
+[Image: Lumenshard | A Deeper Dive into our Dynamic Dungeons]
+
+[Image: Minecraft - As melhores seeds de Cavernas Verdejantes - Critical Hits]
+
+[Image: Mythic Dungeon - MCModels]
+
+[Image: Builder Blog #1 - Dungeon Puzzle Rooms | Hypixel Forums]
+
+[Image: Small Dungeon - BreadBuilds]
+
+[Image: Small Dungeon | Minecraft Dungeon #24474]
+
+[Image: Magic Cave Minecraft Map]
+
+[Image: Desert Dungeon | Chunkfactory]
+
+[Image: Mines (1.19+) - BreadBuilds]
+
+[Image: Dungeon Boss Map Minecraft Map]
+
+[Image: Dungeon : The Crypt Minecraft Map]
+
+[Image: Epic Adventure Dungeon map! Minecraft Map]
+
+For example, a room might be generated as:
+
+```text
+BASE SHAPE: CAVE
+
+STRUCTURE:
+  - 4 stone pillars
+  - 1 elevated platform
+  - 2 side alcoves
+
+TERRAIN:
+  - uneven stone floor
+  - small water pool
+
+FEATURES:
+  - 1 chest platform
+  - 2 enemy spawn regions
+
+CONNECTIONS:
+  - NORTH
+  - EAST
+```
+
+### Geometry generation stages
+
+I would implement these inside `RoomGen` as separate operations:
+
+| Stage          | Responsibility                        |
+| -------------- | ------------------------------------- |
+| 1. Footprint   | Generate the room's floor boundary    |
+| 2. Walls       | Build enclosing walls                 |
+| 3. Connections | Cut doorways and connect corridors    |
+| 4. Terrain     | Add elevation and floor variation     |
+| 5. Structures  | Generate pillars, platforms, bridges  |
+| 6. Features    | Place pits, pools, hazards and altars |
+| 7. Decoration  | Add smaller visual details            |
+| 8. Validation  | Verify entrances and playable space   |
+
+### Important: use a room mask
+
+Rather than assuming every room is a filled rectangle, represent the floor as a 2D grid.
+
+For example:
+
+```text
+..............
+...########...
+..##########..
+.############.
+.############.
+.############.
+.############.
+..##########..
+...########...
+..............
+```
+
+Here:
+
+* `#` means walkable floor.
+
+* `.` means outside the room.
+
+You can then generate irregular caves, L-shaped rooms, rings and other layouts.
+
+This also makes it easier to determine where walls belong.
+
+Doorways must be reserved before finalizing the room geometry. Otherwise, a generated pillar or wall might accidentally obstruct an entrance.
+
+For your current implementation, I'd keep the established door alignment conventions and `PERP_CENTER = 9` rather than changing corridor placement immediately.
+
+### 6. Introduce room layout templates
+
+Even with procedural geometry, completely random geometry can become visually incoherent.
+
+I'd introduce a lightweight layout-template system.
+
+A template describes structural placement rules, not a complete schematic.
+
+Example:
+
+```yaml
+id: FOUR_PILLAR_ARENA
+
+allowed-shapes:
+  - SQUARE
+  - RECTANGLE
+
+structures:
+  - type: PILLAR
+    count: 4
+    placement: CORNERS
+
+  - type: ALTAR
+    count: 1
+    placement: CENTER
+
+  - type: RUBBLE
+    count: 4
+    placement: WALLS
+
+constraints:
+  keep-doorways-clear: true
+  minimum-walkable-area: 0.65
+  preserve-center: true
+```
+
+Possible templates:
+
+[Image: Door Puzzle Room | Inkarnate - Create Fantasy Maps Online]
+
+Four Pillars
+
+Combat arena
+
+[Image: This item is unavailable - Etsy]
+
+The Ring
+
+Traversal / combat
+
+[Image: World of DanMachi | Friends & Fables - AI RPG World]
+
+The Platforms
+
+Vertical combat
+
+[Image: 10 Gridless Underground Boss Battle Maps | VTT Pack for Dnd, Pathfinder & Ttrpgs | High-res AI Digital Maps - Etsy Canada]
+
+The Altar
+
+Event / treasure
+
+You could eventually have dozens of templates, with each archetype having its own weighted selection pool.
+
+### 7. Introduce environmental modifiers
+
+I would make these independent of archetypes.
+
+An archetype determines the overall character of the floor. A modifier adds a particular condition.
+
+Examples:
+
+| Modifier   | Mechanical effect      | Visual effect    |
+| ---------- | ---------------------- | ---------------- |
+| FLOODED    | Water affects movement | Water pools      |
+| COLLAPSING | Periodic hazards       | Falling debris   |
+| CORRUPTED  | Special enemy variants | Corrupted blocks |
+| OVERGROWN  | Obstructed pathways    | Roots and vines  |
+| DARKNESS   | Reduced visibility     | Darkened rooms   |
+| INFESTED   | Additional enemies     | Webs and nests   |
+| FROZEN     | Slippery surfaces      | Ice formations   |
+
+A floor could be:
+
+```text
+ARCHETYPE: RUINS
+MODIFIERS:
+  - OVERGROWN
+  - INFESTED
+```
+
+The result should feel substantially different from ordinary ruins.
+
+I would initially allow one major and one minor modifier to avoid overwhelming players.
+
+### 8. Make generation deterministic
+
+This is a technical feature I'd strongly recommend implementing from the beginning.
+
+Every floor should have a seed:
+
+```java
+long floorSeed = ...;
+```
+
+Use that seed to initialize independent random generators:
+
+```java
+Random graphRng = new Random(seedFor(seed, "graph"));
+Random roomRng = new Random(seedFor(seed, "rooms"));
+Random geometryRng = new Random(seedFor(seed, "geometry"));
+Random decorationRng = new Random(seedFor(seed, "decoration"));
+```
+
+The `seedFor` function should derive stable seeds from the floor seed and a stage identifier.
+
+Why?
+
+Suppose you change the decoration algorithm. You shouldn't suddenly get a different dungeon layout.
+
+Independent random streams make debugging much easier.
+
+You can also add:
+
+* `/dung floor generate [seed]`
+
+* `/dung floor preview`
+
+* `/dung floor inspect [room]`
+
+* `/dung floor regenerate`
+
+This would make testing procedural generation considerably easier.
+
+### 9. Floor generation validation and quality scoring
+
+Random generation isn't necessarily good generation.
+
+I'd introduce a validation stage that rejects or repairs poor floors.
+
+Possible checks:
+
+| Check           | Requirement                     |
+| --------------- | ------------------------------- |
+| Connectivity    | All regular rooms reachable     |
+| Boss distance   | Sufficient distance from START  |
+| Room diversity  | Avoid excessive identical rooms |
+| Branching       | At least one optional route     |
+| Special rooms   | Respect placement restrictions  |
+| Geometry        | All entrances remain accessible |
+| Walkability     | Minimum accessible floor area   |
+| Spawn safety    | Safe player spawn position      |
+
+You could also calculate a simple quality score:
+
+```java
+score =
+    topologyScore * 0.25 +
+    diversityScore * 0.20 +
+    geometryScore * 0.25 +
+    explorationScore * 0.20 +
+    specialRoomScore * 0.10;
+```
+
+I'd use this as a development diagnostic, not necessarily as an automatic gameplay mechanic.
+
+If a generated floor scores poorly, regenerate it using a bounded number of attempts.
+
+### 10. Proposed Java class structure
+
+I would organize the new implementation roughly like this:
+
+```text
+dung/
+└── dungeon/
+    ├── generation/
+    │   ├── FloorGenerator.java
+    │   ├── FloorGenerationContext.java
+    │   ├── FloorProfile.java
+    │   ├── FloorValidator.java
+    │   │
+    │   ├── graph/
+    │   │   ├── FloorGraphGenerator.java
+    │   │   ├── GraphValidator.java
+    │   │   ├── RoomAssignment.java
+    │   │   └── PathAnalyzer.java
+    │   │
+    │   ├── room/
+    │   │   ├── RoomNode.java
+    │   │   ├── RoomGeometry.java
+    │   │   ├── RoomShape.java
+    │   │   ├── RoomFeature.java
+    │   │   ├── RoomTemplate.java
+    │   │   └── RoomLayoutPlanner.java
+    │   │
+    │   ├── geometry/
+    │   │   ├── FootprintGenerator.java
+    │   │   ├── WallGenerator.java
+    │   │   ├── TerrainGenerator.java
+    │   │   ├── StructureGenerator.java
+    │   │   ├── FeatureGenerator.java
+    │   │   └── DecorationGenerator.java
+    │   │
+    │   ├── profile/
+    │   │   ├── Archetype.java
+    │   │   ├── FloorModifier.java
+    │   │   └── ProfileLoader.java
+    │   │
+    │   └── RoomGen.java
+    │
+    └── floor/
+        └── Floor.java
+```
+
+This is a proposed organization, not a requirement to split every operation into a separate class immediately.
+
+### Revised FloorGenerator
+
+`FloorGenerator` should become an orchestrator rather than contain every generation algorithm.
+
+Conceptually:
+
+```java
+public Floor generate(int floorNumber, long seed) {
+
+    FloorGenerationContext context =
+        createContext(floorNumber, seed);
+
+    FloorProfile profile =
+        profileSelector.select(context);
+
+    FloorGraph graph =
+        graphGenerator.generate(context, profile);
+
+    roomAssignment.assign(graph, context, profile);
+
+    roomLayoutPlanner.plan(graph, context, profile);
+
+    if (!floorValidator.validate(graph, context)) {
+        return regenerate(context);
+    }
+
+    return new Floor(graph, profile, seed);
+}
+```
+
+The actual method signatures should be adapted to your existing `Floor` and `FloorGenerator` APIs.
+
+### Revised RoomGen
+
+Keep `RoomGen` as the Minecraft-world projection layer.
+
+Its job becomes:
+
+```java
+public void build(RoomNode node, FloorGenerationContext context) {
+
+    RoomGeometry geometry = node.getGeometry();
+
+    buildFootprint(node, geometry);
+    buildWalls(node, geometry);
+    buildDoors(node);
+    buildTerrain(node, geometry);
+    buildStructures(node, geometry);
+    buildFeatures(node, geometry);
+    buildDecorations(node, geometry);
+
+    validateRoom(node);
+}
+```
+
+The existing `build(w, n, baseY, spacing)` and `baseFor(n, spacing)` functionality can remain as compatibility entry points while you migrate to geometry-driven construction.
+
+I would also keep block placement on the server's main thread unless the particular operation is explicitly safe to perform asynchronously. Planning and graph generation can happen independently of world modification.
+
+### 11. Implementation roadmap
+
+I would not implement everything simultaneously. That would make debugging procedural generation unnecessarily difficult.
+
+Phase 1 — Graph improvements
+
+Start here
+
+Estimated: 3–5 days
+
+* Add `FloorProfile`.
+
+* Implement floor archetypes.
+
+* Improve branch generation.
+
+* Introduce graph loops.
+
+* Improve special-room placement.
+
+* Preserve existing BFS boss selection.
+
+Phase 2 — Procedural geometry
+
+Estimated: 5–10 days
+
+* Introduce `RoomGeometry`.
+
+* Add room shape selection.
+
+* Implement room masks.
+
+* Improve walls and floor generation.
+
+* Add structural templates.
+
+* Preserve existing door and corridor alignment.
+
+Phase 3 — Room variety
+
+Estimated: 5–7 days
+
+* Add procedural features.
+
+* Add elevation variation.
+
+* Add obstacles and hazards.
+
+* Add environmental decoration.
+
+* Introduce room-specific layout templates.
+
+Phase 4 — Environmental generation
+
+Estimated: 4–7 days
+
+* Implement floor modifiers.
+
+* Add archetype-specific features.
+
+* Add modifier interactions.
+
+* Improve environmental storytelling.
+
+Phase 5 — Validation and tooling
+
+Estimated: 3–5 days
+
+* Seed-based reproduction.
+
+* Floor quality diagnostics.
+
+* Automatic graph validation.
+
+* Room geometry validation.
+
+* Generation preview and debugging commands.
+
+These are rough development estimates, assuming the existing generator is functional.
+
+### 12. My suggested initial scope
+
+I'd aim for a first release of the redesigned generator with:
+
+| System           | Initial content                 |
+| ---------------- | ------------------------------- |
+| Floor archetypes | 6                               |
+| Graph structures | Branches, loops, optional paths |
+| Room shapes      | 9                               |
+| Room features    | 10                              |
+| Layout templates | 8–12                            |
+| Floor modifiers  | 6                               |
+| Room types       | Existing types + EVENT          |
+| Generation       | Seeded and reproducible         |
+| Validation       | Graph + geometry                |
+
+This is already a substantial improvement without turning the project into an entirely new dungeon engine.
+
+### One additional feature I'd strongly consider: room combinations
+
+Don't let the generator select shapes and features independently without restrictions.
+
+Instead, define compatibility rules.
+
+For example:
+
+```text
+CAVERNS:
+  CAVE + WATER_POOL
+  CAVE + PILLARS
+  SPLIT + BRIDGES
+  ARENA + CENTRAL_PIT
+
+TEMPLE:
+  SQUARE + ALTAR
+  CROSS + PILLARS
+  RING + SPIKES
+  RECTANGLE + STATUES
+
+INFERNO:
+  ARENA + LAVA_POOL
+  SPLIT + BRIDGES
+  LONG + SPIKES
+```
+
+This produces coherent combinations rather than randomly assembled geometry.
+
+### Final architectural recommendation
+
+Recommended direction
+
+I would make three principles non-negotiable:
+
+* Graph-first generation: The dungeon's logical structure is generated independently of its physical geometry.
+
+* Composable geometry: Rooms are assembled from shapes, structures and features rather than relying on a handful of hardcoded room types.
+
+* Data-driven variation: Archetypes, modifiers, templates and weights should be configurable without changing the generation engine.
+
+This gives Dung room to grow considerably. You could eventually introduce entirely new floor themes, room mechanics and environmental systems without rewriting `FloorGenerator`.
+
+Before implementing this, I'd want to inspect the actual current `FloorGenerator.java`, `RoomNode.java` and `RoomGen.java` implementations. The earlier architecture gives us a good design target, but exact method signatures and placement constraints need to be verified against the current source.
+
+If you provide the three files (or the repository access), I can turn this proposal into a concrete, class-by-class implementation plan that preserves your existing APIs and avoids unnecessary rewrites.
+
+---
+
+# Code audit — proposal vs. shipped implementation (2026-10-29, v1.5.4)
+
+Scope read: `dungeon/Floor.java`, `dungeon/FloorGenerator.java`, `dungeon/RoomGen.java`,
+`dungeon/RoomType.java`, `dungeon/BlockBatcher.java`, `game/DungeonInstance.java` (floor build
+pipeline), `structure/StructureDefinition.java`, `structure/StructureRegistry.java`, and the three
+floor-related tests (`SimulatedPlayerFloorTest`, `CorridorGeometryTest`, `StructureConnectivityTest`).
+
+## Bottom line
+
+The proposal is directionally sound, but it assumes a larger floor and a pipeline that does not
+exist yet. The shipped generator is a single-class random walk that produces a **tree**, with four
+hardcoded interior shapes and a rectangular shell. It has no archetypes, modifiers, room masks,
+composable features, staged RNG, loop edges, quality score, or seed tooling.
+
+Actual live parameters:
+
+* Grid: **9×9** cells (`new FloorGenerator(..., 9, 9, ...)` in `DungeonInstance.enterFloor`).
+* Rooms per floor: **7** by default (`config.yml` → `rooms-per-floor: 7`; read in `enterFloor`).
+* Spacing: **25–28**, plus **2 per party tier** (`MIN_SPACING`/`MAX_SPACING`; tier 0–3).
+* Base Y: **130** (`DungeonInstance.BASE_Y`), not 80.
+* Room base dimensions: 13×13 or 17 on one axis, then **+2 per tier**; boss interior **23×23**,
+  boss height 7.
+
+The tests do not run the live parameters: `SimulatedPlayerFloorTest` uses a 12–19 grid with
+18–39 rooms over 300 seeds; `StructureConnectivityTest` uses the live 9×9 / 7-room setup over
+640 floors. Any generator change must update both.
+
+## Corrections to the proposal's assumptions
+
+| Proposal claim | Actual code |
+| --- | --- |
+| `BASE_Y = 80` | `BASE_Y = 130` (`DungeonInstance.java:66`) |
+| 11–18 rooms, main path 5–9 | 7 rooms live (9×9 grid); no main-path length target |
+| Optional branches 2–5 | At most **2**, each a single-room leaf |
+| Additional loops 1–3 | **None** — every new room attaches to exactly one existing room, so the graph is a tree |
+| Boss at end of a sufficiently long route | BFS-farthest room from START; **no minimum distance** and no route-quality check |
+| SHOP must not spawn beside START | SHOP prefers distance ≤ 2, so distance 1 (adjacent) is allowed |
+| TREASURE favors optional branches | First remaining COMBAT room after a shuffle; no branch/depth weighting |
+| SECRET on a deep dead-end | First shuffled dead-end with 1 door and distance ≥ 2; depth is **not** maximized |
+| Secrets 0–2, optional elites 1–2 | Secret **0 or 1**; elite **exactly 1** |
+| 6 archetypes / 9 shapes / 10 features / 8–12 templates / 6 modifiers | None. Four hardcoded shape ints: rectangle, L, pillar, split |
+| Per-stage deterministic RNG | One `run.rng` stream; floor consumes one `nextLong()`, structure selection another |
+| Validation, quality score, bounded regeneration | Absent; invariants are enforced only by the offline tests |
+| `/dung floor generate|preview|inspect|regenerate` | Absent. `/dung room …` manages structure schematics, not floors |
+| EVENT room type | Absent; `RoomType` has 9 values (START…UPGRADE) |
+
+## What is actually implemented
+
+### `Floor` (108 lines)
+
+* Pure data: `floorIndex`, `width`, `height`, `HashMap<Long, RoomNode>`, `start`, `boss`, `visited`.
+* Key packing: `(long) x * 4096 + z`.
+* `RoomNode` holds grid `x/z`, `RoomType`, `sizeW/sizeH`, `shape` int, `doors[4]`,
+  `cleared/shopBought/visited/looted`, `secretParent`, `secretWallDir`, `destructibleWallLoc`,
+  plus `structureId`, rotated `structure`, `clipboard`, `rotationSteps`.
+* `randomizeShape(rng)`: sizes are 13/17; shape weights 60% rectangle, 15% L, 15% pillar, 10% split.
+* `Floor.floorIndex` is dead: `FloorGenerator` constructs `new Floor(0, ...)`, so it is always 0
+  and nothing reads it. `DungeonInstance.run.floorIndex` is the real counter.
+
+### `FloorGenerator` (256 lines) — actual algorithm
+
+1. **Random walk** over an occupancy `int[width][height]`, up to 6 turn attempts per step. A new
+   room always connects to the *current* room only, so the result is a tree. After two consecutive
+   placement failures the walk restarts from a random already-placed room (backtrack escape).
+   `roomCount` is a target, not a guarantee; under-fill is possible.
+2. **BFS** from START over door flags; the farthest reachable room becomes BOSS.
+3. **Branch pass**: shuffle COMBAT rooms, attach up to **2** new single rooms to free adjacent cells.
+4. **Recompute BFS**, pick the new farthest room as BOSS, demote the old boss to COMBAT. There is
+   no two-boss guard beyond this demotion.
+5. **Placement**, in order:
+   * SHOP: first shuffled COMBAT with distance ≤ 2, else any COMBAT.
+   * TREASURE: first remaining COMBAT.
+   * SECRET: first shuffled COMBAT dead-end (exactly 1 door) at distance ≥ 2, whose parent has
+     ≥ 2 doors. The secret's door and the parent's reciprocal door are removed; `secretParent` and
+     `secretWallDir` are recorded. Because it breaks on the first match, this is not the deepest
+     dead-end despite the comment.
+   * ELITE: deepest remaining COMBAT.
+   * UPGRADE: every 5th floor (`(floorIndex + 1) % 5 == 0`), deepest remaining COMBAT.
+   * LOCKED: 1–2 remaining COMBAT dead-ends, excluding dead-ends adjacent to START (the
+     start-softlock guard added in Iteration 68).
+6. No loop-closing edges, no per-room purpose/template assignment, no graph validator, no retry.
+
+### `RoomGen` (414 lines) — actual world projection
+
+* Builds a **rectangular shell** (walls + floor + ceiling) at `BASE_Y`; interior height 4,
+  boss height 7. Material palettes are hardcoded per `RoomType` (nether for ELITE, quartz/gold for
+  TREASURE, wood for SHOP, mossy for SECRET, smooth stone for START, gold/prismarine for LOCKED,
+  amethyst/purpur for UPGRADE, deepslate/blackstone for BOSS, stone bricks/andesite for COMBAT).
+* Door carving: 3-wide passages, perpendicular center fixed at `PERP_CENTER = 9` for every room.
+  The along-axis carve runs from this room's wall face to the neighbour's **actual** facing wall
+  (looked up through `Floor`, honoring structure footprints), avoiding both overshoot into a larger
+  room and a gap when sizes differ. Corridors get a floor, air, roof, solid side mass of
+  `corridorHalfFor(tier)` (8 + 2·tier), and a lantern on odd-length gaps.
+* Boss rooms add red floor/ceiling warning tiles at each doorway.
+* Shapes are applied **after** the shell and door carve:
+  * `SHAPE_L`: fills a 3–4 block corner of the interior with wall material (an indentation).
+  * `SHAPE_PILLAR`: 2 or 4 one-block columns from floor to ceiling; positions avoid the exact center.
+  * `SHAPE_SPLIT`: a 3–4 block partial interior wall with a 2-block gap.
+  * The outer footprint is always rectangular. These are interior decorations, not true room masks.
+  * L/split corner/wall choice is deterministic from room coordinates (`ix*7+iz*13`, `ix*11+iz*17`),
+    not from the floor RNG. Pillar count depends on room size (≥15 → 4, else 2).
+* No doorway-reservation check exists; the hardcoded shape positions are tuned around the center
+  line, but a new mask/feature generator must explicitly reserve the 3-wide door tiles.
+* `scaleToTier` resizes only procedural rooms (13→13+2t, 17→17+2t; boss always 23). Structure rooms
+  keep their fixed template footprint.
+* `BlockBatcher` routes every `setBlock` through one WorldEdit `EditSession` during `enterFloor`;
+  structure pastes use their own per-call sessions.
+
+### `DungeonInstance.enterFloor` (line 677) — orchestration
+
+1. Warn party about the synchronous floor rebuild (descend only).
+2. Pick party tier, `corridorHalf`, and random `spacing` (25–28 + 2·tier).
+3. `new FloorGenerator(new Random(run.rng.nextLong()), 9, 9, roomsPerFloor, floorIndex).generate()`.
+4. If `custom-rooms` is true, `resolveStructures(floor)`: for each room except SECRET/LOCKED, pick a
+   random validated structure for its type, pick a random allowed rotation, rotate a metadata copy,
+   store the clipboard. Selection is uniform; there is no per-archetype weighting.
+5. Scale procedural rooms to the party tier (structure rooms skipped).
+6. Open one `EditSession`, `BlockBatcher.begin(...)`:
+   * **Pass 1** — paste all structure rooms. A null clipboard or failed paste logs the room
+     type/coords/template id, clears `structure/clipboard/structureId/rotationSteps`, and falls back
+     to procedural in pass 2.
+   * **Pass 2** — build every remaining room with `RoomGen.build`.
+   * Carve structure doorways (`carveStructureDoorsStatic`) and structure-involved corridors
+     (`carveStructureCorridorsStatic`) on `PERP_CENTER`.
+   * Carve each SECRET passage from its parent's wall to the secret's outer wall, place the
+     `CRACKED_STONE_BRICKS` destructible wall, register its 3×4 block set.
+   * Place LOCKED `IRON_BLOCK` barriers **last**, so a neighbour's corridor carve cannot erase them.
+   * `BlockBatcher.end()` (closes/flushes the session).
+7. Set `curRoom = floor.start`, enter it, scatter/teleport party, apply descend durability costs,
+   reset per-floor tonics, refresh UI.
+
+### Structure library (`structure/`, 1,153 lines total)
+
+* `<id>.schem` + `<id>.yml` sidecar; id is the yml basename and the schematic name.
+* `StructureRegistry` recursively scans `plugins/Dung/structures/`, loads the clipboard, validates
+  metadata + physical blocks, rejects duplicates/invalid entries, and fills any uncovered room type
+  with `DefaultStructures`.
+* Metadata: version, id, types, schematic name, facing, allowed rotations, bounds, spawn floors,
+  markers, `roomHeight`, `entryHeight`, `exitHeight`. **No door/connector metadata** — doorways and
+  corridors are carved procedurally from the graph.
+* `StructureTransform` rotates bounds/spawn floors/markers around the clipboard origin so metadata
+  and paste stay in sync; `pickRandom` chooses an allowed rotation.
+* `pick(type, rng)` is a uniform pick from all structures serving the type.
+* This already separates "whole-room appearance" from the graph, but only as pasted templates; it is
+  not the proposal's composable shapes/features/templates layer.
+
+### Tests that pin the current behavior
+
+* `SimulatedPlayerFloorTest` — 300 seeds; grid 12–19, rooms 18–39. Asserts:
+  all non-secret rooms reachable; each secret has a parent and zero doors; exactly one BOSS, not
+  START, reachable; exactly one SHOP/TREASURE/ELITE; no LOCKED adjacent to START; all doors
+  bidirectional; a simulated player can clear every non-start/non-secret room.
+  It does **not** assert room count, boss depth, branch count, or loop count.
+* `CorridorGeometryTest` — spacing 25–28; positive corridor gap for 13/17/23 interiors; the fixed
+  passage line lies inside every room's perpendicular interior; boss footprint (25) fits within
+  spacing; neighbour-aware carve has no gap or overshoot.
+* `StructureConnectivityTest` — 640 floors (2 floor indices × 4 tiers × 40 seeds × 2 template
+  modes) on fake worlds. Voxel BFS asserts every door edge is walkable; a second “air world” pass
+  asserts corridor side walls exist at ±2. This is the main regression net for any geometry change.
+
+## Constraints and risks for the redesign
+
+* **Door geometry is the hard contract.** `PERP_CENTER = 9`, 3-wide passages, neighbour-wall
+  lookup, `corridorHalfFor(tier)`, and the post-pass LOCKED barrier are all pinned by
+  `CorridorGeometryTest` and `StructureConnectivityTest`. Any mask/feature generator must reserve
+  door tiles before placing structures and preserve the shared corridor line.
+* **Grid and room count are hardcoded separately.** `enterFloor` hardcodes 9×9 while room count comes
+  from config. The proposal's 11–18 rooms needs a larger grid (and a config key), plus updated test
+  parameters.
+* **Graph vs. geometry split is partial.** `Floor` is pure data and doors are graph-driven, but
+  `randomizeShape` commits size/shape during graph generation. The proposal's `RoomGeometry` stage
+  means moving that decision after topology assignment.
+* **No true room masks.** Shapes are interior edits inside a rectangular shell; `SHAPE_L` is a
+  filled corner, not an L footprint. Caves/rings/crosses require a footprint/mask generator and
+  wall derivation, not another `switch` case.
+* **Structure rooms are fixed whole-room pastes.** Archetypes/modifiers can only affect procedural
+  rooms unless structure metadata grows feature/layout hooks. Mixed floors must keep working.
+* **Material switch coupling.** `RoomGen.build` switches on `RoomType` for palettes; adding EVENT or
+  archetype palettes means extending it, and `RoomType.kind` is used by loot/reward tables.
+* **Seed reproducibility is not exposed.** `/dung start` uses `System.nanoTime()`; the seed is not
+  stored or printable. Per-stage RNG would also need to stop sharing `run.rng` between floor
+  generation and structure selection.
+* **Test/live mismatch.** The 300-seed clearability test runs far larger floors than production, and
+  the 640-floor structure test runs the live 7-room floor. Changes must keep both meaningful.
+* **Block batching is mandatory.** New generation must emit through `BlockBatcher` inside the one
+  `EditSession`; direct `World#setBlock` calls would reintroduce the multi-second freeze.
+
+## Minimal migration path suggested by this audit
+
+1. Add `FloorProfile` (archetype + modifiers + weights) and store a floor seed in `Run`; derive
+   independent RNG streams per stage. No behavior change yet.
+2. Add `RoomGeometry` to `RoomNode`; move `randomizeShape` out of graph generation into a layout
+   planning step. Keep `sizeW/sizeH/shape` as derived fields during migration.
+3. Build the main route explicitly, add loop-closing edges, then assign room types with constraints;
+   add a graph validator and bounded retry. Raise the grid/room-count config and update tests.
+4. Add a mask-based footprint generator with explicit doorway reservation; keep `PERP_CENTER` and
+   the existing corridor carve as the boundary between rooms.
+5. Add feature/modifier passes and data-driven archetypes (YAML), defaulting to the current
+   behavior so existing floors and tests remain valid.
+6. Add `/dung floor seed|preview|inspect` and a quality/validation gate; extend
+   `SimulatedPlayerFloorTest` to assert boss distance, branch count, and loop count, not just
+   reachability.
+
+## One-line verdict
+
+The proposal describes a good target architecture, but the current generator is much smaller than
+the proposal assumes: a 7-room, 9×9, tree-shaped random walk with four decorative interior shapes.
+Phase 1 (graph/profile/loops) can be added without touching `RoomGen`; Phase 2+ (masks/features)
+must be built around the existing corridor contract, not replace it casually.
+
+---
+
+# Downloaded-file audit (2026-10-30)
+
+Two files were downloaded and checked against the same v1.5.4 source:
+
+* `Dung_Floor_Generation_Redesign.txt` (20,314 bytes) — a reformatted version of the original
+  proposal. Same architecture and same stale assumptions; it now states `PERP_CENTER = 9` and
+  "existing door alignment conventions must not break" explicitly.
+* `Dung_Hub_Archetype_Addendum.txt` (6,116 bytes) — a new seventh floor archetype: one large
+  central chamber with 3–6 branches, destinations, landmarks, and optional loops.
+
+## Repeated code mismatches
+
+All findings in the preceding audit still apply. The notable repeats:
+
+* `BASE_Y = 80` vs the shipped `BASE_Y = 130`.
+* 11–18 rooms and a 5–9 room main path vs the live 7 rooms on a 9×9 grid.
+* Loops and 2–5 branches vs a tree with at most 2 single-room leaves and no loops.
+* Archetypes, masks, features, templates, modifiers, `FloorValidator`, staged RNG, and seed
+  commands do not exist.
+* "SHOP should not spawn directly beside START" vs the actual placement rule
+  (`distance <= 2` preferred, so adjacency is allowed).
+* Structure support is whole-room `.schem` + `.yml` pastes only; there is no per-archetype graph
+  strategy or composable geometry layer.
+* The proposal still attributes geometry choice to `RoomGen`; in the code, `FloorGenerator` calls
+  `RoomNode.randomizeShape(rng)` during graph generation. `RoomGen` only consumes `n.shape`,
+  `n.sizeW`, and `n.sizeH`.
+
+## New internal inconsistencies
+
+| Item | Document says | What it actually lists/implies |
+| --- | --- | --- |
+| Room shapes | 9 in the initial scope | 10 values in the `RoomShape` enum |
+| Room features | 10 in the initial scope | 11 values in the `RoomFeature` enum |
+| Floor modifiers | 6 in the initial scope | 7 in the modifier table |
+| Archetypes | 6 in the base design | 7 once the Hub addendum is counted |
+| Compatibility example | `RECTANGLE + STATUES` | `STATUES` is not a `RoomFeature` |
+| Hub central shapes | circular, octagonal, multi-section | None of these are in the proposed `RoomShape` enum |
+| Hub room budget | Base target is 11–18 rooms | Hub upper bounds compose to 1 center + 6 primary + 6×3 secondary = 25 |
+| Hub landmarks | statue, fountain, tree, crystal, mechanism | No corresponding `RoomFeature` entries |
+
+## Hub-specific conflicts with the shipped code
+
+* **Four-door ceiling.** `RoomNode` has `doors[4]` on a 4-neighbor grid, so a central chamber can
+  have at most **4 direct branches**. The Hub's 3–6 primary branches cannot be represented directly;
+  5–6 would require secondary hubs, a non-grid graph, or a different room model.
+* **Uniform spacing and size.** Spacing is 25–28 + 2/tier for every cell. At tier 0 the largest
+  interior that fits is the boss's 23; a "substantially larger" central chamber needs new size and
+  spacing rules. `RoomGen.scaleToTier` only special-cases `BOSS`, and structure rooms keep fixed
+  template footprints.
+* **No room role model.** The Hub needs required vs optional destinations and a distinction between
+  the central chamber, branch rooms, and facilities. The code has only a flat `RoomType` enum with
+  `kind`/`label`; there is no role, required flag, or destination tag.
+* **Missing destination types.** Challenge room, NPC/quest area, and Portal/progression point are not
+  room types. The base redesign only adds `EVENT`, and does not define how those map onto it.
+* **Exact-one invariants.** The generator and `SimulatedPlayerFloorTest` guarantee exactly one SHOP,
+  one TREASURE, and one ELITE per floor. A Hub with 2–5 major destinations and multiple facilities
+  conflicts with those invariants unless they are relaxed or a hub-specific placement policy is
+  defined.
+* **Boss/descent is undefined.** A normal run requires a BOSS room to descend. The Hub describes a
+  navigation floor and mentions a portal/progression point, but never says where the boss goes or
+  how the next floor is reached. No portal room or alternate exit exists in the code.
+* **Radial geometry vs. the corridor contract.** Doors and corridors are carved only on cardinal
+  axes at `PERP_CENTER = 9`. Ring, circular, octagonal, and non-cardinal branch layouts need new
+  corridor geometry; `RoomGen` has no mask or radial carving.
+* **The pipeline it depends on does not exist.** `FloorProfile`, `RoomGeometry`, `RoomShape`,
+  `RoomFeature`, `FloorValidator`, and a pluggable `FloorGraphGenerator` are proposals only. The
+  Hub addendum says it will "reuse" them, but there is nothing to reuse yet.
+* **Adding a HUB room type has side effects.** `RoomType.kind` feeds loot/reward tables,
+  `RoomGen.build` switches on the type for its palette, and HUD/tab/lang surfaces display the room
+  label. A special "role" field would avoid some of that, but no such field exists.
+* **`RoomNode` is not pure data today.** It already holds an `org.bukkit.Location`
+  (`destructibleWallLoc`) and a WorldEdit `Clipboard`. A `RoomGeometry` refactor that aims to keep
+  the logical model free of Minecraft/WorldEdit types must also extract those fields.
+* **Shop-placement tension.** The base document says SHOP must not be adjacent to START; the Hub says
+  shops should be easy to find and reach. If the central chamber is START, the two rules need an
+  explicit reconciliation.
+
+## What the new documents get right
+
+* They preserve the existing `FloorGenerator -> RoomNode -> RoomGen` architecture.
+* They keep `PERP_CENTER = 9`, N/E/S/W connectivity, procedural corridors, BFS boss selection,
+  secret/locked access mechanics, and WorldEdit structure support.
+* They keep block placement on the server thread and treat graph generation as separable from world
+  modification.
+* The Hub's landmark/role/navigation concept is compatible with a `FloorProfile` in principle.
+* The deterministic-seed and validation sections remain the right direction.
+
+## Priority implied by the Hub addendum
+
+1. Build the Phase 1 foundation first: `FloorProfile`, an explicit graph generator with loops, room
+   roles (required/optional), and a size/spacing model for non-standard rooms.
+2. Then express the Hub as a profile/strategy, not a separate world-generation system.
+3. Decide whether Hub floors may relax the exactly-one SHOP/TREASURE/ELITE invariants, and define
+   their boss/descent rule.
+4. Correct the document counts (9→10 shapes, 10→11 features, 6→7 modifiers, 6→7 archetypes) before
+   using the initial-scope table as a checklist.

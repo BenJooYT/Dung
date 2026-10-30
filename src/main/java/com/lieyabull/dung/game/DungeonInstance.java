@@ -3,10 +3,15 @@ package com.lieyabull.dung.game;
 import com.lieyabull.dung.Dung;
 import com.lieyabull.dung.boss.BossController;
 import com.lieyabull.dung.boss.GrovekeeperController;
+import com.lieyabull.dung.dungeon.Archetype;
 import com.lieyabull.dung.dungeon.BlockBatcher;
 import com.lieyabull.dung.dungeon.Floor;
 import com.lieyabull.dung.dungeon.FloorGenerator;
+import com.lieyabull.dung.dungeon.FloorModifier;
+import com.lieyabull.dung.dungeon.FloorProfile;
+import com.lieyabull.dung.dungeon.FloorSeeds;
 import com.lieyabull.dung.dungeon.RoomGen;
+import com.lieyabull.dung.dungeon.RoomRole;
 import com.lieyabull.dung.dungeon.RoomType;
 import com.lieyabull.dung.room.RoomBounds;
 import com.lieyabull.dung.room.RoomMarker;
@@ -691,11 +696,35 @@ public final class DungeonInstance {
         // (which grow with tier) never overlap. Tier 0 (solo) keeps the original layout.
         int tier = Math.max(0, Math.min(party.onlineMembers().size() - 1, 3));
         corridorHalf = RoomGen.corridorHalfFor(tier);
-        int spacingMin = MIN_SPACING + 2 * tier;
-        int spacingMax = MAX_SPACING + 2 * tier;
-        spacing = ThreadLocalRandom.current().nextInt(spacingMin, spacingMax + 1);
-        FloorGenerator gen = new FloorGenerator(new java.util.Random(run.rng.nextLong()), 9, 9,
-                plugin.getConfig().getInt("rooms-per-floor", 7), floorIndex);
+        run.floorSeed = FloorSeeds.floorSeed(run.seed, floorIndex);
+        String layout = plugin.getConfig().getString("floor-layout", "classic");
+        if (layout == null) layout = "classic";
+        int hubRooms = Math.max(9, plugin.getConfig().getInt("hub-rooms", 15));
+        FloorProfile profile;
+        if ("hub".equalsIgnoreCase(layout)) {
+            profile = FloorProfile.hub(9, 9, hubRooms, 2, 1, 1, 0, 5);
+        } else {
+            String archetypeId = plugin.getConfig().getString("floor-archetype", "random");
+            Archetype archetype = Archetype.pick(archetypeId,
+                    FloorSeeds.random(run.floorSeed, "archetype"));
+            int rooms = plugin.getConfig().getInt("rooms-per-floor", 7);
+            profile = archetype == null
+                    ? FloorProfile.classic(9, 9, rooms)
+                    : FloorProfile.forArchetype(archetype, 9, 9, rooms, 5);
+        }
+        String modifierConfig = plugin.getConfig().getString("floor-modifiers", "random");
+        profile = profile.withModifiers(FloorModifier.select(modifierConfig,
+                FloorSeeds.random(run.floorSeed, "modifiers")));
+        if (!layout.equalsIgnoreCase("classic") && !layout.equalsIgnoreCase("hub")) {
+            plugin.getLogger().warning("[dungeon] Unknown floor-layout '" + layout + "', using classic.");
+        }
+        run.floorProfile = profile;
+        int spacingMin = Math.max(MIN_SPACING + 2 * tier, profile.minSpacing());
+        int spacingMax = Math.max(MAX_SPACING + 2 * tier, profile.minSpacing());
+        spacing = FloorSeeds.random(run.floorSeed, "spacing")
+                .nextInt(spacingMin, spacingMax + 1);
+        FloorGenerator gen = new FloorGenerator(
+                FloorSeeds.random(run.floorSeed, "graph"), profile, floorIndex);
         run.floor = gen.generate();
         // Mixed template/procedural mode: assign templates to rooms where a validated template
         // exists for their type; rooms without a matching template are built procedurally.
@@ -746,6 +775,7 @@ public final class DungeonInstance {
             // and connects to its neighbours without leaving a hole between the room wall and the corridor.
             carveStructureDoors(run.floor);
             carveStructureCorridors(run.floor);
+            sealDoorHeightTransitions(run.floor);
             // Register destructible wall locations for SECRET rooms and carve passages
             destructibleWalls.clear();
             revealedSecrets.clear();
@@ -812,10 +842,12 @@ public final class DungeonInstance {
      *  corridor line ({@link #carveStructureDoors}), so any rotation is valid for any door graph.
      *  A rotated copy is stored on the room node; the original template is unchanged. */
     private void resolveStructures(Floor floor) {
-        java.util.Random rnd = new java.util.Random(run.rng.nextLong());
+        java.util.Random rnd = FloorSeeds.random(run.floorSeed, "structures");
         for (Floor.RoomNode n : floor.rooms()) {
-            // SECRET and LOCKED rooms always use procedural mechanics
+            // SECRET and LOCKED rooms always use procedural mechanics; the hub chamber is
+            // intentionally procedural so its larger footprint is preserved.
             if (n.type == RoomType.SECRET || n.type == RoomType.LOCKED) continue;
+            if (n.role == RoomRole.HUB) continue;
             StructureDefinition s = registry().pick(n.type, rnd);
             if (s == null) continue;
             // Pick a random allowed rotation (doors are carved procedurally, so nothing to align).
@@ -928,6 +960,103 @@ public final class DungeonInstance {
                         for (int y = baseY; y <= baseY + airHeight + 1; y++) {
                             setBlock(world, px, y, pz, Material.STONE_BRICKS);
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    private void sealDoorHeightTransitions(Floor floor) {
+        sealDoorHeightTransitionsStatic(world, floor, BASE_Y, spacing, offsetX, offsetZ, corridorHalf);
+    }
+
+    /** A boss room is 7 high while a normal room is 4. Without this pass the taller room carves
+     *  the shared doorway above the shorter room's ceiling, leaving a hole above the short door
+     *  and sometimes a low roof inside the tall corridor. Normalize every mixed-height edge to
+     *  the taller corridor and seal the shorter side above its opening. */
+    static void sealDoorHeightTransitionsStatic(World world, Floor floor, int baseY,
+            int spacing, int offsetX, int offsetZ, int corridorHalf) {
+        int[] dx = {0, 1, 0, -1};
+        int[] dz = {-1, 0, 1, 0};
+        Set<String> done = new HashSet<>();
+        for (Floor.RoomNode a : floor.rooms()) {
+            for (int d = 0; d < 4; d++) {
+                if (!a.doors[d]) continue;
+                Floor.RoomNode b = floor.at(a.x + dx[d], a.z + dz[d]);
+                if (b == null) continue;
+                if (!done.add(edgeId(a.x, a.z, b.x, b.z))) continue;
+                int ah = roomAirHeight(a);
+                int bh = roomAirHeight(b);
+                if (ah == bh) continue;
+
+                boolean aShort = ah < bh;
+                Floor.RoomNode shortRoom = aShort ? a : b;
+                Floor.RoomNode tallRoom = aShort ? b : a;
+                int dir = aShort ? d : (d + 2) % 4;
+                int shortH = aShort ? ah : bh;
+                int tallH = aShort ? bh : ah;
+                boolean horiz = dir == 1 || dir == 3;
+
+                int shortBase = horiz ? shortRoom.x * spacing + offsetX
+                        : shortRoom.z * spacing + offsetZ;
+                int shortWall = shortRoom.structure != null
+                        ? structureWallAlong(shortBase, shortRoom.structure.total(), dir, horiz)
+                        : proceduralWallAlong(shortBase, shortRoom.sizeW, shortRoom.sizeH, dir, horiz);
+                int tallBase = horiz ? tallRoom.x * spacing + offsetX
+                        : tallRoom.z * spacing + offsetZ;
+                int tallDir = (dir + 2) % 4;
+                int tallWall = tallRoom.structure != null
+                        ? structureWallAlong(tallBase, tallRoom.structure.total(), tallDir, horiz)
+                        : proceduralWallAlong(tallBase, tallRoom.sizeW, tallRoom.sizeH, tallDir, horiz);
+                int perpC = horiz
+                        ? shortRoom.z * spacing + offsetZ + RoomGen.PERP_CENTER
+                        : shortRoom.x * spacing + offsetX + RoomGen.PERP_CENTER;
+
+                // Remove any low roof the short room placed inside the tall doorway.
+                for (int off = -1; off <= 1; off++) {
+                    int px = horiz ? tallWall : perpC + off;
+                    int pz = horiz ? perpC + off : tallWall;
+                    for (int y = baseY + 1; y <= baseY + tallH; y++) {
+                        setBlock(world, px, y, pz, Material.AIR);
+                    }
+                }
+
+                // Rebuild the shared corridor at the taller room's height.
+                int lo = Math.min(shortWall, tallWall) + 1;
+                int hi = Math.max(shortWall, tallWall) - 1;
+                for (int t = lo; t <= hi; t++) {
+                    for (int off = -1; off <= 1; off++) {
+                        int px = horiz ? t : perpC + off;
+                        int pz = horiz ? perpC + off : t;
+                        setBlock(world, px, baseY, pz, Material.POLISHED_ANDESITE);
+                        for (int y = baseY + 1; y <= baseY + tallH; y++) {
+                            setBlock(world, px, y, pz, Material.AIR);
+                        }
+                        setBlock(world, px, baseY + tallH + 1, pz, Material.STONE_BRICKS);
+                    }
+                    for (int off = -corridorHalf; off <= corridorHalf; off++) {
+                        if (Math.abs(off) <= 1) continue;
+                        int px = horiz ? t : perpC + off;
+                        int pz = horiz ? perpC + off : t;
+                        for (int y = baseY; y <= baseY + tallH + 1; y++) {
+                            setBlock(world, px, y, pz, Material.STONE_BRICKS);
+                        }
+                    }
+                }
+                int corridorLen = hi - lo + 1;
+                if (corridorLen >= 3 && corridorLen % 2 == 1) {
+                    int mid = lo + corridorLen / 2;
+                    int lx = horiz ? mid : perpC;
+                    int lz = horiz ? perpC : mid;
+                    BlockBatcher.setHangingLantern(world, lx, baseY + tallH, lz);
+                }
+
+                // Seal the short room's wall face above its door.
+                for (int off = -corridorHalf; off <= corridorHalf; off++) {
+                    int px = horiz ? shortWall : perpC + off;
+                    int pz = horiz ? perpC + off : shortWall;
+                    for (int y = baseY + shortH + 1; y <= baseY + tallH + 1; y++) {
+                        setBlock(world, px, y, pz, Material.STONE_BRICKS);
                     }
                 }
             }
@@ -1069,6 +1198,14 @@ public final class DungeonInstance {
             }
         }
         spawnRoomPickups(n);
+        if (n.type == RoomType.EVENT && !n.looted) {
+            n.looted = true;
+            List<ItemStack> loot = ItemPool.roomReward(run.floorIndex, n.type.kind);
+            Location c = RoomGen.center(world, n, BASE_Y, spacing, offsetX, offsetZ);
+            for (int i = 0; i < loot.size(); i++) {
+                spawnPedestal(c.clone().add((i - (loot.size() - 1) / 2.0) * 2, 0, 0), loot.get(i));
+            }
+        }
         if (n.type == RoomType.SHOP) {
             setupShopRoom(n);
         }
@@ -1264,6 +1401,9 @@ public final class DungeonInstance {
         int partySize = Math.max(1, alivePartySize());
         int baseCount = elite ? 3 : 2 + Math.min(run.floorIndex, 2);
         int count = baseCount * partySize;
+        if (run.floor.modifiers.contains(FloorModifier.INFESTED)) {
+            count = Math.max(count + 2, (int) Math.ceil(count * 1.35));
+        }
         double hpMult = 1 + 0.3 * (partySize - 1);
         // CP difficulty lock (§15): independently capped health/damage shares nudge enemies
         // on top of the existing floor + party-size scaling. Complexity steers composition below.
@@ -1490,29 +1630,17 @@ public final class DungeonInstance {
         int sizeH = n.structure != null ? n.structure.total().depth() - 2 * RoomGen.WALL : n.sizeH;
         int minX = baseX(n) + RoomGen.WALL;
         int minZ = baseZ(n) + RoomGen.WALL;
-        int maxX = minX + sizeW - 1;
-        int maxZ = minZ + sizeH - 1;
-        int y = BASE_Y + 1;
-        // Try up to 20 random positions to find a walkable spot (not inside a wall)
+        // Try up to 20 random positions to find a walkable spot (not inside a wall or a step)
         for (int attempt = 0; attempt < 20; attempt++) {
             int x = minX + ThreadLocalRandom.current().nextInt(sizeW);
             int z = minZ + ThreadLocalRandom.current().nextInt(sizeH);
-            Location l = new Location(world, x + 0.5, y, z + 0.5);
-            Material block = world.getBlockAt(x, y, z).getType();
-            Material above = world.getBlockAt(x, y + 1, z).getType();
-            // Must be air (or floor material) at foot level and air at head level
-            if (block != Material.AIR && block != Material.POLISHED_ANDESITE
-                    && block != Material.GOLD_BLOCK && block != Material.QUARTZ_BLOCK
-                    && block != Material.OAK_PLANKS && block != Material.SPRUCE_PLANKS
-                    && block != Material.NETHER_BRICKS && block != Material.RED_NETHER_BRICKS
-                    && block != Material.DEEPSLATE_BRICKS && block != Material.POLISHED_BLACKSTONE_BRICKS
-                    && block != Material.SMOOTH_STONE && block != Material.POLISHED_DIORITE
-                    && block != Material.MOSSY_STONE_BRICKS && block != Material.MOSSY_COBBLESTONE) continue;
-            if (above != Material.AIR) continue;
-            return l;
+            int y = RoomGen.floorY(n, x, z, BASE_Y, spacing, offsetX, offsetZ) + 1;
+            if (world.getBlockAt(x, y, z).getType() != Material.AIR) continue;
+            if (world.getBlockAt(x, y + 1, z).getType() != Material.AIR) continue;
+            return new Location(world, x + 0.5, y, z + 0.5);
         }
-        // Fallback: center of the room
-        return new Location(world, minX + sizeW / 2.0 + 0.5, y, minZ + sizeH / 2.0 + 0.5);
+        // Fallback: elevation-aware room center
+        return RoomGen.center(world, n, BASE_Y, spacing, offsetX, offsetZ);
     }
 
     private void lockDoors(Floor.RoomNode n) {
@@ -1676,9 +1804,25 @@ public final class DungeonInstance {
 
     // ---------- combat tick ----------
 
+    /** Lightweight environmental effects that don't need per-tick world mutation. */
+    private void tickFloorModifiers() {
+        if (run == null || run.floor == null) return;
+        if (!run.floor.modifiers.contains(FloorModifier.COLLAPSING)) return;
+        if (tickCounter % 120 != 0) return;
+        for (Player p : party.onlineMembers()) {
+            Floor.RoomNode room = playerRoomOf(p.getUniqueId());
+            if (room == null || room.type == RoomType.START) continue;
+            Location loc = p.getLocation().clone().add(0, 2.5, 0);
+            world.playSound(loc, org.bukkit.Sound.BLOCK_STONE_BREAK, 0.8f, 0.6f);
+            world.spawnParticle(org.bukkit.Particle.SMOKE, loc, 12, 1.2, 1.0, 1.2, 0.02);
+            world.spawnParticle(org.bukkit.Particle.CRIT, loc, 8, 1.0, 0.6, 1.0, 0.0);
+        }
+    }
+
     public void tick() {
         if (!running || !anyOnline()) return;
         tickCounter++;
+        tickFloorModifiers();
 
         // Check death for each player
         for (Player p : party.onlineMembers()) {

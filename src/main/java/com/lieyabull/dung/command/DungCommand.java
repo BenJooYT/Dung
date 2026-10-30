@@ -1,6 +1,7 @@
 package com.lieyabull.dung.command;
 
 import com.lieyabull.dung.Dung;
+import com.lieyabull.dung.dungeon.Floor;
 import com.lieyabull.dung.game.DungeonInstance;
 import com.lieyabull.dung.game.GameManager;
 import com.lieyabull.dung.game.Run;
@@ -113,10 +114,21 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
         GameManager gm = plugin.game();
         String sub = args.length > 0 ? args[0].toLowerCase() : "help";
         switch (sub) {
-            case "start":
+            case "start": {
                 if (gm.isInInstance(p)) {
                     p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.alreadyInLeaveFirst")));
                     return true;
+                }
+                long seed = System.nanoTime();
+                if (args.length >= 2 && args[1].equalsIgnoreCase("seed")) {
+                    if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
+                    if (args.length < 3) { p.sendMessage("§cUsage: /dung start seed <number>"); return true; }
+                    try {
+                        seed = Long.parseLong(args[2]);
+                    } catch (NumberFormatException e) {
+                        p.sendMessage("§cInvalid seed: §f" + args[2]);
+                        return true;
+                    }
                 }
                 // Check if player is in a party
                 Party party = gm.partyManager().partyOf(p);
@@ -126,18 +138,19 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                         p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.leaderOnlyStart"));
                         return true;
                     }
-                    if (!gm.startRun(party, System.nanoTime())) return true; // reason already sent
+                    if (!gm.startRun(party, seed)) return true; // reason already sent
                     party.broadcastLocalized("run.started");
                 } else {
                     // Solo: create a single-player party
                     party = gm.partyManager().createParty(p);
-                    if (!gm.startRun(party, System.nanoTime())) {
+                    if (!gm.startRun(party, seed)) {
                         gm.partyManager().cleanupAfterLeave(p); // don't leave an empty solo party behind
                         return true; // reason already sent
                     }
                     p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.started"));
                 }
                 return true;
+            }
             case "descend": {
                 DungeonInstance di = gm.instanceOf(p);
                 if (di == null) { p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "run.startFirst")); return true; }
@@ -166,6 +179,9 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
             case "salvage": return meta.salvageCmd(p, args);
             case "balance": meta.balance(p, args); return true;
             case "stats": stats(p); return true;
+            case "floor":
+                if (!p.hasPermission("dung.admin")) { p.sendMessage("§cNo permission."); return true; }
+                return floorCmd(p, args);
             case "cp": {
                 DungeonInstance di = gm.instanceOf(p);
                 if (di == null || di.run() == null) {
@@ -213,6 +229,97 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                 ChatUI.startPrompt(p);
                 return true;
         }
+    }
+
+    /** /dung floor seed|preview|inspect|regenerate — floor diagnostics and regeneration. */
+    private boolean floorCmd(Player p, String[] args) {
+        if (args.length < 2) {
+            p.sendMessage("§cUsage: /dung floor <seed|preview|inspect|regenerate>");
+            return true;
+        }
+        DungeonInstance di = plugin.game().instanceOf(p);
+        if (di == null || di.run() == null) {
+            p.sendMessage("§cYou are not in an active dungeon run.");
+            return true;
+        }
+        Run run = di.run();
+        switch (args[1].toLowerCase()) {
+            case "seed" -> {
+                p.sendMessage("§7Floor §f" + (run.floorIndex + 1) + " §7seed: §f" + run.floorSeed
+                        + " §7(0x" + Long.toHexString(run.floorSeed) + ")");
+                p.sendMessage("§7Run seed: §f" + run.seed + " §7profile: §f"
+                        + (run.floorProfile == null ? "?" : run.floorProfile));
+            }
+            case "preview" -> previewFloor(p, run);
+            case "inspect" -> inspectRoom(p, di, run, args);
+            case "regenerate" -> {
+                di.enterFloor(run.floorIndex);
+                p.sendMessage("§aRegenerated floor §f" + (run.floorIndex + 1) + "§a.");
+            }
+            default -> p.sendMessage("§cUsage: /dung floor <seed|preview|inspect|regenerate>");
+        }
+        return true;
+    }
+
+    private void previewFloor(Player p, Run run) {
+        p.sendMessage("§7Floor §f" + (run.floorIndex + 1) + " §7map §f"
+                + run.floor.width + "x" + run.floor.height);
+        for (int z = 0; z < run.floor.height; z++) {
+            StringBuilder line = new StringBuilder("§8");
+            for (int x = 0; x < run.floor.width; x++) {
+                Floor.RoomNode room = run.floor.at(x, z);
+                line.append(room == null ? '·' : roomSymbol(room));
+            }
+            p.sendMessage(line.toString());
+        }
+        p.sendMessage("§7Legend: §fS §7start, §f# §7combat, §fT §7treasure, §f$ §7shop, "
+                + "§fE §7elite, §fB §7boss, §f? §7secret, §fL §7locked, §fU §7upgrade, §f! §7event");
+    }
+
+    private static char roomSymbol(Floor.RoomNode room) {
+        return switch (room.type) {
+            case START -> 'S';
+            case COMBAT -> '#';
+            case TREASURE -> 'T';
+            case SHOP -> '$';
+            case SECRET -> '?';
+            case ELITE -> 'E';
+            case BOSS -> 'B';
+            case LOCKED -> 'L';
+            case UPGRADE -> 'U';
+            case EVENT -> '!';
+        };
+    }
+
+    private void inspectRoom(Player p, DungeonInstance di, Run run, String[] args) {
+        Floor.RoomNode room = null;
+        if (args.length >= 4) {
+            try {
+                room = run.floor.at(Integer.parseInt(args[2]), Integer.parseInt(args[3]));
+            } catch (NumberFormatException e) {
+                p.sendMessage("§cUsage: /dung floor inspect [x z]");
+                return;
+            }
+        } else {
+            room = di.playerRoomOf(p.getUniqueId());
+            if (room == null) room = di.roomAt(p.getLocation());
+        }
+        if (room == null) {
+            p.sendMessage("§cNo room found.");
+            return;
+        }
+        StringBuilder doors = new StringBuilder();
+        for (int d = 0; d < 4; d++) {
+            if (room.doors[d]) doors.append("NESW".charAt(d));
+        }
+        p.sendMessage("§7Room (§f" + room.x + "," + room.z + "§7): §f" + room.type
+                + " §7role §f" + room.role);
+        p.sendMessage("§7Shape: §f" + room.shape + " §7size §f"
+                + room.sizeW + "x" + room.sizeH);
+        p.sendMessage("§7Template: §f" + (room.template == null ? "none" : room.template.id())
+                + " §7features §f" + room.features);
+        p.sendMessage("§7Doors: §f" + (doors.length() == 0 ? "none" : doors)
+                + " §7seed §f" + run.floorSeed + " §7modifiers §f" + run.floor.modifiers);
     }
 
     // ---------- /dung forceboss ----------
@@ -494,6 +601,7 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
             case SECRET -> "hidden room (procedural)";
             case LOCKED -> "keyed room (procedural)";
             case BOSS -> "floor boss";
+            case EVENT -> "optional event room";
         };
     }
 
@@ -548,6 +656,11 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                 out.add("§fThe floor boss arena.");
                 out.add("§7Required marker: §f[PLAYER_SPAWN]§7.");
                 out.add("§7Keep it open and wide — the boss and its adds need room to move.");
+            }
+            case EVENT -> {
+                out.add("§fAn optional event/loot room.");
+                out.add("§7Built procedurally with a chest platform and one-time pedestal loot.");
+                out.add("§7No schematic is required; it never locks the party in.");
             }
         }
         out.add("");
@@ -632,7 +745,7 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
     }
 
     private static final String[] DUNG_SUBS = {
-            "start", "leave", "descend", "stats", "cp", "class", "give", "shieldswitch",
+            "start", "leave", "descend", "stats", "floor", "cp", "class", "give", "shieldswitch",
             "party", "shop", "upgrades", "salvage", "balance", "bossbar", "stop", "reset",
             "forceboss", "room", "tutorial", "help"
     };
@@ -649,6 +762,9 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
             if (args.length == 1) return filter(DUNG_SUBS, args[0]);
             if (args.length == 2) {
                 return switch (args[0].toLowerCase()) {
+                    case "start" -> filter(new String[]{"seed"}, args[1]);
+                    case "floor" -> filter(new String[]{"seed", "preview", "inspect", "regenerate"},
+                            args[1]);
                     case "give" -> filter(GIVE_TYPES, args[1]);
                     case "class" -> filter(CLASSES, args[1]);
                     case "party" -> filter(PARTY_SUBS, args[1]);

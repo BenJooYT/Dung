@@ -4,6 +4,9 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 
+import java.util.Random;
+import java.util.Set;
+
 import static com.lieyabull.dung.dungeon.BlockBatcher.setBlock;
 
 /**
@@ -38,6 +41,14 @@ public final class RoomGen {
      *  (square / long-wide / long-deep / start). Structure rooms never call this (fixed templates). */
     public static void scaleToTier(Floor.RoomNode n, int tier) {
         int sq = squareFor(tier), ln = longFor(tier);
+        // Hub chambers are fixed-size and intentionally larger than every ordinary room, including
+        // the boss arena; FloorProfile.minSpacing reserves the footprint.
+        if (n.role == RoomRole.HUB) {
+            n.sizeW = HUB_INTERIOR;
+            n.sizeH = HUB_INTERIOR;
+            n.shape = RoomShape.RECTANGLE;
+            return;
+        }
         // Boss arenas are ~75% larger in width and length than a normal room (matches the enlarged
         // boss template). The room node's shape constants (SQUARE/LONG) are just placeholders here —
         // a boss room always becomes a square-ish arena.
@@ -49,11 +60,8 @@ public final class RoomGen {
     /** Interior width/depth of a procedural boss arena: 13 -> 23, keeping the ~75% size increase and an
      *  odd dimension so the room stays centered (also what the default BOSS template uses). */
     public static final int BOSS_INTERIOR = 23;
-    // shape constants
-    public static final int SHAPE_RECTANGLE = 0;
-    public static final int SHAPE_L = 1;
-    public static final int SHAPE_PILLAR = 2;
-    public static final int SHAPE_SPLIT = 3;
+    /** Interior width/depth of a hub chamber. Fixed so floor spacing can reserve room for it. */
+    public static final int HUB_INTERIOR = 27;
     // base coordinate of the room (lowest northwest interior block)
     public record RoomBase(int x, int z) {}
 
@@ -86,10 +94,14 @@ public final class RoomGen {
         int wh = n.sizeH + 2 * WALL;
         // hollow out + floor; ceiling sits one row above the tallest air block
         // Boss rooms are taller (BOSS_ROOM_HEIGHT) to accommodate the larger Ravager entity
-        int roomHeight = n.type == RoomType.BOSS ? BOSS_ROOM_HEIGHT : ROOM_HEIGHT;
-        int ceilY = baseY + roomHeight + 1;
         // Visual themes per room type
         boolean boss = n.type == RoomType.BOSS;
+        boolean elevated = n.features.contains(RoomFeature.PLATFORMS);
+        int baseRoomHeight = boss ? BOSS_ROOM_HEIGHT : ROOM_HEIGHT;
+        int elevation = elevated ? 2 : 0;
+        int roomHeight = baseRoomHeight + elevation;
+        int doorHeight = baseRoomHeight;
+        int ceilY = baseY + roomHeight + 1;
         Material wallMat;
         Material floorMat;
         Material lightMat;
@@ -129,6 +141,11 @@ public final class RoomGen {
                 floorMat = Material.PURPUR_BLOCK;
                 lightMat = Material.SEA_LANTERN;
                 break;
+            case EVENT:
+                wallMat = Material.PURPUR_BLOCK;
+                floorMat = Material.END_STONE_BRICKS;
+                lightMat = Material.SEA_LANTERN;
+                break;
             case BOSS:
                 wallMat = Material.DEEPSLATE_BRICKS;
                 floorMat = Material.POLISHED_BLACKSTONE_BRICKS;
@@ -140,15 +157,78 @@ public final class RoomGen {
                 lightMat = Material.GLOWSTONE;
                 break;
         }
+        Archetype archetype = floor == null ? null : floor.archetype;
+        if (archetype != null
+                && (n.type == RoomType.COMBAT || n.type == RoomType.START)) {
+            wallMat = archetype.wallMat();
+            floorMat = archetype.floorMat();
+            lightMat = archetype.lightMat();
+        }
+        Set<FloorModifier> mods = floor == null ? Set.of() : floor.modifiers;
+        if (n.type == RoomType.COMBAT || n.type == RoomType.START) {
+            if (mods.contains(FloorModifier.OVERGROWN)) {
+                wallMat = Material.MOSSY_STONE_BRICKS;
+                floorMat = Material.MOSS_BLOCK;
+                lightMat = Material.GLOWSTONE;
+            }
+            if (mods.contains(FloorModifier.FROZEN)) {
+                wallMat = Material.PACKED_ICE;
+                floorMat = Material.PACKED_ICE;
+                lightMat = Material.GLOWSTONE;
+            }
+            if (mods.contains(FloorModifier.FLOODED)) {
+                wallMat = Material.PRISMARINE_BRICKS;
+                floorMat = Material.PRISMARINE;
+                lightMat = Material.SEA_LANTERN;
+            }
+            if (mods.contains(FloorModifier.CORRUPTED)) {
+                wallMat = Material.CRYING_OBSIDIAN;
+                floorMat = Material.BLACKSTONE;
+                lightMat = Material.SHROOMLIGHT;
+            }
+            if (mods.contains(FloorModifier.COLLAPSING)) {
+                wallMat = Material.CRACKED_STONE_BRICKS;
+                floorMat = Material.COBBLESTONE;
+                lightMat = Material.GLOWSTONE;
+            }
+        }
+        boolean hub = n.role == RoomRole.HUB;
+        int hubCx = WALL + n.sizeW / 2;
+        int hubCz = WALL + n.sizeH / 2;
+        int hubHalfW = n.sizeW / 2;
+        int hubHalfH = n.sizeH / 2;
+        int hubCorner = hub
+                ? Math.max(1, Math.min(6, Math.min(hubHalfW, hubHalfH) - 2))
+                : 0;
+        RoomGeometry geometry = hub ? null : new RoomGeometry(n.shape, n.sizeW, n.sizeH);
         for (int x = 0; x < wl; x++) {
             for (int z = 0; z < wh; z++) {
+                boolean inside = hub
+                        ? (x >= WALL && x < WALL + n.sizeW
+                            && z >= WALL && z < WALL + n.sizeH
+                            && hubInside(x - hubCx, z - hubCz, hubHalfW, hubHalfH, hubCorner))
+                        : (x >= WALL && x < WALL + n.sizeW
+                            && z >= WALL && z < WALL + n.sizeH
+                            && (geometry.inside(x - WALL, z - WALL)
+                                || inDoorChannel(n, x, z, n.sizeW, n.sizeH)));
+                int floorH = elevated ? elevationAt(n, x, z) : 0;
+                int floorY = baseY + floorH;
+                Material surface = floorMat;
+                if (elevated && n.template == RoomTemplate.THE_PLATFORMS
+                        && floorH == 1 && bridgeAt(n, x, z)) {
+                    surface = Material.OAK_PLANKS;
+                }
                 for (int y = baseY; y <= ceilY; y++) {
                     boolean wall = x == 0 || x == wl - 1 || z == 0 || z == wh - 1;
                     boolean ceiling = y == ceilY;
-                    if (wall || ceiling) {
+                    if (!inside) {
                         setBlock(w, sx + x, y, sz + z, wallMat);
-                    } else if (y == baseY) {
-                        setBlock(w, sx + x, y, sz + z, floorMat);
+                    } else if (y < floorY) {
+                        setBlock(w, sx + x, y, sz + z, wallMat);
+                    } else if (wall || ceiling) {
+                        setBlock(w, sx + x, y, sz + z, wallMat);
+                    } else if (y == floorY) {
+                        setBlock(w, sx + x, y, sz + z, surface);
                     } else {
                         setBlock(w, sx + x, y, sz + z, Material.AIR);
                     }
@@ -225,11 +305,11 @@ public final class RoomGen {
                         int px = horiz ? (axC + asg * t) : (perpC + off);
                         int pz = horiz ? (perpC + off) : (axC + asg * t);
                         setBlock(w, px, baseY, pz, Material.POLISHED_ANDESITE);
-                        for (int y = baseY + 1; y <= baseY + roomHeight; y++) {
+                        for (int y = baseY + 1; y <= baseY + doorHeight; y++) {
                             setBlock(w, px, y, pz, Material.AIR);
                         }
                         // roof the corridor
-                        setBlock(w, px, baseY + roomHeight + 1, pz, Material.STONE_BRICKS);
+                        setBlock(w, px, baseY + doorHeight + 1, pz, Material.STONE_BRICKS);
                     }
                 }
                 // Build a NARROW corridor: the gap between the two room walls is a solid stone mass
@@ -242,7 +322,7 @@ public final class RoomGen {
                         if (Math.abs(off) <= 1) continue; // the 3-wide passage is already carved
                         int px = horiz ? (axC + asg * t) : (perpC + off);
                         int pz = horiz ? (perpC + off) : (axC + asg * t);
-                        for (int y = baseY; y <= baseY + roomHeight + 1; y++) {
+                        for (int y = baseY; y <= baseY + doorHeight + 1; y++) {
                             setBlock(w, px, y, pz, Material.STONE_BRICKS);
                         }
                     }
@@ -253,7 +333,7 @@ public final class RoomGen {
                     int mid = innerWallT + corridorLen / 2;
                     int lx = horiz ? (axC + asg * mid) : (perpC);
                     int lz = horiz ? (perpC) : (axC + asg * mid);
-                    setBlock(w, lx, baseY + roomHeight, lz, Material.LANTERN);
+                    BlockBatcher.setHangingLantern(w, lx, baseY + doorHeight, lz);
                 }
                 // Boss doorway warning: a red floor tile + red overhead glow sit right at the door
                 // opening so the danger reads from the corridor BEFORE the player steps inside.
@@ -261,20 +341,43 @@ public final class RoomGen {
                     int px = horiz ? (axC + asg * innerWallT) : perpC;
                     int pz = horiz ? perpC : (axC + asg * innerWallT);
                     setBlock(w, px, baseY, pz, Material.REDSTONE_BLOCK);
-                    setBlock(w, px, baseY + roomHeight + 1, pz, Material.SHROOMLIGHT);
+                    setBlock(w, px, baseY + doorHeight + 1, pz, Material.SHROOMLIGHT);
                 }
             }
         }
-        // Apply room shape modifications after the basic shell is built
-        applyShape(w, n, sx, sz, baseY, ceilY, wallMat, floorMat);
+        // Apply room shape modifications and safe features after the basic shell is built.
+        if (!hub) {
+            applyShape(w, n, sx, sz, baseY, ceilY, wallMat, floorMat);
+            applyFeatures(w, n, sx, sz, baseY, ceilY, geometry, wallMat);
+            decorateModifiers(w, n, sx, sz, baseY, ceilY, geometry, mods);
+        }
         // interior lighting: glowstone set flush WITH the ceiling (at ceilY, the roof block itself)
         // so the lamps are embedded in the roof rather than dangling below it. Tall rooms still
         // light up because the ceiling sits one row above the tallest air block.
-        for (int x = WALL + 1; x < wl - 1; x += 3) {
-            for (int z = WALL + 1; z < wh - 1; z += 3) {
-                setBlock(w, sx + x, ceilY, sz + z, lightMat);
+        if (!mods.contains(FloorModifier.DARKNESS)) {
+            for (int x = WALL + 1; x < wl - 1; x += 3) {
+                for (int z = WALL + 1; z < wh - 1; z += 3) {
+                    if (hub && !hubInside(x - hubCx, z - hubCz, hubHalfW, hubHalfH, hubCorner)) {
+                        continue;
+                    }
+                    if (!hub && !geometry.inside(x - WALL, z - WALL)) {
+                        continue;
+                    }
+                    setBlock(w, sx + x, ceilY, sz + z, lightMat);
+                }
             }
         }
+    }
+
+    /** Rounded-rectangle mask for hub chambers: flat cardinal faces with quarter-circle corners. */
+    private static boolean hubInside(int dx, int dz, int halfW, int halfH, int corner) {
+        int ax = Math.abs(dx), az = Math.abs(dz);
+        if (ax > halfW || az > halfH) return false;
+        int flatX = halfW - corner;
+        int flatZ = halfH - corner;
+        if (ax <= flatX || az <= flatZ) return true;
+        int ex = ax - flatX, ez = az - flatZ;
+        return ex * ex + ez * ez <= corner * corner;
     }
 
     /** Apply interior shape modifications after the basic room shell is built. */
@@ -285,41 +388,304 @@ public final class RoomGen {
         int ix = sx + WALL; // interior origin x
         int iz = sz + WALL; // interior origin z
         switch (n.shape) {
-            case SHAPE_L -> applyLShape(w, ix, iz, iw, ih, baseY, ceilY, wallMat, floorMat);
-            case SHAPE_PILLAR -> applyPillarShape(w, ix, iz, iw, ih, baseY, ceilY, wallMat, floorMat);
-            case SHAPE_SPLIT -> applySplitShape(w, ix, iz, iw, ih, baseY, ceilY, wallMat, floorMat);
-            default -> {} // rectangle — no changes
+            case PILLAR -> applyPillarShape(w, ix, iz, iw, ih, baseY, ceilY, wallMat, floorMat);
+            case SPLIT -> applySplitShape(w, ix, iz, iw, ih, baseY, ceilY, wallMat, floorMat);
+            default -> {} // full mask — no interior modification
         }
     }
 
-    /**
-     * L-shaped room: fill in a corner section (3x3 or 4x4) with wall material, creating a
-     * pillar/indentation. The corner is chosen based on the room's position hash for variety.
-     */
-    private static void applyLShape(World w, int ix, int iz, int iw, int ih,
-                                    int baseY, int ceilY, Material wallMat, Material floorMat) {
-        // pick a corner based on room position
-        int corner = ((ix * 7 + iz * 13) & 3);
-        int lw = Math.min(4, Math.max(3, iw / 4)); // 3-4 blocks wide
-        int lh = Math.min(4, Math.max(3, ih / 4)); // 3-4 blocks deep
-        int cx, cz;
-        switch (corner) {
-            case 0 -> { cx = ix; cz = iz; }                          // NW
-            case 1 -> { cx = ix + iw - lw; cz = iz; }                // NE
-            case 2 -> { cx = ix; cz = iz + ih - lh; }                // SW
-            default -> { cx = ix + iw - lw; cz = iz + ih - lh; }     // SE
+    /** Apply the room's safe feature set after the shell and shape pass. */
+    private static void applyFeatures(World w, Floor.RoomNode n, int sx, int sz,
+            int baseY, int ceilY, RoomGeometry geometry, Material wallMat) {
+        if (n.features.isEmpty()) return;
+        if (n.features.contains(RoomFeature.PLATFORMS)) return;
+        Random rng = new Random(n.featureSeed);
+        for (RoomFeature feature : n.features) {
+            switch (feature) {
+                case PILLARS -> applyFeaturePillars(w, n, sx, sz, baseY, ceilY, geometry, wallMat);
+                case RUBBLE -> applyFeatureRubble(w, n, sx, sz, baseY, geometry, rng);
+                case ALTAR -> applyFeatureAltar(w, n, sx, sz, baseY, geometry, rng);
+                case CHEST_PLATFORM -> applyFeatureChest(w, n, sx, sz, baseY, geometry, rng);
+                case WATER_POOL -> applyFeatureWater(w, n, sx, sz, baseY, geometry, rng);
+                case LAVA_POOL -> applyFeatureLava(w, n, sx, sz, baseY, geometry, rng);
+                case CENTRAL_PIT -> applyFeaturePit(w, n, sx, sz, baseY, ceilY, geometry, rng);
+                case SPIKES -> applyFeatureSpikes(w, n, sx, sz, baseY, geometry, rng);
+                case ROOTS -> applyFeatureRoots(w, n, sx, sz, baseY, geometry, rng);
+                case STAIRS -> applyFeatureStairs(w, n, sx, sz, baseY, geometry, wallMat, rng);
+                case BRIDGES -> applyFeatureBridge(w, n, sx, sz, baseY, geometry, rng);
+                default -> { }
+            }
         }
-        for (int x = cx; x < cx + lw; x++) {
-            for (int z = cz; z < cz + lh; z++) {
-                for (int y = baseY; y <= ceilY; y++) {
-                    if (y == baseY) {
-                        setBlock(w, x, y, z, floorMat);
-                    } else {
-                        setBlock(w, x, y, z, wallMat);
+    }
+
+    private static void applyFeaturePillars(World w, Floor.RoomNode n, int sx, int sz,
+            int baseY, int ceilY, RoomGeometry g, Material wallMat) {
+        int iw = n.sizeW, ih = n.sizeH;
+        int[][] positions = {
+            {WALL + iw / 4, WALL + ih / 4},
+            {WALL + 3 * iw / 4, WALL + ih / 4},
+            {WALL + iw / 4, WALL + 3 * ih / 4},
+            {WALL + 3 * iw / 4, WALL + 3 * ih / 4}
+        };
+        for (int[] p : positions) {
+            if (!canFeature(g, n, p[0], p[1])) continue;
+            for (int y = baseY + 1; y < ceilY; y++) {
+                setBlock(w, sx + p[0], y, sz + p[1], wallMat);
+            }
+        }
+    }
+
+    private static void applyFeatureRubble(World w, Floor.RoomNode n, int sx, int sz,
+            int baseY, RoomGeometry g, Random rng) {
+        int placed = 0;
+        for (int attempt = 0; attempt < 12 && placed < 5; attempt++) {
+            int x = WALL + rng.nextInt(n.sizeW);
+            int z = WALL + rng.nextInt(n.sizeH);
+            if (!canFeature(g, n, x, z)) continue;
+            setBlock(w, sx + x, baseY + 1, sz + z, Material.COBBLESTONE);
+            placed++;
+        }
+    }
+
+    private static void applyFeatureAltar(World w, Floor.RoomNode n, int sx, int sz,
+            int baseY, RoomGeometry g, Random rng) {
+        int[] area;
+        if (n.template == RoomTemplate.THE_ALTAR || n.template == RoomTemplate.FOUR_PILLAR_ARENA) {
+            area = new int[]{WALL + n.sizeW / 2, WALL + n.sizeH / 2};
+        } else {
+            area = findArea(g, n, rng, 1);
+        }
+        if (area == null) return;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                setBlock(w, sx + area[0] + dx, baseY, sz + area[1] + dz,
+                        dx == 0 && dz == 0
+                                ? Material.CHISELED_POLISHED_BLACKSTONE
+                                : Material.POLISHED_BLACKSTONE);
+            }
+        }
+    }
+
+    private static void applyFeatureChest(World w, Floor.RoomNode n, int sx, int sz,
+            int baseY, RoomGeometry g, Random rng) {
+        int[] area = findArea(g, n, rng, 1);
+        if (area == null) return;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                setBlock(w, sx + area[0] + dx, baseY, sz + area[1] + dz,
+                        Material.POLISHED_BLACKSTONE);
+            }
+        }
+        setBlock(w, sx + area[0], baseY + 1, sz + area[1], Material.CHEST);
+    }
+
+    private static void applyFeatureWater(World w, Floor.RoomNode n, int sx, int sz,
+            int baseY, RoomGeometry g, Random rng) {
+        int[] area = findArea(g, n, rng, 1);
+        if (area == null) return;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                int x = sx + area[0] + dx;
+                int z = sz + area[1] + dz;
+                setBlock(w, x, baseY - 1, z, Material.STONE);
+                setBlock(w, x, baseY, z, Material.WATER);
+            }
+        }
+    }
+
+    /** Small modifier-only decoration pass; kept above head height so it never blocks paths. */
+    private static void decorateModifiers(World w, Floor.RoomNode n, int sx, int sz,
+            int baseY, int ceilY, RoomGeometry g, Set<FloorModifier> mods) {
+        if (!mods.contains(FloorModifier.INFESTED)) return;
+        Random rng = new Random(n.featureSeed ^ 0x1F1F1F1FL);
+        for (int attempt = 0; attempt < 8; attempt++) {
+            int x = WALL + rng.nextInt(n.sizeW);
+            int z = WALL + rng.nextInt(n.sizeH);
+            if (!canFeature(g, n, x, z)) continue;
+            int y = Math.min(baseY + 3, ceilY - 1);
+            setBlock(w, sx + x, y, sz + z, Material.COBWEB);
+        }
+    }
+
+    private static void applyFeatureStairs(World w, Floor.RoomNode n, int sx, int sz,
+            int baseY, RoomGeometry g, Material wallMat, Random rng) {
+        int[] area = findArea(g, n, rng, 1);
+        if (area == null) return;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                int h = dz == 1 ? 2 : 1;
+                for (int y = baseY + 1; y <= baseY + h; y++) {
+                    setBlock(w, sx + area[0] + dx, y, sz + area[1] + dz, wallMat);
+                }
+            }
+        }
+    }
+
+    private static void applyFeatureBridge(World w, Floor.RoomNode n, int sx, int sz,
+            int baseY, RoomGeometry g, Random rng) {
+        int[] area = findArea(g, n, rng, 2);
+        if (area == null) return;
+        boolean alongX = rng.nextBoolean();
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                int x = sx + area[0] + dx;
+                int z = sz + area[1] + dz;
+                setBlock(w, x, baseY - 1, z, Material.STONE);
+                setBlock(w, x, baseY, z, Material.AIR);
+            }
+        }
+        for (int i = -2; i <= 2; i++) {
+            for (int j = -1; j <= 1; j++) {
+                int x = sx + area[0] + (alongX ? i : j);
+                int z = sz + area[1] + (alongX ? j : i);
+                setBlock(w, x, baseY, z, Material.OAK_PLANKS);
+            }
+        }
+    }
+
+    private static void applyFeatureLava(World w, Floor.RoomNode n, int sx, int sz,
+            int baseY, RoomGeometry g, Random rng) {
+        int[] area = findArea(g, n, rng, 2);
+        if (area == null) return;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                int x = sx + area[0] + dx;
+                int z = sz + area[1] + dz;
+                setBlock(w, x, baseY - 1, z, Material.STONE);
+                setBlock(w, x, baseY, z, Material.LAVA);
+            }
+        }
+    }
+
+    private static void applyFeaturePit(World w, Floor.RoomNode n, int sx, int sz,
+            int baseY, int ceilY, RoomGeometry g, Random rng) {
+        int[] area;
+        if (n.shape == RoomShape.RING) {
+            area = new int[]{WALL + g.centerX(), WALL + g.centerZ()};
+        } else {
+            area = findArea(g, n, rng, 2);
+        }
+        if (area == null) return;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                int x = sx + area[0] + dx;
+                int z = sz + area[1] + dz;
+                setBlock(w, x, baseY - 1, z, Material.STONE);
+                setBlock(w, x, baseY, z, Material.AIR);
+                if (n.shape == RoomShape.RING) {
+                    for (int y = baseY + 1; y < ceilY; y++) {
+                        setBlock(w, x, y, z, Material.AIR);
                     }
                 }
             }
         }
+    }
+
+    private static void applyFeatureSpikes(World w, Floor.RoomNode n, int sx, int sz,
+            int baseY, RoomGeometry g, Random rng) {
+        int[] area = findArea(g, n, rng, 1);
+        if (area == null) return;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                setBlock(w, sx + area[0] + dx, baseY, sz + area[1] + dz,
+                        Material.MAGMA_BLOCK);
+            }
+        }
+    }
+
+    private static void applyFeatureRoots(World w, Floor.RoomNode n, int sx, int sz,
+            int baseY, RoomGeometry g, Random rng) {
+        int placed = 0;
+        for (int attempt = 0; attempt < 12 && placed < 5; attempt++) {
+            int x = WALL + rng.nextInt(n.sizeW);
+            int z = WALL + rng.nextInt(n.sizeH);
+            if (!canFeature(g, n, x, z)) continue;
+            setBlock(w, sx + x, baseY + 1, sz + z, Material.MANGROVE_ROOTS);
+            placed++;
+        }
+    }
+
+    private static int[] findArea(RoomGeometry g, Floor.RoomNode n, Random rng, int radius) {
+        for (int attempt = 0; attempt < 32; attempt++) {
+            int x = WALL + rng.nextInt(n.sizeW);
+            int z = WALL + rng.nextInt(n.sizeH);
+            boolean ok = true;
+            for (int dx = -radius; dx <= radius && ok; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    if (!canFeature(g, n, x + dx, z + dz)) {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if (ok) return new int[]{x, z};
+        }
+        return null;
+    }
+
+    private static boolean canFeature(RoomGeometry g, Floor.RoomNode n, int x, int z) {
+        if (x < WALL || x >= WALL + n.sizeW || z < WALL || z >= WALL + n.sizeH) return false;
+        if (!g.inside(x - WALL, z - WALL)) return false;
+        if (inDoorChannel(n, x, z, n.sizeW, n.sizeH)) return false;
+        int cx = WALL + n.sizeW / 2;
+        int cz = WALL + n.sizeH / 2;
+        return Math.abs(x - cx) > 1 || Math.abs(z - cz) > 1;
+    }
+
+    /** Terraced floor height: 2 in the center, 1 on the middle ring, 0 at the edges. */
+    private static int elevationAt(Floor.RoomNode n, int x, int z) {
+        if (n.structure != null || !n.features.contains(RoomFeature.PLATFORMS)) return 0;
+        int cx = WALL + n.sizeW / 2;
+        int cz = WALL + n.sizeH / 2;
+        int d = Math.max(Math.abs(x - cx), Math.abs(z - cz));
+        int half = Math.min(n.sizeW, n.sizeH);
+        int plateau = Math.max(2, Math.min(4, half / 3));
+        int h = 2 - Math.max(0, d - plateau);
+        h = Math.max(0, Math.min(2, h));
+        if (n.template == RoomTemplate.THE_PLATFORMS && h == 1 && !bridgeAt(n, x, z)) {
+            h = 0;
+        }
+        return h;
+    }
+
+    /** The safe bridge lane from one door through the gap ring to the plateau. */
+    private static boolean bridgeAt(Floor.RoomNode n, int x, int z) {
+        if (n.template != RoomTemplate.THE_PLATFORMS) return false;
+        int dir = safeDoorDir(n);
+        int cx = WALL + n.sizeW / 2;
+        int cz = WALL + n.sizeH / 2;
+        return switch (dir) {
+            case 0 -> Math.abs(x - PERP_CENTER) <= 1 && z < cz;
+            case 1 -> Math.abs(z - PERP_CENTER) <= 1 && x > cx;
+            case 2 -> Math.abs(x - PERP_CENTER) <= 1 && z > cz;
+            default -> Math.abs(z - PERP_CENTER) <= 1 && x < cx;
+        };
+    }
+
+    private static int safeDoorDir(Floor.RoomNode n) {
+        if (n.doors[2]) return 2;
+        for (int d = 0; d < 4; d++) {
+            if (n.doors[d]) return d;
+        }
+        return 2;
+    }
+
+    /** World floor height for a room column, used by elevation-aware spawns. */
+    public static int floorY(Floor.RoomNode n, int worldX, int worldZ, int baseY,
+            int spacing, int offsetX, int offsetZ) {
+        RoomBase b = baseFor(n, spacing, offsetX, offsetZ);
+        return baseY + elevationAt(n, worldX - b.x, worldZ - b.z);
+    }
+
+    /** Reserve a 3-wide channel from each open door into the shaped interior. */
+    private static boolean inDoorChannel(Floor.RoomNode n, int x, int z, int sizeW, int sizeH) {
+        int perp = PERP_CENTER;
+        int depth = 3;
+        if (n.doors[1] && x >= sizeW - depth + 1 && Math.abs(z - perp) <= 1) return true;
+        if (n.doors[3] && x <= depth && Math.abs(z - perp) <= 1) return true;
+        if (n.doors[2] && z >= sizeH - depth + 1 && Math.abs(x - perp) <= 1) return true;
+        if (n.doors[0] && z <= depth && Math.abs(x - perp) <= 1) return true;
+        return false;
     }
 
     /**
@@ -410,6 +776,14 @@ public final class RoomGen {
 
     public static Location center(World w, Floor.RoomNode n, int baseY, int spacing, int offsetX, int offsetZ) {
         RoomBase b = baseFor(n, spacing, offsetX, offsetZ);
-        return new Location(w, b.x + WALL + n.sizeW / 2.0, baseY + 1, b.z + WALL + n.sizeH / 2.0);
+        int cx = WALL + n.sizeW / 2;
+        int cz = WALL + n.sizeH / 2;
+        if (n.shape == RoomShape.RING) {
+            RoomGeometry g = new RoomGeometry(n.shape, n.sizeW, n.sizeH);
+            cx = WALL + g.centerX() + g.holeHalf() + 1;
+            cz = WALL + g.centerZ();
+        }
+        int fy = baseY + elevationAt(n, cx, cz);
+        return new Location(w, b.x + cx + 0.5, fy + 1, b.z + cz + 0.5);
     }
 }
