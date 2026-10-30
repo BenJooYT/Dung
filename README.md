@@ -10,6 +10,9 @@ clearing rooms banks persistent coins and kill/full-clear stats that survive dea
 - **Build:** Gradle (offline-friendly: `.\gradlew.bat --offline`)
 - **Gameplay:** `The Binding of Isaac` (random room graph, rooms lock until cleared, boss per
   floor) × `SkyBlock` (rarity-scaled gear, HP/mana resource pools, stat-based combat).
+- **Current beta:** v1.6.0-beta — deterministic floor profiles, six archetypes, the hub layout,
+  shape/mask rooms, features and templates, terraces/platforms, environmental modifiers, EVENT
+  rooms, and floor diagnostics. Classic remains the default layout.
 
 ---
 
@@ -67,7 +70,7 @@ give|stop|reset|forceboss|room|bossbar`, `/check`, `/setlobby`, `/dummy`, `/flys
 start|descend|leave|stats|cp|class|shieldswitch|tutorial`, `/shop`, `/upgrades`, `/salvage`,
 `/stash`, `/balance`, `/party`, `/plot`, `/convert`, `/afk`, `/lobby` — is open to all players.
 
-### Floor generation profiles
+### Floor generation profiles (v1.6.0-beta)
 
 `config.yml` now controls the generation pipeline:
 
@@ -77,6 +80,8 @@ start|descend|leave|stats|cp|class|shieldswitch|tutorial`, `/shop`, `/upgrades`,
 - `floor-modifiers: random|none|<comma list>` — up to two of `flooded`, `collapsing`, `corrupted`, `overgrown`, `darkness`, `infested`, `frozen`.
 
 Rooms support rectangle/L/cave/cross/ring/arena shapes, safe and hazard features (pools, pits, pillars, rubble, spikes, roots, altar, chest platform, stairs, bridges, terraces), archetype palettes, one-time event rooms, and the Four Pillar Arena / The Ring / The Altar / The Platforms templates.
+
+The v1.6.0-beta iteration adds deterministic floor seeds and profiles, a dedicated graph generator with loop braiding and validation, the hub layout with a rounded central chamber and ring branches, six archetypes, full-floor terraces and mixed platform gaps, seven environmental modifiers, and admin floor preview/inspect/regenerate tooling.
 
 Admin floor tools:
 
@@ -94,9 +99,11 @@ registry of `DungeonInstance`s — each party gets its own instance with its own
 boss, and per-player state. Multiple parties can run dungeons simultaneously in the same world
 at different coordinates. Each player has their own `PlayerState` (the single source of truth
 for HP/mana/stats); gear is never duplicated — it stays in the real player inventory and stats
-are recomputed from it on every change. Dungeon geometry is generated purely as data (`Floor`,
-`FloorGenerator`, `RoomNode`) and then projected into the world by `RoomGen`, all at a fixed
-`BASE_Y = 130` in the resolved non-End world.
+are recomputed from it on every change. Dungeon geometry is generated purely as data
+(`Floor`, `FloorProfile`, `FloorGraphGenerator`, `RoomNode`) and then projected into the world by
+`RoomGen`, all at a fixed `BASE_Y = 130` in the resolved non-End world. `FloorGenerator` is now a
+validating wrapper around the graph generator; `FloorProfile` carries the seed-derived layout,
+archetype, and modifier choices, and `FloorValidator` gates connectivity and room-role invariants.
 
 ```
  Dung (JavaPlugin)
@@ -107,9 +114,10 @@ are recomputed from it on every change. Dungeon geometry is generated purely as 
   │   └─ DungeonInstance  one active dungeon per party
   │       ├─ Run          per-run data (rng, floor, coins, kills)
   │       ├─ PlayerState  per-player HP/mana/stats/cooldowns (source of truth)
-  │       ├─ Floor        room grid (data)
-  │       ├─ FloorGenerator  builds the branching room graph
-  │       ├─ RoomGen      projects rooms/corridors into the world
+  │       ├─ Floor        room grid (data) + modifiers
+  │       ├─ FloorProfile / FloorGraphGenerator  layout, archetype, graph/loops
+  │       ├─ FloorValidator  connectivity/role/special-room gate
+  │       ├─ RoomGen      shape masks, features, terraces, corridors
   │       ├─ structure    WorldEdit schematic library (structure package)
   │       ├─ Enemy        runtime mob + AI
   │       ├─ BossController  the Warden (HP scales with party size)
@@ -137,6 +145,7 @@ back to `MetaCommand`. `MetaCommand` owns the non-dung commands `/shop`, `/upgra
 | Command | Permission | Effect |
 |---|---|---|
 | `/dung start` | all | Begins a new run (errors if one is active). |
+| `/dung start seed <n>` | `dung.admin` | Begins a run from an explicit seed for reproducible generation. |
 | `/dung descend` | all | After beating the boss, generates and enters the next floor. |
 | `/dung leave` | all | Ends the current run (strips run gear, keeps persistent items). |
 | `/dung shieldswitch` | all (mid-run) | Swap the equipped mana shield (slot 9) with the best shield in your inventory (also offered as a clickable Switch prompt). |
@@ -156,6 +165,10 @@ back to `MetaCommand`. `MetaCommand` owns the non-dung commands `/shop`, `/upgra
 | `/dung reset` | `dung.admin` | Wipes all player data (`saves.yml`, `plots.yml`) and disables natural mob spawning. |
 | `/dung lobbykit` | OP only | Grants the lobby building kit. |
 | `/dung tutorial <roomtype>` | all | Shows how to build the schematic for one room type (bare command lists them). |
+| `/dung floor seed` | `dung.admin` | Prints the current floor seed, run seed, and generation profile. |
+| `/dung floor preview` | `dung.admin` | Prints an ASCII map of the current floor. |
+| `/dung floor inspect [x z]` | `dung.admin` | Shows a room's type, role, shape, size, template, features, and doors. |
+| `/dung floor regenerate` | `dung.admin` | Rebuilds the current floor from the same stored seed. |
 | `/dung help` | all | Shows clickable chat actions (`ChatUI.startPrompt`). |
 | `/party create` | all | Create a new party (you become leader). |
 | `/party invite <player>` | all | Invite a player to your party (leader only; 5s anti-spam cooldown). |
@@ -255,32 +268,51 @@ the setting is stored per player in `MetaManager` and persists across restarts.
 
 ### `dungeon` — floor & room generation
 
+Generation redesign (v1.6.0-beta):
+
+- **`FloorProfile`** — seed-derived parameters: grid/room budget, branch/loop targets, boss distance,
+  upgrade cadence, CLASSIC/HUB layout, archetype, and modifiers.
+- **`FloorSeeds`** — stable SplitMix64 stage derivation (graph, spacing, structures, archetype,
+  modifiers) from the run/floor seed.
+- **`FloorGraphGenerator`** — classic random walk plus branch/braid loops, or the hub layout (four
+  cardinal arms, diagonal ring corners, arm extensions, optional leaves); assigns special rooms,
+  boss, roles, EVENT rooms, and modifier features.
+- **`FloorGenerator`** — validation wrapper; retries a bounded number of generations, then throws
+  with the validator's errors.
+- **`FloorValidator`** — reachability, door symmetry/bounds, one boss, boss distance, special-room
+  counts, UPGRADE cadence, SECRET/LOCKED rules, HUB/required roles, and loop minimums.
+- **`Archetype`** — RUINS/CAVERNS/TEMPLE/OVERGROWN/INFERNO/CRYPT with branch/loop/boss-distance
+  and palette choices.
+- **`FloorModifier`** — FLOODED/COLLAPSING/CORRUPTED/OVERGROWN/DARKNESS/INFESTED/FROZEN; up to two
+  per floor.
+- **`RoomRole`** — NORMAL/HUB/REQUIRED/OPTIONAL; required rooms must be reachable.
+- **`RoomShape` / `RoomGeometry`** — RECTANGLE/SQUARE/LONG/L_SHAPED/CAVE/PILLAR/SPLIT/CROSS/RING/ARENA
+  interior masks.
+- **`RoomFeature`** — safe and hazard features: pools, pits, pillars, rubble, spikes, roots, altar,
+  chest platform, stairs, bridges, and full-floor platforms.
+- **`RoomTemplate`** — Four Pillar Arena, The Ring, The Altar, and The Platforms layout rules.
+
 **`Floor`** — pure-data room grid for one floor.
 
 - `key(x, z)` — packs `(x,z)` into a `long` map key (`x*4096 + z`).
 - `add`, `at`, `inBounds`, `rooms`, `roomCount` — graph accessors.
-- `RoomNode` — one room: grid coords, `RoomType`, interior `sizeW/sizeH`
-  (13×13 square or 17 long), connectivity `doors[4]` (N/E/S/W), and flags `cleared`,
-  `visited`, `looted`, `shopBought`.
-  - `randomizeShape(rng)` — mostly square, occasionally elongated along one axis.
+- `RoomNode` — one room: grid coords, `RoomType`, `RoomRole`, `RoomShape`, interior
+  `sizeW/sizeH` (13×13 square or 17 long), connectivity `doors[4]` (N/E/S/W), `features`,
+  `featureSeed`, `template`, and flags `cleared`, `visited`, `looted`, `shopBought`; structure
+  rooms also carry their template metadata and clipboard.
+  - `randomizeShape(rng, preferred)` — mostly square, occasionally elongated; an archetype can
+    bias the roll toward its signature shape.
+  - `randomizeFeatures(rng, archetype)` — zero or one preferred safe feature plus modifier features.
+- `modifiers` — the floor's selected environmental modifiers.
 
-**`FloorGenerator`** — builds the Isaac-like branching graph.
+**`FloorGenerator`** — compatibility entry point and validation wrapper around
+`FloorGraphGenerator`; the legacy constructor still accepts the classic dimensions directly.
 
-- `generate()` — a random walk carves `roomCount` connected rooms with no overlaps; a
-  backtrack escape prevents trapping the walk. A BFS from START finds the **farthest room**,
-  which becomes the BOSS. A branching pass forks up to 2 dead-end leaves so the floor is a
-  real tree, not a snake. Placement then guarantees exactly one `SHOP` (shallow), `TREASURE`,
-  `SECRET` (a deep single-door dead-end, then **disconnected** from the door graph and wired to
-  a `secretParent` combat room with a destructible wall), `ELITE` (deepest remaining combat
-  room), 1–2 `LOCKED` (key-gated dead-ends), and — every 5th floor — an `UPGRADE` (persist
-  room, deepest remaining combat room after ELITE is placed)
-  room, all distinct, non-boss rooms.
-
-**`RoomType`** — enum mapping each room to its `kind` (0–8) and label. The kind index drives
+**`RoomType`** — enum mapping each room to its `kind` (0–9) and label. The kind index drives
 loot-table odds and difficulty. Kinds: `START` (0), `COMBAT` (1), `TREASURE` (2), `SHOP` (3),
-`SECRET` (4, bomb-through-wall, detached from the door graph), `ELITE` (5), `BOSS` (6), and
+`SECRET` (4, bomb-through-wall, detached from the door graph), `ELITE` (5), `BOSS` (6),
 `LOCKED` (7, key-gated behind an iron-block barrier), `UPGRADE` (8, persist-station, guaranteed
-every 5th floor).
+every 5th floor), and `EVENT` (9, optional one-time pedestal-loot room on larger floors).
 
 **`RoomGen`** — projects a `RoomNode` into the world at `BASE_Y`.
 
@@ -290,10 +322,19 @@ every 5th floor).
   ceiling + a `REDSTONE_BLOCK` warning tile at each doorway. Carves 3-wide door passages
   whose **perpendicular center is anchored to a fixed offset** (`PERP_CENTER`) shared by all
   rooms, so a square (13) + long (17) pair carve the same tunnel line. Fills the corridor gap
-  with solid stone (except the 3-wide passage) so corridors read as tunnels, hangs a lantern
-  in odd-length corridors, and lights interiors with ceiling `GLOWSTONE`.
-- `center(w, n, baseY, spacing)` — the exact room floor center (+1 for the player).
-- Constants: `SQUARE=13`, `LONG=17`, `WALL=1`, `ROOM_HEIGHT=4`, `BOSS_INTERIOR=23`, `BOSS_ROOM_HEIGHT=7`, `PERP_CENTER=9`.
+  with solid stone (except the 3-wide passage) so corridors read as tunnels, hangs a
+  ceiling-attached lantern in odd-length corridors, and lights interiors with ceiling `GLOWSTONE`.
+- Shape/footprint masks: `RoomGeometry.inside` supplies L/cave/cross/ring/arena interiors, with
+  solid wall material outside the mask; a 3-wide door channel is reserved from every open door.
+- Features run after the shell/shape pass: pillars, rubble, altar, chest platform, water/lava pools,
+  central pits, spikes, roots, stairs, bridges, and full-floor terraces. Feature placement avoids
+  door channels and the room center.
+- `FloorModifier` palettes and lighting apply to combat/start rooms; `DARKNESS` removes ceiling
+  lights; `INFESTED` adds cobwebs above head height; `FLOODED`/`OVERGROWN` add water/root features.
+- `center(w, n, baseY, spacing)` — the exact room floor center (+1 for the player), including the
+  local terrace height; ring rooms return a safe point on the band, not the central hole.
+- `floorY(worldX, worldZ, …)` — world floor surface for a room column, used by elevation-aware spawns.
+- Constants: `SQUARE=13`, `LONG=17`, `WALL=1`, `ROOM_HEIGHT=4`, `BOSS_INTERIOR=23`, `BOSS_ROOM_HEIGHT=7`, `HUB_INTERIOR=27`, `PERP_CENTER=9`.
 
 ### `room` — shared room geometry
 
@@ -936,6 +977,38 @@ immediately and spent in `/upgrades`.
 
 ## Design notes & known issues
 
+### v1.6.0-beta generation iteration
+
+- **Deterministic floors** — `FloorSeeds` derives graph, spacing, structure, archetype, and modifier
+  streams from the run seed and floor index. `/dung floor seed` prints the current values;
+  `/dung start seed <n>` reproduces a run.
+- **Graph generator + validator** — `FloorGraphGenerator` owns the classic tree, branch/braid loop
+  pass, and the hub layout; `FloorValidator` gates reachability, door symmetry, boss distance,
+  special-room counts, required-role reachability, and loop minimums. `FloorGenerator` retries a
+  bounded number of candidates before failing.
+- **Hub layout** — a rounded 27×27 central chamber with four cardinal arms, diagonal ring corners,
+  arm extensions, optional side rooms, and a boss on a primary arm. `floor-layout: hub` opts in;
+  classic remains the default.
+- **Archetypes** — RUINS, CAVERNS, TEMPLE, OVERGROWN, INFERNO, and CRYPT tune branches, loops,
+  boss distance, signature room shapes, and palettes.
+- **Room variety** — masks for rectangle/L/cave/cross/ring/arena; safe features (pools, pillars,
+  rubble, altar, chest platform, stairs, bridges) and hazards (lava, pits, spikes, roots);
+  layout templates (Four Pillar Arena, The Ring, The Altar, The Platforms).
+- **Elevation** — full-floor terraces with a central plateau and climbable steps, plus The Platforms
+  gap ring with one safe bridge lane and optional drop gaps. Room shells grow taller while corridors
+  stay at door height; spawns use the local floor surface.
+- **Modifiers** — FLOODED, COLLAPSING, CORRUPTED, OVERGROWN, DARKNESS, INFESTED, and FROZEN, selected
+  deterministically per floor (up to two). Collapsing is currently particle/sound feedback rather
+  than damage; corrupted is palette-only; flooded uses water pools rather than full water levels.
+- **EVENT rooms** — optional one-time pedestal-loot rooms on larger floors; the chest platform is
+  currently an empty placeholder.
+- **Lantern fix** — corridor lanterns are now ceiling-hanging lanterns with `hanging=true`, so they
+  no longer pop off during generation.
+- **Tooling** — `/dung floor seed|preview|inspect [x z]|regenerate` for reproducible debugging; README
+  and generation notes updated.
+
+### General design notes
+
 - **Multi-player parties, parallel dungeons.** `GameManager` is a registry of `DungeonInstance`s.
   Each party gets its own instance with its own floor, enemies, boss, and per-player state.
   Multiple parties can run dungeons simultaneously in the same world at different coordinates.
@@ -1057,4 +1130,18 @@ server: corridor geometry (`CorridorGeometryTest`), simulated floor generation w
 clears every generated floor including bomb-disconnected `SECRET` rooms
 (`SimulatedPlayerFloorTest`), rarity distribution across floors (`ItemPoolTest`), per-player
 stats (`PlayerStateTest`), permanent upgrades (`UpgradesTest`), and party lifecycle
-(`PartyManagerTest`). Run with `.\gradlew.bat --offline cleanTest test`.
+(`PartyManagerTest`).
+
+The v1.6.0-beta generation suite adds `FloorDeterminismTest` (same seed same graph, stage seed
+stability, loop profiles, hub roles), `FloorValidatorTest` (unreachable/required rooms),
+`ArchetypeTest` (all six themes), `RoomGeometryTest` (shape masks), `RoomTemplateTest` (template
+shape/features), and `FloorModifierTest` (modifier selection and applied features). The expanded
+`StructureConnectivityTest` voxel-simulates corridor walkability and walls for tree, loop, hub,
+shape, feature, template, modifier, elevation, and mixed-height floors.
+
+Run everything with `.\gradlew.bat --offline cleanTest test`; the focused generation suite is:
+
+```bash
+.\gradlew.bat --offline test --tests 'com.lieyabull.dung.dungeon.*' \
+  --tests 'com.lieyabull.dung.game.StructureConnectivityTest'
+```
