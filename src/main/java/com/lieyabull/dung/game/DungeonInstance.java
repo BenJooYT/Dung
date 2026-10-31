@@ -81,6 +81,10 @@ public final class DungeonInstance {
     private int spacing = 25;
     /** Corridor side-wall half-width for this floor, derived from the party tier and room sizes. */
     private int corridorHalf = RoomGen.LONG / 2;
+    /** Extra headroom on structure corridors whose floor steps between rooms. */
+    static final int STEPPED_CORRIDOR_EXTRA_HEIGHT = 2;
+    /** Max vertical difference for melee/cone ability targeting (not just horizontal aim). */
+    private static final double MELEE_VERTICAL_REACH = 2.5;
 
     private final Dung plugin;
     private final UUID instanceId;
@@ -1034,6 +1038,10 @@ public final class DungeonInstance {
                             + "-block corridor; using a flat fallback.");
                     endFloor = startFloor;
                 }
+                // Stepped corridors read as cramped because the roof follows the stairs. Give them
+                // extra air so the headroom stays comfortable through the whole climb.
+                boolean stepped = startFloor != endFloor;
+                if (stepped) airHeight += STEPPED_CORRIDOR_EXTRA_HEIGHT;
                 int perpC = horiz ? (n.z * spacing + offsetZ + RoomGen.PERP_CENTER)
                         : (n.x * spacing + offsetX + RoomGen.PERP_CENTER);
                 for (int t = lo; t <= hi; t++) {
@@ -1066,11 +1074,20 @@ public final class DungeonInstance {
                     }
                 }
 
-                // If one door is shorter, seal its wall from the short opening's top up to the
-                // taller corridor roof. Mixed floor levels are handled by the staircase above.
                 int aHeight = doorAirHeight(n, d);
                 int bHeight = doorAirHeight(m, d ^ 2);
-                if (aHeight != bHeight) {
+                if (stepped) {
+                    // The extra air rises above both rooms' roofs at the corridor ends, so seal
+                    // each wall face above its door all the way up to the new roof.
+                    int aRoofY = baseY + (aAlong <= bAlong ? startFloor : endFloor) + airHeight + 1;
+                    int bRoofY = baseY + (bAlong <= aAlong ? startFloor : endFloor) + airHeight + 1;
+                    sealCorridorDoorTop(world, horiz, aAlong, perpC, corridorHalf,
+                            baseY + aFloor + aHeight + 1, aRoofY);
+                    sealCorridorDoorTop(world, horiz, bAlong, perpC, corridorHalf,
+                            baseY + bFloor + bHeight + 1, bRoofY);
+                } else if (aHeight != bHeight) {
+                    // If one door is shorter, seal its wall from the short opening's top up to the
+                    // taller corridor roof.
                     boolean aShort = aHeight < bHeight;
                     int shortWall = aShort ? aAlong : bAlong;
                     int shortFloor = aShort ? aFloor : bFloor;
@@ -1085,6 +1102,19 @@ public final class DungeonInstance {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /** Fill a corridor-side wall face above a door up to the corridor roof at that end. */
+    private static void sealCorridorDoorTop(org.bukkit.World world, boolean horiz, int wallAlong,
+            int perpC, int corridorHalf, int fromY, int toY) {
+        if (toY < fromY) return;
+        for (int off = -corridorHalf; off <= corridorHalf; off++) {
+            int px = horiz ? wallAlong : perpC + off;
+            int pz = horiz ? perpC + off : wallAlong;
+            for (int y = fromY; y <= toY; y++) {
+                setBlock(world, px, y, pz, Material.STONE_BRICKS);
             }
         }
     }
@@ -1326,11 +1356,7 @@ public final class DungeonInstance {
         spawnRoomPickups(n);
         if (n.type == RoomType.EVENT && !n.looted) {
             n.looted = true;
-            List<ItemStack> loot = ItemPool.roomReward(run.floorIndex, n.type.kind);
-            Location c = RoomGen.center(world, n, BASE_Y, spacing, offsetX, offsetZ);
-            for (int i = 0; i < loot.size(); i++) {
-                spawnPedestal(c.clone().add((i - (loot.size() - 1) / 2.0) * 2, 0, 0), loot.get(i));
-            }
+            scatterPedestals(n, ItemPool.roomReward(run.floorIndex, n.type.kind));
         }
         if (n.type == RoomType.SHOP) {
             setupShopRoom(n);
@@ -1548,7 +1574,9 @@ public final class DungeonInstance {
 
         List<Location> templateSpawns = templateEnemySpawns(n, count);
         for (int i = 0; i < count; i++) {
-            Location l = templateSpawns != null ? templateSpawns.get(i) : placeRandomlyInRoom(n);
+            Location l = templateSpawns != null
+                    ? safeTemplateSpawn(templateSpawns.get(i), n)
+                    : placeRandomlyInRoom(n);
             MobType mt = comp[i];
             list.add(new Enemy(world, l, mt, run.floorIndex, n.x * 100 + n.z, refPlayer, hpMult, dmgMult));
         }
@@ -1566,6 +1594,20 @@ public final class DungeonInstance {
             }
         }
         return true;
+    }
+
+    /** Use an authored spawn point only when the pasted room still has a real two-block-tall
+     *  mob space there; hand-authored templates can be edited after their metadata is written. */
+    private Location safeTemplateSpawn(Location candidate, Floor.RoomNode room) {
+        int x = candidate.getBlockX();
+        int y = candidate.getBlockY();
+        int z = candidate.getBlockZ();
+        if (world.getBlockAt(x, y - 1, z).getType().isSolid()
+                && world.getBlockAt(x, y, z).isPassable()
+                && world.getBlockAt(x, y + 1, z).isPassable()) {
+            return candidate;
+        }
+        return placeRandomlyInRoom(room);
     }
 
     /** Make a SHOP room read as a shop: spawn a named, no-AI Villager shopkeeper that
@@ -1769,6 +1811,90 @@ public final class DungeonInstance {
         return RoomGen.center(world, n, BASE_Y, spacing, offsetX, offsetZ);
     }
 
+    /** A random block position where a dropped item can sit: two air blocks over a solid floor.
+     *  Structure rooms sample their authored spawn floors (the same places enemies may use);
+     *  procedural rooms sample the shaped interior at the local floor height. */
+    private Location randomDropSpot(Floor.RoomNode n) {
+        for (int attempt = 0; attempt < 60; attempt++) {
+            Location spot = n.structure != null
+                    ? randomStructureSpawnSpot(n)
+                    : randomProceduralFloorSpot(n);
+            if (spot != null) return spot;
+        }
+        // Some custom spawn floors are tiny or fully blocked; scan the whole footprint next.
+        if (n.structure != null) {
+            for (int attempt = 0; attempt < 40; attempt++) {
+                Location spot = randomStructureFootprintSpot(n);
+                if (spot != null) return spot;
+            }
+        }
+        return roomSpawn(n);
+    }
+
+    private Location randomStructureSpawnSpot(Floor.RoomNode n) {
+        List<SpawnFloor> floors = n.structure.spawnFloors;
+        if (floors.isEmpty()) return null;
+        SpawnFloor sf = floors.get(ThreadLocalRandom.current().nextInt(floors.size()));
+        int x = sf.minX + ThreadLocalRandom.current().nextInt(Math.max(1, sf.maxX - sf.minX + 1));
+        int z = sf.minZ + ThreadLocalRandom.current().nextInt(Math.max(1, sf.maxZ - sf.minZ + 1));
+        RoomBounds t = n.structure.total();
+        Location spot = new Location(world,
+                baseX(n) - t.minX + x + 0.5,
+                BASE_Y - t.minY + sf.minY,
+                baseZ(n) - t.minZ + z + 0.5);
+        return isWalkableSpot(spot) ? spot : null;
+    }
+
+    private Location randomStructureFootprintSpot(Floor.RoomNode n) {
+        RoomBounds t = n.structure.total();
+        int x = baseX(n) + 1 + ThreadLocalRandom.current().nextInt(Math.max(1, t.width() - 2));
+        int z = baseZ(n) + 1 + ThreadLocalRandom.current().nextInt(Math.max(1, t.depth() - 2));
+        int minY = BASE_Y - t.minY;
+        for (int y = minY + 1; y < minY + t.maxY; y++) {
+            Location spot = new Location(world, x + 0.5, y, z + 0.5);
+            if (isWalkableSpot(spot)) return spot;
+        }
+        return null;
+    }
+
+    private Location randomProceduralFloorSpot(Floor.RoomNode n) {
+        int x = baseX(n) + RoomGen.WALL + ThreadLocalRandom.current().nextInt(n.sizeW);
+        int z = baseZ(n) + RoomGen.WALL + ThreadLocalRandom.current().nextInt(n.sizeH);
+        int y = RoomGen.floorY(n, x, z, BASE_Y, spacing, offsetX, offsetZ) + 1;
+        Location spot = new Location(world, x + 0.5, y, z + 0.5);
+        return isWalkableSpot(spot) ? spot : null;
+    }
+
+    /** Feet and head air with a solid block underneath. */
+    private boolean isWalkableSpot(Location loc) {
+        int x = loc.getBlockX();
+        int y = loc.getBlockY();
+        int z = loc.getBlockZ();
+        return world.getBlockAt(x, y, z).getType().isAir()
+                && world.getBlockAt(x, y + 1, z).getType().isAir()
+                && world.getBlockAt(x, y - 1, z).getType().isSolid();
+    }
+
+    /** Place one pedestal per item at independent walkable spots inside the room. */
+    private void scatterPedestals(Floor.RoomNode n, List<ItemStack> items) {
+        for (ItemStack item : items) {
+            if (item == null) continue;
+            spawnPedestal(randomDropSpot(n), item);
+        }
+    }
+
+    /** Roll up to {@code count} room-reward items, filling gaps with armor pieces. */
+    private List<ItemStack> rollRoomLoot(int count, int roomKind) {
+        List<ItemStack> rolled = ItemPool.roomReward(run.floorIndex, roomKind);
+        List<ItemStack> out = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            ItemStack s = (i < rolled.size()) ? rolled.get(i) : null;
+            if (s == null) s = ItemPool.randomArmor(run.floorIndex, i % 4);
+            out.add(s);
+        }
+        return out;
+    }
+
     private void lockDoors(Floor.RoomNode n) {
         long k = run.floor.key(n.x, n.z);
         roomLocked.put(k, true);
@@ -1848,38 +1974,21 @@ public final class DungeonInstance {
     private void spawnRoomPickups(Floor.RoomNode n) {
         if (!n.looted && n.type == RoomType.TREASURE) {
             n.looted = true;
-            Location c = roomSpawn(n);
-            List<ItemStack> loot = ItemPool.roomReward(run.floorIndex, 2);
-            for (int i = 0; i < 3; i++) {
-                ItemStack s = (i < loot.size()) ? loot.get(i) : null;
-                if (s == null) s = ItemPool.randomArmor(run.floorIndex, i % 4);
-                spawnPedestal(c.clone().add((i - 1) * 2, 0, 0), s);
-            }
+            scatterPedestals(n, rollRoomLoot(3, 2));
         }
         // LOCKED rooms: bonus loot like TREASURE but requires a key to enter.
         // Loot is spawned when the key is used (in onPlayerMoved), but also handle
         // the case where enterRoom is called directly (e.g., first entry after unlock).
         if (!n.looted && n.type == RoomType.LOCKED) {
             n.looted = true;
-            Location c = roomSpawn(n);
-            List<ItemStack> loot = ItemPool.roomReward(run.floorIndex, 2);
-            for (int i = 0; i < 3; i++) {
-                ItemStack s = (i < loot.size()) ? loot.get(i) : null;
-                if (s == null) s = ItemPool.randomArmor(run.floorIndex, i % 4);
-                spawnPedestal(c.clone().add((i - 1) * 2, 0, 0), s);
-            }
+            scatterPedestals(n, rollRoomLoot(3, 2));
         }
         // SECRET rooms: loot is spawned when the wall is bombed, not on room entry
         // (handled in revealSecretRoom)
     }
 
-    private void dropGear(Location c, int count, int roomKind) {
-        List<ItemStack> loot = ItemPool.roomReward(run.floorIndex, roomKind);
-        for (int i = 0; i < count; i++) {
-            ItemStack s = (i < loot.size()) ? loot.get(i) : null;
-            if (s == null) s = ItemPool.randomArmor(run.floorIndex, i % 4);
-            spawnPedestal(c.clone().add((i - (count - 1) / 2.0) * 2, 0, 0), s);
-        }
+    private void dropGear(Floor.RoomNode n, int count, int roomKind) {
+        scatterPedestals(n, rollRoomLoot(count, roomKind));
     }
 
     // ---------- elite heart drops ----------
@@ -1911,15 +2020,21 @@ public final class DungeonInstance {
         }
     }
 
-    /** A random spot inside the room (falls back to the death location after a few tries). */
+    /** A random walkable block near the room centre (falls back to a room-wide drop spot). */
     private Location randomRoomSpot(Location center, Location fallback, Floor.RoomNode rn) {
-        for (int attempt = 0; attempt < 8; attempt++) {
-            double dx = (ThreadLocalRandom.current().nextDouble() - 0.5) * 6.0;
-            double dz = (ThreadLocalRandom.current().nextDouble() - 0.5) * 6.0;
-            Location at = center.clone().add(dx, 0.5, dz);
-            if (insideRoom(at, rn, 1.0)) return at;
+        for (int attempt = 0; attempt < 16; attempt++) {
+            int dx = ThreadLocalRandom.current().nextInt(-6, 7);
+            int dz = ThreadLocalRandom.current().nextInt(-6, 7);
+            Location at = new Location(world,
+                    center.getBlockX() + dx + 0.5,
+                    center.getBlockY(),
+                    center.getBlockZ() + dz + 0.5);
+            if (insideRoom(at, rn, 1.0) && isWalkableSpot(at)) {
+                return at.clone().add(0, 0.5, 0);
+            }
         }
-        return fallback.add(0, 0.5, 0);
+        Location spot = randomDropSpot(rn);
+        return isWalkableSpot(spot) ? spot.clone().add(0, 0.5, 0) : fallback.clone().add(0, 0.5, 0);
     }
 
     /** Floor-entry spawn: a random spot inside the room, looking toward the room's center. */
@@ -2278,9 +2393,9 @@ public final class DungeonInstance {
      *  - Chestplate (slot 38): around the chest
      *  - Leggings (slot 37): around the legs
      *  - Boots (slot 36): around the feet
-     *  Runs every 5 ticks. */
+     *  Runs every 10 ticks. */
     private void spawnPerfectionParticles(Player p) {
-        if (world == null || tickCounter % 5 != 0) return;
+        if (world == null || tickCounter % 10 != 0) return;
         org.bukkit.inventory.PlayerInventory inv = p.getInventory();
         // Check main hand
         ItemStack held = inv.getItemInMainHand();
@@ -2298,8 +2413,10 @@ public final class DungeonInstance {
             } else {
                 forward.normalize();
             }
-            org.bukkit.util.Vector right = new org.bukkit.util.Vector(0, 1, 0)
-                    .crossProduct(forward).normalize();
+            // The camera's right side is forward x up. Up x forward points to the
+            // player's left in Minecraft's coordinate system.
+            org.bukkit.util.Vector right = forward.clone()
+                    .crossProduct(new org.bukkit.util.Vector(0, 1, 0)).normalize();
             Location handLoc = eye.clone()
                     .add(forward.multiply(0.35))
                     .add(right.multiply(0.28))
@@ -2314,6 +2431,20 @@ public final class DungeonInstance {
             if (armor != null && !armor.getType().isAir()
                     && GearFactory.getUpgradeLevel(armor) >= WorkstationRules.UPGRADE_MAX) {
                 Location armorLoc = p.getLocation().add(0, yOffsets[i], 0);
+                if (i == 0) {
+                    // Keep helmet sparkles just behind the player's viewpoint so they
+                    // don't sit in the first-person crosshair/camera.
+                    org.bukkit.util.Vector back = p.getEyeLocation().getDirection().clone().setY(0);
+                    if (back.lengthSquared() < 1.0e-6) {
+                        back = new org.bukkit.util.Vector(
+                                -Math.sin(Math.toRadians(p.getLocation().getYaw())),
+                                0,
+                                Math.cos(Math.toRadians(p.getLocation().getYaw())));
+                    } else {
+                        back.normalize();
+                    }
+                    armorLoc.add(back.multiply(-0.35));
+                }
                 world.spawnParticle(org.bukkit.Particle.END_ROD, armorLoc, 2, 0.2, 0.15, 0.2, 0.001);
             }
         }
@@ -2774,7 +2905,8 @@ public final class DungeonInstance {
                 // "blast all nearby enemies" — a few around you
                 hitBoss.accept(4.0);
                 if (hitTargets(roomList, caster, 3, dmg * 1.8, 0, 0,
-                        fenceSafe(caster, e -> e.entity.getLocation().distance(caster.getLocation()) < 4))) connected = true;
+                        fenceSafe(caster, e -> sameLevel(e.entity.getLocation(), caster)
+                                && e.entity.getLocation().distance(caster.getLocation()) < 4))) connected = true;
                 world.spawnParticle(org.bukkit.Particle.EXPLOSION, caster.getLocation().add(0, 1, 0), 1, 1, 0, 1);
                 caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.smash"));
                 break;
@@ -2782,7 +2914,8 @@ public final class DungeonInstance {
                 // "spin, damaging around you" — hits more of the surrounding mobs
                 hitBoss.accept(5.0);
                 if (hitTargets(roomList, caster, 4, dmg * 1.2, 0, 0,
-                        fenceSafe(caster, e -> e.entity.getLocation().distance(caster.getLocation()) < 5))) connected = true;
+                        fenceSafe(caster, e -> sameLevel(e.entity.getLocation(), caster)
+                                && e.entity.getLocation().distance(caster.getLocation()) < 5))) connected = true;
                 for (int i = 0; i < 6; i++) {
                     double a = i * Math.PI / 3;
                     caster.getWorld().spawnParticle(org.bukkit.Particle.SWEEP_ATTACK,
@@ -3035,18 +3168,29 @@ public final class DungeonInstance {
             }
             default:
                 if (hitTargets(roomList, caster, 3, dmg * 1.2, 0, 0,
-                        fenceSafe(caster, e -> e.entity.getLocation().distance(caster.getLocation()) < 3.5))) connected = true;
+                        fenceSafe(caster, e -> sameLevel(e.entity.getLocation(), caster)
+                                && e.entity.getLocation().distance(caster.getLocation()) < 3.5))) connected = true;
                 caster.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(caster, "ability.generic"));
                 break;
         }
         return connected;
     }
 
-    /** True if the enemy lies within a cone of the given radius opening from the caster. */
+    /** True if the enemy lies within a cone of the given radius opening from the caster.
+     *  The aim stays horizontal (so a tall boss doesn't drop out when looking up/down), but the
+     *  target itself must be on roughly the caster's level — otherwise a downward look still hit
+     *  enemies on the floor above. */
     private boolean inCone(Enemy e, Player caster, org.bukkit.util.Vector dir, double radius, double dotMin) {
-        org.bukkit.util.Vector to = e.entity.getLocation().toVector().subtract(caster.getLocation().toVector());
+        Location enemy = e.entity.getLocation();
+        if (!sameLevel(enemy, caster)) return false;
+        org.bukkit.util.Vector to = enemy.toVector().subtract(caster.getLocation().toVector());
         to.setY(0);
         return to.length() < radius && to.clone().normalize().dot(dir) > dotMin;
+    }
+
+    /** True when an enemy is on roughly the same vertical level as the caster. */
+    private boolean sameLevel(Location enemy, Player caster) {
+        return Math.abs(enemy.getY() - caster.getLocation().getY()) <= MELEE_VERTICAL_REACH;
     }
 
     /** Damage all enemies from {@code roomList} matching {@code filter}, dividing the damage
@@ -3369,11 +3513,7 @@ public final class DungeonInstance {
             st.heal(st.maxHearts * 0.30);
             p.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(p, "room.cleared", amt));
         }
-        List<ItemStack> loot = ItemPool.roomReward(run.floorIndex, n.type.kind);
-        Location center = RoomGen.center(world, n, BASE_Y, spacing, offsetX, offsetZ);
-        for (int i = 0; i < loot.size(); i++) {
-            spawnPedestal(center.clone().add((i - (loot.size() - 1) / 2.0) * 2, 0, 0), loot.get(i));
-        }
+        scatterPedestals(n, ItemPool.roomReward(run.floorIndex, n.type.kind));
     }
 
     private void openDoors(Floor.RoomNode n) {
@@ -3464,7 +3604,7 @@ public final class DungeonInstance {
             st.coins += en.getValue();
             run.runCoinsEarned += en.getValue();
         }
-        dropGear(roomSpawn(defeated), 2, 6);
+        dropGear(defeated, 2, 6);
         // The Grovekeeper may drop a Forest Transmutation Elixir as a special reward (50% chance per kill)
         if (isGrovekeeperFloor) {
             if (Math.random() < 0.5) {
@@ -4124,9 +4264,9 @@ public final class DungeonInstance {
             for (Player pm : party.onlineMembers()) {
                 pm.sendMessage(com.lieyabull.dung.lang.Lang.forPlayer(pm, "room.hiddenFound"));
             }
-            Location c = RoomGen.center(world, secretRoom, BASE_Y, spacing, offsetX, offsetZ);
-            spawnPedestal(c.clone().add(1, 0, 0), ItemPool.randomWeapon(run.floorIndex));
-            spawnPedestal(c.clone().add(-1, 0, 0), ItemPool.randomArmor(run.floorIndex, 0));
+            scatterPedestals(secretRoom, List.of(
+                    ItemPool.randomWeapon(run.floorIndex),
+                    ItemPool.randomArmor(run.floorIndex, 0)));
         }
     }
 

@@ -541,12 +541,28 @@ class StructureConnectivityTest {
 
         int lo = Math.min(aWall, bWall) + 1;
         int hi = Math.max(aWall, bWall) - 1;
+        int extra = DungeonInstance.STEPPED_CORRIDOR_EXTRA_HEIGHT;
+        int air = 4 + extra;
         for (int t = lo; t <= hi; t++) {
             int floor = DungeonInstance.interpolateDoorFloor(0, 3, t, lo, hi);
             assertTrue(fw.at(t, BASE_Y + floor, perp) == Material.POLISHED_ANDESITE,
                     "missing stair floor at t=" + t + " y=" + (BASE_Y + floor));
-            assertTrue(fw.at(t, BASE_Y + floor + 1, perp) == Material.AIR,
-                    "blocked stair headroom at t=" + t);
+            for (int y = floor + 1; y <= floor + air; y++) {
+                assertTrue(fw.at(t, BASE_Y + y, perp) == Material.AIR,
+                        "blocked stair headroom at t=" + t + " y=" + (BASE_Y + y));
+            }
+            assertTrue(fw.at(t, BASE_Y + floor + air + 1, perp) != Material.AIR,
+                    "missing raised corridor roof at t=" + t);
+        }
+        // The extra air rises above both rooms' roofs, so the wall faces above the doors must be
+        // sealed all the way to the raised roof at each end.
+        for (int y = BASE_Y + 5; y <= BASE_Y + 7; y++) {
+            assertTrue(fw.at(aWall, y, perp) != Material.AIR,
+                    "low doorway wall must be sealed at y=" + y);
+        }
+        for (int y = BASE_Y + 8; y <= BASE_Y + 10; y++) {
+            assertTrue(fw.at(bWall, y, perp) != Material.AIR,
+                    "high doorway wall must be sealed at y=" + y);
         }
     }
 

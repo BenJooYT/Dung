@@ -46,6 +46,8 @@ public final class StructureRegistry {
         files.clear();
         File dir = new File(plugin.getDataFolder(), STRUCTURES_DIR);
         if (!dir.exists()) dir.mkdirs();
+        // Keep older installs working: pre-WorldEdit room JSON assets live in rooms/.
+        LegacyRoomImporter.importAll(plugin, dir);
         int loaded = scan(dir, byId);
         int defaultCount = fillDefaults(byId);
         plugin.getLogger().info("[structures] Registered " + byId.size()
@@ -102,7 +104,24 @@ public final class StructureRegistry {
                         + schemFile.getName() + "' could not be loaded by WorldEdit.");
                 return null;
             }
+            // Structures authored before /dung room gen's sign stripping (or saved by hand) still
+            // carry their marker signs in the schematic. Remove them on load so they never paste.
+            int strippedSigns = SignScanner.stripMarkerSigns(clipboard);
+            if (strippedSigns > 0) {
+                plugin.getLogger().info("[structures] Removed " + strippedSigns
+                        + " marker sign(s) from '" + def.id + "'.");
+            }
             boolean metadataChanged = migrateLegacyCoordinates(def, clipboard);
+            boolean padded = false;
+            if (StructurePadder.needsPadding(def)) {
+                StructurePadder.Result fit = StructurePadder.fit(def, clipboard);
+                def = fit.definition();
+                clipboard = fit.clipboard();
+                padded = true;
+                plugin.getLogger().info("[structures] Padding '" + def.id + "' to a "
+                        + def.total().width() + "x" + def.total().depth()
+                        + " fixed-line frame so its doors align with the corridors.");
+            }
             if (!def.doorsConfigured) {
                 def.doors = StructureAuthoring.detectDoors(
                         StructureWorldEdit.blockLookup(clipboard), def.total(), RoomGen.PERP_CENTER);
@@ -110,7 +129,8 @@ public final class StructureRegistry {
                 metadataChanged = true;
                 plugin.getLogger().info("[structures] Detected door levels for '" + def.id + "'.");
             }
-            if (metadataChanged) persistMetadata(def, metaFile);
+            boolean rewrite = padded || strippedSigns > 0;
+            if (metadataChanged && !rewrite) persistMetadata(def, metaFile);
             StructureValidator.Result res = StructureValidator.validate(def, StructureWorldEdit.blockLookup(clipboard));
             if (res.hasErrors()) {
                 plugin.getLogger().warning("[structures] Rejected invalid structure '" + def.id + "':");
@@ -118,6 +138,7 @@ public final class StructureRegistry {
                     if (i.level == RoomValidationIssue.Level.ERROR) plugin.getLogger().warning("  " + i);
                 return null;
             }
+            if (rewrite) persistRewritten(def, clipboard, metaFile, schemFile, padded);
             return new Registered(def, clipboard);
         } catch (Exception e) {
             plugin.getLogger().warning("[structures] Failed to load " + metaFile.getAbsolutePath() + ": " + e.getMessage());
@@ -144,6 +165,38 @@ public final class StructureRegistry {
         } catch (IOException e) {
             plugin.getLogger().warning("[structures] Could not rewrite " + metaFile.getName()
                     + " after migration/door detection: " + e.getMessage());
+        }
+    }
+
+    /** Write a padded/sign-cleaned structure back once. The authored files are copied to
+     *  {@code plugins/Dung/structure-backups/<id>/} first, so the original build is never lost. */
+    private void persistRewritten(StructureDefinition def, Clipboard clipboard,
+                                  File metaFile, File schemFile, boolean padded) {
+        File backupDir = new File(plugin.getDataFolder(), "structure-backups/" + def.id);
+        try {
+            if (!backupDir.exists() && !backupDir.mkdirs()) {
+                plugin.getLogger().warning("[structures] Could not create backup directory for '"
+                        + def.id + "'; leaving its files unchanged.");
+                return;
+            }
+            File backupSchem = new File(backupDir, schemFile.getName());
+            File backupMeta = new File(backupDir, metaFile.getName());
+            if (!backupSchem.exists()) Files.copy(schemFile.toPath(), backupSchem.toPath());
+            if (!backupMeta.exists()) Files.copy(metaFile.toPath(), backupMeta.toPath());
+            if (!StructureWorldEdit.save(clipboard, schemFile)) {
+                plugin.getLogger().warning("[structures] Could not rewrite schematic for '"
+                        + def.id + "'; leaving its files unchanged.");
+                return;
+            }
+            Files.write(metaFile.toPath(), StructureMetadata.dump(def).getBytes(StandardCharsets.UTF_8));
+            String action = padded
+                    ? "Padded '" + def.id + "' to " + def.total().width() + "x" + def.total().depth()
+                    : "Rewrote '" + def.id + "' without marker signs";
+            plugin.getLogger().info("[structures] " + action + "; original saved in "
+                    + backupDir.getAbsolutePath() + ".");
+        } catch (IOException e) {
+            plugin.getLogger().warning("[structures] Could not persist '" + def.id
+                    + "': " + e.getMessage());
         }
     }
 

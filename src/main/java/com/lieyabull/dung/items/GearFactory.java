@@ -965,7 +965,7 @@ public final class GearFactory {
         s.editMeta(meta -> {
             meta.setDisplayName(r.legacy + name);
             meta.setLore(armorLore(r, defense, health));
-            meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+            meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_ARMOR_TRIM);
             if (r.ordinal() >= Rarity.RARE.ordinal()) {
                 meta.addEnchant(Enchantment.UNBREAKING, 1, true);
             }
@@ -1055,6 +1055,7 @@ public final class GearFactory {
                 case EMBER -> TrimPattern.RIB;
             };
             armorMeta.setTrim(new ArmorTrim(trimMat, trimPattern));
+            armorMeta.addItemFlags(ItemFlag.HIDE_ARMOR_TRIM);
             s.setItemMeta(armorMeta);
             return s;
         }
@@ -1074,6 +1075,7 @@ public final class GearFactory {
             banner.addPattern(new Pattern(patternColor, PatternType.GRADIENT_UP));
             banner.addPattern(new Pattern(patternColor, PatternType.GRADIENT));
             blockMeta.setBlockState(banner);
+            blockMeta.addItemFlags(ItemFlag.HIDE_ADDITIONAL_TOOLTIP);
             s.setItemMeta(blockMeta);
         }
         return s;
@@ -1104,7 +1106,7 @@ public final class GearFactory {
             lore.add("");
             lore.add(r.legacy + r.name());
             meta.setLore(lore);
-            meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+            meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_ADDITIONAL_TOOLTIP);
             // Repurpose the shield's native durability bar to show the current charge (empty to start)
             if (meta instanceof org.bukkit.inventory.meta.Damageable dmg) {
                 dmg.setDamage(Material.SHIELD.getMaxDurability());
@@ -1257,7 +1259,11 @@ public final class GearFactory {
             lore.add("");
             lore.add(r.legacy + rarityName(r, lang));
         }
-        s.editMeta(meta -> meta.setLore(lore));
+        s.editMeta(meta -> {
+            meta.setLore(lore);
+            if ("armor".equals(kind)) meta.addItemFlags(ItemFlag.HIDE_ARMOR_TRIM);
+            if ("shield".equals(kind)) meta.addItemFlags(ItemFlag.HIDE_ADDITIONAL_TOOLTIP);
+        });
         localizePerfectionName(s, upLevel, lang);
     }
 

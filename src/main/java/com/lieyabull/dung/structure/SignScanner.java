@@ -3,7 +3,7 @@ package com.lieyabull.dung.structure;
 import com.sk89q.worldedit.extent.clipboard.Clipboard;
 import com.sk89q.worldedit.math.BlockVector3;
 import com.sk89q.worldedit.regions.Region;
-import com.sk89q.worldedit.world.block.BlockState;
+import com.sk89q.worldedit.world.block.BlockTypes;
 import com.sk89q.worldedit.world.block.BaseBlock;
 import org.enginehub.linbus.tree.LinCompoundTag;
 import org.enginehub.linbus.tree.LinListTag;
@@ -34,11 +34,13 @@ public final class SignScanner {
         BlockVector3 min = clipboard.getMinimumPoint();
         Region region = clipboard.getRegion();
         for (BlockVector3 pt : region) {
-            BlockState bs = clipboard.getBlock(pt);
+            // getFullBlock (not getBlock) carries the sign's tile-entity NBT; Sponge schematics
+            // store BlockEntities separately and only attach them to the full block.
+            BaseBlock bs = clipboard.getFullBlock(pt);
             if (bs == null) continue;
             String id = bs.getBlockType().getId();
             if (id == null || !id.endsWith("_sign")) continue;
-            String text = firstLine(clipboard, pt, bs);
+            String text = firstLine(bs);
             if (text == null || text.isBlank()) continue;
             out.add(new Sign(pt.x() - min.x(),
                     pt.y() - min.y(),
@@ -48,9 +50,39 @@ public final class SignScanner {
         return out;
     }
 
-    private static String firstLine(Clipboard clipboard, BlockVector3 pt, BlockState bs) {
+    /**
+     * Erase marker signs from a loaded structure's clipboard so they are never pasted into a live
+     * room. Only recognized marker tokens are removed; ordinary decorative signs stay. Returns the
+     * number of signs removed. The clipboard is mutated in place.
+     */
+    public static int stripMarkerSigns(Clipboard clipboard) {
+        if (clipboard == null) return 0;
+        BlockVector3 min = clipboard.getMinimumPoint();
+        int removed = 0;
+        for (Sign sign : scan(clipboard)) {
+            if (!isMarkerToken(sign.text())) continue;
+            try {
+                clipboard.setBlock(min.add(sign.x(), sign.y(), sign.z()),
+                        BlockTypes.AIR.getDefaultState());
+                removed++;
+            } catch (Exception e) {
+                return removed;
+            }
+        }
+        return removed;
+    }
+
+    private static boolean isMarkerToken(String text) {
+        return switch (text) {
+            case "PLAYER_SPAWN", "SHOPKEEPER", "LOOT", "HAZARD",
+                    "MECHANIC", "SPECIAL", "SPAWN_FLOOR" -> true;
+            default -> false;
+        };
+    }
+
+    private static String firstLine(BaseBlock bs) {
         try {
-            LinCompoundTag nbt = bs.toBaseBlock().getNbtReference().getValue();
+            LinCompoundTag nbt = bs.getNbtReference().getValue();
             if (nbt == null) return null;
             LinCompoundTag front = nbt.getTag("front_text", LinTagType.compoundTag());
             if (front != null) {

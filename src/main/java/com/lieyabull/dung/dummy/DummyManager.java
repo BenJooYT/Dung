@@ -1,5 +1,11 @@
 package com.lieyabull.dung.dummy;
 
+import com.destroystokyo.paper.profile.PlayerProfile;
+import com.destroystokyo.paper.profile.ProfileProperty;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.lieyabull.dung.Dung;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.JoinConfiguration;
@@ -23,9 +29,15 @@ import org.bukkit.event.player.PlayerInteractEntityEvent;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -50,6 +62,13 @@ public final class DummyManager implements Listener {
     /** Tag offset while a packet-based avatar model is showing — the model is ~1.9 blocks tall,
      *  so the tag must float well above the invisible stand's mount point. */
     private static final float AVATAR_TAG_LIFT = 1.45f;
+    /** How long to stop retrying a failed Mojang avatar lookup. */
+    private static final long AVATAR_LOOKUP_BACKOFF_MS = 5 * 60_000L;
+    /** Public Mojang lookups use their own short-timeout client, not the server session service. */
+    private static final HttpClient AVATAR_HTTP = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
 
     private final Dung plugin;
     private final File file;
@@ -68,6 +87,8 @@ public final class DummyManager implements Listener {
      *  to dummies.yml so offline servers keep rendering known skins with no route to Mojang. */
     private final Map<String, com.destroystokyo.paper.profile.ProfileProperty> cachedTextures =
             new java.util.concurrent.ConcurrentHashMap<>();
+    /** Avatar names whose public Mojang lookup failed; retry only after the backoff expires. */
+    private final Map<String, Long> avatarLookupBackoff = new java.util.concurrent.ConcurrentHashMap<>();
     /** Packet-based true player models (only functional when ProtocolLib is installed).
      *  Null when ProtocolLib is absent — every use site null-guards, and dummies fall back to
      *  skinned-head stands. Never constructed without ProtocolLib: merely LINKING
@@ -194,8 +215,10 @@ public final class DummyManager implements Listener {
     public void setAvatar(Dummy d, String playerName) {
         d.avatar = playerName;
         save();
-        avatarProfiles.remove(playerName.toLowerCase()); // force a fresh lookup of the new skin
-        resolveAndApplyAvatar(d);
+        String key = playerName.toLowerCase();
+        avatarProfiles.remove(key);          // force a fresh lookup of the new skin
+        avatarLookupBackoff.remove(key);     // and allow an immediate retry
+        resolveAndApplyAvatar(d, true);
     }
 
     /** Resolve the avatar profile off-main, then apply the look on the main thread.
@@ -203,69 +226,147 @@ public final class DummyManager implements Listener {
      *  Guarded against concurrent double-invocation — overlapping applies would send duplicate
      *  packet bursts for the same dummy. */
     private void resolveAndApplyAvatar(Dummy d) {
+        resolveAndApplyAvatar(d, false);
+    }
+
+    /** @param forceRefresh bypass the skin caches and ask Mojang now (used by /dummy avatar) */
+    private void resolveAndApplyAvatar(Dummy d, boolean forceRefresh) {
         String name = d.avatar;
         if (name == null || name.isEmpty()) return;
         if (!resolving.add(d)) return; // already an apply in flight for this dummy
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             String key = name.toLowerCase();
-            com.destroystokyo.paper.profile.PlayerProfile prof = avatarProfiles.get(key);
+            PlayerProfile prof = forceRefresh ? null : avatarProfiles.get(key);
             if (prof == null) {
                 Player online = Bukkit.getPlayerExact(name);
                 if (online != null && online.getPlayerProfile().hasTextures()) {
                     prof = online.getPlayerProfile(); // live session skin (online mode)
-                } else {
-                    // Offline-mode players have NO textures in their live profile (there is no
-                    // session server), so a currently-online player must resolve like an offline
-                    // one: fetch the skin by name from Mojang's public API, which works regardless
-                    // of online-mode. This was silently breaking avatars on offline servers —
-                    // online players' avatars always degraded to blank stands.
-                    try {
-                        prof = Bukkit.createProfile(name); // triggers Mojang lookup
-                        prof.complete(true);               // blocking fetch of textures
-                    } catch (Exception ex) {
-                        plugin.getLogger().warning("Dummy avatar lookup failed for '" + name + "': " + ex.getMessage());
-                    }
+                } else if (!forceRefresh) {
+                    // Persisted skin: no need to hit Mojang again for a name we already resolved.
+                    prof = fromCachedTextures(key, name);
                 }
-                // Fall back to the last successfully resolved skin for this name (persisted to
-                // dummies.yml) so avatars keep working even when Mojang is unreachable.
-                if (prof == null || !prof.hasTextures()) prof = fromCachedTextures(key, name);
+                if (prof == null || !prof.hasTextures()) {
+                    PlayerProfile fetched = resolveAvatarProfile(name);
+                    if (fetched != null && fetched.hasTextures()) prof = fetched;
+                    // Even a forced refresh keeps the last known skin if Mojang is unreachable.
+                    if (prof == null || !prof.hasTextures()) prof = fromCachedTextures(key, name);
+                }
                 if (prof != null && prof.hasTextures()) {
                     avatarProfiles.put(key, prof);
                     persistTextures(key, prof);
                 }
             }
-            final com.destroystokyo.paper.profile.PlayerProfile resolved = prof;
+            final PlayerProfile resolved = prof;
             final boolean known = resolved != null && resolved.hasTextures();
             Bukkit.getScheduler().runTask(plugin, () -> {
                 try {
                     if (!dummies.contains(d) || !name.equals(d.avatar)) return; // stale resolve
-                Ref ref = refs.get(d);
-                if (ref == null) return;
-                if (known) {
-                    // TRUE player model via ProtocolLib; the stand goes invisible so only the
-                    // player model shows. Falls back to a visible skinned-head stand when
-                    // ProtocolLib is absent or its packets are incompatible with this server.
-                    Location loc = new Location(Bukkit.getWorld(d.worldName), d.x, d.y, d.z, d.yaw, d.pitch);
-                    if (renderer != null && renderer.show(d, loc, name, resolved)) {
-                        ref.stand().setVisible(false);
-                        ref.stand().setHelmet(null);
-                        setDisplayLift(ref.display(), AVATAR_TAG_LIFT); // float above the model
+                    Ref ref = refs.get(d);
+                    if (ref == null) return;
+                    if (known) {
+                        // TRUE player model via ProtocolLib; the stand goes invisible so only the
+                        // player model shows. Falls back to a visible skinned-head stand when
+                        // ProtocolLib is absent or its packets are incompatible with this server.
+                        Location loc = new Location(Bukkit.getWorld(d.worldName), d.x, d.y, d.z, d.yaw, d.pitch);
+                        if (renderer != null && renderer.show(d, loc, name, resolved)) {
+                            ref.stand().setVisible(false);
+                            ref.stand().setHelmet(null);
+                            setDisplayLift(ref.display(), AVATAR_TAG_LIFT); // float above the model
+                        } else {
+                            if (renderer != null) renderer.hide(d); // drop any half-sent fake-player state
+                            applyAvatar(ref.stand(), resolved, true);
+                            setDisplayLift(ref.display(), NAME_TAG_LIFT);
+                        }
                     } else {
-                        if (renderer != null) renderer.hide(d); // drop any half-sent fake-player state
-                        applyAvatar(ref.stand(), resolved, true);
+                        // Unknown player: visible unarmed stand so it's still obviously something.
+                        applyAvatar(ref.stand(), null, false);
                         setDisplayLift(ref.display(), NAME_TAG_LIFT);
                     }
-                } else {
-                    // Unknown player: visible unarmed stand so it's still obviously something.
-                    applyAvatar(ref.stand(), null, false);
-                    setDisplayLift(ref.display(), NAME_TAG_LIFT);
-                }
-                save();
-            } finally {
+                    save();
+                } finally {
                     resolving.remove(d);
                 }
             });
         });
+    }
+
+    /** Resolve a skin from Mojang's public endpoints with a short timeout. This bypasses the
+     *  server session service on purpose: its blocking lookup logs a full warning + stack trace
+     *  on every timeout, while a dummy avatar can silently fall back to its cached/default skin. */
+    private PlayerProfile resolveAvatarProfile(String name) {
+        String key = name.toLowerCase();
+        Long retryAfter = avatarLookupBackoff.get(key);
+        if (retryAfter != null && System.currentTimeMillis() < retryAfter) return null;
+        try {
+            PlayerProfile prof = fetchMojangAvatar(name);
+            if (prof != null) {
+                avatarLookupBackoff.remove(key);
+                return prof;
+            }
+            avatarLookupBackoff.put(key, System.currentTimeMillis() + AVATAR_LOOKUP_BACKOFF_MS);
+            return null;
+        } catch (Exception ex) {
+            if (ex instanceof InterruptedException) Thread.currentThread().interrupt();
+            avatarLookupBackoff.put(key, System.currentTimeMillis() + AVATAR_LOOKUP_BACKOFF_MS);
+            plugin.getLogger().info("Dummy avatar lookup for '" + name + "' failed ("
+                    + ex.getMessage() + "); using cached/default skin.");
+            return null;
+        }
+    }
+
+    private static PlayerProfile fetchMojangAvatar(String name) throws Exception {
+        String encoded = URLEncoder.encode(name, StandardCharsets.UTF_8);
+        HttpResponse<String> idResponse = avatarGet(
+                "https://api.mojang.com/users/profiles/minecraft/" + encoded);
+        if (idResponse.statusCode() == 204 || idResponse.statusCode() == 404) return null;
+        if (idResponse.statusCode() != 200) {
+            throw new IOException("profile lookup HTTP " + idResponse.statusCode());
+        }
+        JsonObject idJson = JsonParser.parseString(idResponse.body()).getAsJsonObject();
+        JsonElement idElement = idJson.get("id");
+        if (idElement == null) return null;
+        String rawId = idElement.getAsString();
+        String resolvedName = idJson.has("name") ? idJson.get("name").getAsString() : name;
+
+        HttpResponse<String> skinResponse = avatarGet(
+                "https://sessionserver.mojang.com/session/minecraft/profile/" + rawId);
+        if (skinResponse.statusCode() != 200) {
+            throw new IOException("skin lookup HTTP " + skinResponse.statusCode());
+        }
+        JsonObject skinJson = JsonParser.parseString(skinResponse.body()).getAsJsonObject();
+        JsonArray properties = skinJson.getAsJsonArray("properties");
+        if (properties == null) return null;
+        for (JsonElement element : properties) {
+            if (!element.isJsonObject()) continue;
+            JsonObject property = element.getAsJsonObject();
+            if (!property.has("name")
+                    || !"textures".equalsIgnoreCase(property.get("name").getAsString())
+                    || !property.has("value")) {
+                continue;
+            }
+            String signature = property.has("signature")
+                    ? property.get("signature").getAsString() : "";
+            PlayerProfile profile = Bukkit.createProfile(uuidFromUndashed(rawId), resolvedName);
+            profile.setProperty(new ProfileProperty("textures",
+                    property.get("value").getAsString(), signature));
+            return profile.hasTextures() ? profile : null;
+        }
+        return null;
+    }
+
+    private static HttpResponse<String> avatarGet(String url) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(Duration.ofSeconds(8))
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+        return AVATAR_HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static UUID uuidFromUndashed(String raw) {
+        if (raw.length() != 32) return UUID.fromString(raw);
+        return UUID.fromString(raw.substring(0, 8) + "-" + raw.substring(8, 12) + "-"
+                + raw.substring(12, 16) + "-" + raw.substring(16, 20) + "-" + raw.substring(20));
     }
 
     /** Re-apply the name tag's vertical render offset (used to float the tag above an avatar model). */

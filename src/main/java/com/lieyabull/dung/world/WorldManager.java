@@ -111,6 +111,7 @@ public final class WorldManager {
             w.setGameRule(GameRules.SPAWN_PHANTOMS, false);        // no phantoms for idle players
             w.setGameRule(GameRules.RAIDS, false);                 // no raids triggered here
             w.setGameRule(GameRules.KEEP_INVENTORY, true);         // falling into the void loses nothing
+            w.setGameRule(GameRules.FALL_DAMAGE, false);           // no vanilla fall damage in the lobby
             w.setGameRule(GameRules.ADVANCE_TIME, false);          // permanently noon
             w.setTime(6000);
             w.setGameRule(GameRules.ADVANCE_WEATHER, false);       // permanently clear
@@ -151,6 +152,7 @@ public final class WorldManager {
         if (w != null) {
             w.setGameRule(GameRules.SPAWN_MOBS, false);
             w.setGameRule(GameRules.KEEP_INVENTORY, false);
+            w.setGameRule(GameRules.FALL_DAMAGE, false);
         }
         return w;
     }

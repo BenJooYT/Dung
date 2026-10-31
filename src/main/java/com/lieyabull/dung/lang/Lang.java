@@ -652,6 +652,7 @@ public final class Lang {
             entry("item.golden", "Golden", "Arany"),
             entry("item.diamond", "Diamond", "Gyémánt"),
             entry("item.netherite", "Netherite", "Necrit"),
+            entry("item.emberguard", "Emberguard", "Parázsőr"),
             entry("item.mana_shield", "Mana Shield", "Mana Pajzs"),
             entry("item.key", "Key", "Kulcs"),
             entry("item.bomb", "Bomb", "Bomba"),

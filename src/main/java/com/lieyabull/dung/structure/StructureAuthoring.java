@@ -237,4 +237,132 @@ public final class StructureAuthoring {
         }
         return out;
     }
+
+    /** The planned door levels for a legacy room, or the first direction the fixed line cannot reach. */
+    public record DoorLanePlan(StructureDefinition.DoorSpec[] doors, int failedDirection, String reason) {
+        public boolean ok() {
+            return failedDirection < 0;
+        }
+
+        public String failedDirectionName() {
+            return failedDirection < 0 ? "" : new String[]{"north", "east", "south", "west"}[failedDirection];
+        }
+    }
+
+    /**
+     * Plan the four door levels for a legacy room at the generator's fixed corridor line. The lane
+     * is the three cells centred on {@code laneX} (north/south) or {@code laneZ} (east/west); the
+     * cell immediately inside each wall must be standable (a solid floor with two blocks of air)
+     * and must lead somewhere, because the floor graph may open any direction. A room that fails
+     * any direction is unusable: opening a lane into solid rock or a one-block closet is worse than
+     * falling back to a procedural room.
+     *
+     * <p>{@code bounds}, {@code preferredFloorY}, {@code laneX} and {@code laneZ} are
+     * structure-relative (clipboard minimum at {@code 0,0,0}). The lanes sit at the fixed corridor
+     * line in the padded frame, which is {@code PERP_CENTER - pad} in this room's own frame.
+     * {@code preferredFloorY[d]} is the legacy door's authored floor, or negative when the old room
+     * had no connector on that side.
+     */
+    public static DoorLanePlan planFixedLineDoors(RoomBounds bounds, BlockLookup lookup,
+                                                   int[] preferredFloorY, int laneX, int laneZ) {
+        if (bounds == null || lookup == null) {
+            return new DoorLanePlan(null, 0, "no room bounds or block data");
+        }
+        String[] names = {"north", "east", "south", "west"};
+        StructureDefinition.DoorSpec[] doors = new StructureDefinition.DoorSpec[4];
+        for (int d = 0; d < 4; d++) {
+            int[] counts = new int[bounds.height()];
+            int lane = d == 0 || d == 2 ? laneX : laneZ;
+            for (int off = -1; off <= 1; off++) {
+                int along = lane + off;
+                int x;
+                int z;
+                if (d == 0) {
+                    x = along;
+                    z = bounds.minZ + 1;
+                } else if (d == 2) {
+                    x = along;
+                    z = bounds.maxZ - 1;
+                } else if (d == 1) {
+                    x = bounds.maxX - 1;
+                    z = along;
+                } else {
+                    x = bounds.minX + 1;
+                    z = along;
+                }
+                if (!isInterior(bounds, x, z)) continue;
+                for (int y = bounds.minY; y + 2 < bounds.maxY; y++) {
+                    if (isStandable(lookup, x, y, z)
+                            && hasWalkableNeighbour(lookup, bounds, x, y, z)) {
+                        counts[y - bounds.minY]++;
+                    }
+                }
+            }
+            int preferred = preferredFloorY != null && d < preferredFloorY.length
+                    ? preferredFloorY[d] : Integer.MIN_VALUE;
+            int chosen = -1;
+            int bestCount = 0;
+            for (int i = 0; i < counts.length; i++) {
+                if (counts[i] == 0) continue;
+                if (bounds.minY + i == preferred) {
+                    chosen = i;
+                    break;
+                }
+                if (chosen < 0 || counts[i] > bestCount) {
+                    chosen = i;
+                    bestCount = counts[i];
+                }
+            }
+            if (chosen < 0) {
+                return new DoorLanePlan(null, d, "no walkable interior behind the "
+                        + names[d] + " wall on the fixed corridor line");
+            }
+            int floorY = bounds.minY + chosen;
+            int air = Math.min(3, bounds.maxY - floorY - 1);
+            if (air < 2) {
+                return new DoorLanePlan(null, d,
+                        "only " + air + " block(s) of air above the " + names[d] + " door lane");
+            }
+            doors[d] = new StructureDefinition.DoorSpec(floorY, air);
+        }
+        return new DoorLanePlan(doors, -1, "");
+    }
+
+    private static boolean isInterior(RoomBounds b, int x, int z) {
+        return x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ;
+    }
+
+    private static boolean isStandable(BlockLookup lookup, int x, int y, int z) {
+        return lookup.isSolid(x, y, z)
+                && !lookup.isSolid(x, y + 1, z)
+                && !lookup.isSolid(x, y + 2, z);
+    }
+
+    private static boolean hasWalkableNeighbour(BlockLookup lookup, RoomBounds b,
+                                                int x, int y, int z) {
+        return (x > b.minX && isStandable(lookup, x - 1, y, z))
+                || (x < b.maxX && isStandable(lookup, x + 1, y, z))
+                || (z > b.minZ && isStandable(lookup, x, y, z - 1))
+                || (z < b.maxZ && isStandable(lookup, x, y, z + 1));
+    }
+
+    /**
+     * Absolute cells covered by a legacy connector's wall aperture. Legacy JSON stores the centre
+     * of the opening along the wall (a width of 3 at z=2 covers z=1..3) and its bottom Y.
+     */
+    public static List<int[]> centeredApertureCells(int direction, int x, int y, int z,
+                                                    int width, int height) {
+        List<int[]> cells = new ArrayList<>();
+        int start = -width / 2;
+        for (int along = start; along < start + width; along++) {
+            for (int up = 0; up < height; up++) {
+                if (direction == 1 || direction == 3) {
+                    cells.add(new int[]{x, y + up, z + along});
+                } else if (direction == 0 || direction == 2) {
+                    cells.add(new int[]{x + along, y + up, z});
+                }
+            }
+        }
+        return cells;
+    }
 }

@@ -512,7 +512,8 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
         com.sk89q.worldedit.world.block.BlockState air =
                 com.sk89q.worldedit.world.block.BlockTypes.AIR.getDefaultState();
         for (com.sk89q.worldedit.math.BlockVector3 pt : src.getRegion()) {
-            out.setBlock(pt, positions.contains(pt) ? air : src.getBlock(pt));
+            if (positions.contains(pt)) out.setBlock(pt, air);
+            else out.setBlock(pt, src.getFullBlock(pt));
         }
         return out;
     }

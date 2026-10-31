@@ -209,6 +209,11 @@ public final class Enemy {
             return;
         }
 
+        // Follow the player's elevation. A fly spawned on an upper floor would otherwise orbit
+        // there forever and be unreachable from/above a lower floor. The vertical step stops at
+        // solid blocks, so it naturally uses the room's openings/stairs instead of phasing.
+        moveVerticallyToward(pl.getY() + 0.6, speed * 0.35 * (deltaMs / 1000.0));
+
         // Erratic swarm movement: orbit around the player at a distance
         if (dirChangeCd <= 0) {
             swarmAngle = Math.random() * Math.PI * 2;
@@ -227,8 +232,9 @@ public final class Enemy {
         }
         faceTarget(p);
 
-        // Dive-bomb attack: quickly close distance and hit
-        if (attackCd <= 0 && dist < 2.0 && p.isValid()) {
+        // Dive-bomb attack: quickly close distance and hit (never through a floor)
+        double vertical = Math.abs(entity.getLocation().getY() - pl.getY());
+        if (attackCd <= 0 && dist < 2.0 && vertical < 2.0 && p.isValid()) {
             attackPlayer(p);
             attackCd = 15;
             movePause = 5;
@@ -381,6 +387,17 @@ public final class Enemy {
         double sx = Math.signum(mx) * Math.min(Math.abs(mx), cap);
         double sz = Math.signum(mz) * Math.min(Math.abs(mz), cap);
         Location next = entity.getLocation().clone().add(sx, 0, sz);
+        if (isWalkable(next)) entity.teleport(next);
+    }
+
+    /** Step vertically toward the target without cutting through floors/ceilings. */
+    private void moveVerticallyToward(double targetY, double step) {
+        Location loc = entity.getLocation();
+        double dy = targetY - loc.getY();
+        if (Math.abs(dy) < 0.05) return;
+        double maxStep = Math.min(0.4, Math.max(0.15, step));
+        double sy = Math.signum(dy) * Math.min(Math.abs(dy), maxStep);
+        Location next = loc.clone().add(0, sy, 0);
         if (isWalkable(next)) entity.teleport(next);
     }
 
