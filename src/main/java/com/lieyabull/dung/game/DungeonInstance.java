@@ -2245,7 +2245,7 @@ public final class DungeonInstance {
 
     /** Subtle molten drips for a complete Emberguard set, independent of upgrade level. */
     private void spawnEmberguardParticles(Player p) {
-        if (!GearFactory.hasFullEmberguard(p.getInventory()) || tickCounter % 4 != 0) return;
+        if (!GearFactory.hasFullEmberguard(p.getInventory()) || tickCounter % 5 != 0) return;
         Location base = p.getLocation();
         double x = (ThreadLocalRandom.current().nextDouble() - 0.5) * 0.7;
         double z = (ThreadLocalRandom.current().nextDouble() - 0.5) * 0.7;
@@ -2278,9 +2278,9 @@ public final class DungeonInstance {
      *  - Chestplate (slot 38): around the chest
      *  - Leggings (slot 37): around the legs
      *  - Boots (slot 36): around the feet
-     *  Runs every tick so particles are continuous. */
+     *  Runs every 5 ticks. */
     private void spawnPerfectionParticles(Player p) {
-        if (world == null) return;
+        if (world == null || tickCounter % 5 != 0) return;
         org.bukkit.inventory.PlayerInventory inv = p.getInventory();
         // Check main hand
         ItemStack held = inv.getItemInMainHand();
