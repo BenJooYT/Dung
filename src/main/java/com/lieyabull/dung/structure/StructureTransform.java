@@ -101,6 +101,13 @@ public final class StructureTransform {
 
         out.markers = new ArrayList<>();
         for (RoomMarker m : s.markers) out.markers.add(rotateMarker(m, rot));
+
+        out.doorsConfigured = s.doorsConfigured;
+        out.doors = new StructureDefinition.DoorSpec[4];
+        for (int d = 0; d < 4; d++) out.doors[d] = new StructureDefinition.DoorSpec();
+        for (int d = 0; d < 4; d++) {
+            out.doors[rot.applyToDir(d)] = s.door(d).copy();
+        }
         return out;
     }
 

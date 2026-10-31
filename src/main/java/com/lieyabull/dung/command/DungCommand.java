@@ -320,6 +320,18 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                 + " §7features §f" + room.features);
         p.sendMessage("§7Doors: §f" + (doors.length() == 0 ? "none" : doors)
                 + " §7seed §f" + run.floorSeed + " §7modifiers §f" + run.floor.modifiers);
+        if (room.structure != null) {
+            StringBuilder levels = new StringBuilder();
+            for (int d = 0; d < 4; d++) {
+                if (!room.doors[d]) continue;
+                if (levels.length() > 0) levels.append("§7, ");
+                levels.append("NESW".charAt(d))
+                        .append(" y").append(room.structure.doorFloorY(d))
+                        .append(" h").append(room.structure.doorHeight(d));
+            }
+            p.sendMessage("§7Door levels: §f" + (levels.length() == 0 ? "none" : levels)
+                    + " §8(0 = base; h0 = room default)");
+        }
     }
 
     // ---------- /dung forceboss ----------
@@ -383,9 +395,10 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
 
         com.sk89q.worldedit.math.BlockVector3 min = cb.getMinimumPoint();
         com.sk89q.worldedit.math.BlockVector3 max = cb.getMaximumPoint();
-        com.lieyabull.dung.room.RoomBounds total = new com.lieyabull.dung.room.RoomBounds(
-                min.x(), min.y(), min.z(),
-                max.x(), max.y(), max.z());
+        com.lieyabull.dung.structure.StructureAuthoring.ClipboardFrame frame =
+                com.lieyabull.dung.structure.StructureAuthoring.frame(
+                        min.x(), min.y(), min.z(), max.x(), max.y(), max.z());
+        com.lieyabull.dung.room.RoomBounds total = frame.bounds();
 
         com.lieyabull.dung.structure.StructureDefinition def = new com.lieyabull.dung.structure.StructureDefinition();
         def.id = args[2].toLowerCase();
@@ -393,7 +406,6 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
         if (args.length > 3) for (int i = 3; i < args.length; i++) def.types.add(args[i].toUpperCase());
         if (def.types.isEmpty()) def.types.add("COMBAT");
         def.bounds.add(total);
-        int floorY = total.minY + 1;
 
         // Marker signs -> markers / spawn floors. A written sign whose first line is a known token
         // (e.g. [PLAYER_SPAWN], [SHOPKEEPER], [SPAWN_FLOOR]) becomes that marker at the sign's position,
@@ -443,20 +455,20 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                 }
                 default -> { }
             }
-            if (used) signBlocks.add(com.sk89q.worldedit.math.BlockVector3.at(s.x(), s.y(), s.z()));
+            if (used) signBlocks.add(com.sk89q.worldedit.math.BlockVector3.at(
+                    frame.absoluteX(s.x()), frame.absoluteY(s.y()), frame.absoluteZ(s.z())));
         }
 
-        def.spawnFloors.add(new com.lieyabull.dung.room.SpawnFloor(
-                total.minX + 1, floorY, total.minZ + 1,
-                Math.max(total.minX + 1, total.maxX - 1), floorY,
-                Math.max(total.minZ + 1, total.maxZ - 1)));
+        def.spawnFloors.add(frame.defaultSpawnFloor());
         if (!hasPlayerSpawnSign) {
-            def.markers.add(new com.lieyabull.dung.room.RoomMarker(
-                    com.lieyabull.dung.room.RoomMarkerType.PLAYER_SPAWN,
-                    (total.minX + total.maxX) / 2, floorY, (total.minZ + total.maxZ) / 2, "start"));
+            def.markers.add(frame.defaultPlayerSpawn());
         }
 
         com.sk89q.worldedit.extent.clipboard.Clipboard toSave = stripMarkerSigns(cb, signBlocks);
+        def.doors = com.lieyabull.dung.structure.StructureAuthoring.detectDoors(
+                com.lieyabull.dung.structure.StructureWorldEdit.blockLookup(toSave),
+                total, com.lieyabull.dung.dungeon.RoomGen.PERP_CENTER);
+        def.doorsConfigured = true;
         try {
             java.io.File dir = new java.io.File(plugin.getDataFolder(), "structures/" + def.id);
             dir.mkdirs();
@@ -482,6 +494,8 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                     + String.join("§7, §f", signs.stream().map(s -> s.text()).toList()));
             p.sendMessage("§7Used §f" + signBlocks.size() + "§7 as markers (stripped from the schematic); the rest were left in place.");
         }
+        p.sendMessage("§7Door levels: §f" + doorSummary(def)
+                + " §8(y=floor, h=? means room default)");
         p.sendMessage("§7Verify with: §f/dung room validate " + def.id + "§7  and  §f/dung room preview " + def.id + " 0");
         return true;
     }
@@ -505,7 +519,9 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
 
     private boolean roomCmd(Player p, String[] args) {
         if (args.length < 2) {
-            p.sendMessage("§7Room structure commands: §fgen <id> [types]§7, §flist§7, §freload§7, §fvalidate <id>§7, §fpreview <id> [0-3]");
+            p.sendMessage("§7Room structure commands: §fgen <id> [types]§7, §flist§7, §freload§7, "
+                    + "§fdoors <id>§7, §fdoor <id> <n|e|s|w> <floor-y> [height|clear]§7, "
+                    + "§fvalidate <id>§7, §fpreview <id> [0-3]");
             return true;
         }
         com.lieyabull.dung.structure.StructureRegistry reg = plugin.structures().registry();
@@ -521,9 +537,14 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
             }
             case "gen":
                 return genCmd(p, args, reg);
+            case "doors":
+                return doorsCmd(p, args, reg);
+            case "door":
+                return doorCmd(p, args, reg);
             case "reload":
                 int n = plugin.structures().reload();
-                p.sendMessage("§aReloaded structure library: §f" + n + "§a structure(s) registered.");
+                p.sendMessage("§aReloaded structure library: §f" + n
+                        + "§a structure(s) registered; legacy coordinates and door levels are auto-converted.");
                 return true;
             case "validate": {
                 if (args.length < 3) { p.sendMessage("§cUsage: /dung room validate <id>"); return true; }
@@ -557,9 +578,135 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             default:
-                p.sendMessage("§7Room structure commands: §flist§7, §freload§7, §fvalidate <id>§7, §fpreview <id> [0-3]");
+                p.sendMessage("§7Room structure commands: §fgen <id> [types]§7, §flist§7, §freload§7, "
+                        + "§fdoors <id>§7, §fdoor <id> <n|e|s|w> <floor-y> [height|clear]§7, "
+                        + "§fvalidate <id>§7, §fpreview <id> [0-3]");
                 return true;
         }
+    }
+
+    /** `/dung room doors <id>` — show the per-direction floor/height metadata. */
+    private boolean doorsCmd(Player p, String[] args,
+            com.lieyabull.dung.structure.StructureRegistry reg) {
+        if (args.length < 3) {
+            p.sendMessage("§cUsage: /dung room doors <id>");
+            return true;
+        }
+        com.lieyabull.dung.structure.StructureRegistry.Registered r = reg.byId(args[2]);
+        if (r == null) {
+            p.sendMessage("§cUnknown structure id.");
+            return true;
+        }
+        com.lieyabull.dung.structure.StructureDefinition def = r.definition();
+        p.sendMessage("§6--- Doors: §f" + def.id + " ---");
+        p.sendMessage("§7Configured: " + (def.doorsConfigured
+                ? "§ayes" : "§7no §8(auto-detect on reload)"));
+        for (int d = 0; d < 4; d++) {
+            p.sendMessage("  §f" + "NESW".charAt(d)
+                    + "§7 floor §f" + def.doorFloorY(d)
+                    + "§7 height §f" + (def.doorHeight(d) == 0 ? "default" : def.doorHeight(d)));
+        }
+        p.sendMessage("§8Set with: §f/dung room door " + def.id
+                + " <n|e|s|w> <floor-y> [height|clear]");
+        return true;
+    }
+
+    /** `/dung room door <id> <n|e|s|w> <floor-y> [height|clear]` — edit one door's vertical
+     *  geometry and persist the sidecar. Physical validation rejects out-of-bounds openings. */
+    private boolean doorCmd(Player p, String[] args,
+            com.lieyabull.dung.structure.StructureRegistry reg) {
+        if (args.length < 5) {
+            p.sendMessage("§cUsage: /dung room door <id> <n|e|s|w> <floor-y> [height|clear]");
+            return true;
+        }
+        com.lieyabull.dung.structure.StructureRegistry.Registered r = reg.byId(args[2]);
+        if (r == null) {
+            p.sendMessage("§cUnknown structure id.");
+            return true;
+        }
+        int dir = directionIndex(args[3]);
+        if (dir < 0) {
+            p.sendMessage("§cDirection must be n, e, s, or w.");
+            return true;
+        }
+        com.lieyabull.dung.structure.StructureDefinition def = r.definition();
+        int oldFloor = def.doorFloorY(dir);
+        int oldHeight = def.doorHeight(dir);
+        boolean oldConfigured = def.doorsConfigured;
+        boolean clear = args[4].equalsIgnoreCase("clear");
+        int floorY = 0;
+        int height = 0;
+        if (!clear) {
+            try {
+                floorY = Integer.parseInt(args[4]);
+            } catch (NumberFormatException e) {
+                p.sendMessage("§cInvalid floor-y: §f" + args[4]);
+                return true;
+            }
+            if (args.length >= 6 && !args[5].equalsIgnoreCase("clear")) {
+                try {
+                    height = Integer.parseInt(args[5]);
+                } catch (NumberFormatException e) {
+                    p.sendMessage("§cInvalid height: §f" + args[5]);
+                    return true;
+                }
+            }
+            if (floorY < 0 || height < 0) {
+                p.sendMessage("§cfloor-y and height must be non-negative.");
+                return true;
+            }
+        }
+        def.doorsConfigured = true;
+        def.door(dir).floorY = floorY;
+        def.door(dir).height = height;
+
+        com.lieyabull.dung.structure.StructureValidator.Result res =
+                com.lieyabull.dung.structure.StructureValidator.validate(
+                        def, com.lieyabull.dung.structure.StructureWorldEdit.blockLookup(r.clipboard()));
+        if (res.hasErrors()) {
+            def.door(dir).floorY = oldFloor;
+            def.door(dir).height = oldHeight;
+            def.doorsConfigured = oldConfigured;
+            p.sendMessage("§cDoor edit rejected:");
+            for (com.lieyabull.dung.room.RoomValidationIssue issue : res.issues) {
+                if (issue.level == com.lieyabull.dung.room.RoomValidationIssue.Level.ERROR) {
+                    p.sendMessage("  §c" + issue.message);
+                }
+            }
+            return true;
+        }
+        if (!reg.save(def)) {
+            def.door(dir).floorY = oldFloor;
+            def.door(dir).height = oldHeight;
+            def.doorsConfigured = oldConfigured;
+            p.sendMessage("§cCould not save this structure sidecar (default/read-only structure?).");
+            return true;
+        }
+        plugin.structures().reload();
+        p.sendMessage("§aUpdated §f" + def.id + "§a door §f" + "NESW".charAt(dir)
+                + "§a: floor §f" + floorY + "§a, height §f"
+                + (height == 0 ? "default" : Integer.toString(height)) + "§a.");
+        return true;
+    }
+
+    private static int directionIndex(String raw) {
+        return switch (raw.toLowerCase()) {
+            case "n", "north" -> 0;
+            case "e", "east" -> 1;
+            case "s", "south" -> 2;
+            case "w", "west" -> 3;
+            default -> -1;
+        };
+    }
+
+    private static String doorSummary(com.lieyabull.dung.structure.StructureDefinition def) {
+        StringBuilder sb = new StringBuilder();
+        for (int d = 0; d < 4; d++) {
+            if (sb.length() > 0) sb.append(" §7");
+            sb.append("NESW".charAt(d)).append(" y").append(def.doorFloorY(d))
+                    .append(" h").append(def.doorHeight(d) == 0 ? "?" : def.doorHeight(d));
+        }
+        return sb.toString();
     }
 
     // ---------- /dung tutorial ----------
@@ -569,12 +716,18 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
     private void tutorialCmd(Player p, String[] args) {
         if (args.length < 2) {
             p.sendMessage("§6--- Room Schematic Tutorials ---");
-            p.sendMessage("§7Usage: §f/dung tutorial <roomtype>");
+            p.sendMessage("§7Usage: §f/dung tutorial <doors|roomtype>");
             p.sendMessage("§7Shows how to build the schematic for one room type.");
+            p.sendMessage("  §fdoors§7 - authored door heights, detection, and overrides");
             for (com.lieyabull.dung.dungeon.RoomType t : com.lieyabull.dung.dungeon.RoomType.values()) {
                 p.sendMessage("  §f" + t.name().toLowerCase() + "§7 - " + tutorialBlurb(t));
             }
-            p.sendMessage("§8For example: §f/dung tutorial combat");
+            p.sendMessage("§8For example: §f/dung tutorial doors§7 or §f/dung tutorial combat");
+            return;
+        }
+        if (args[1].equalsIgnoreCase("doors")) {
+            p.sendMessage("§6--- Authored Doors ---");
+            for (String line : doorTutorialText()) p.sendMessage(line);
             return;
         }
         com.lieyabull.dung.dungeon.RoomType type = null;
@@ -666,12 +819,30 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
         out.add("");
         out.add("§8— Authoring steps (every buildable type) —");
         out.add("§71. Build the room in the world: sealed walls, floor, ceiling, interior props.");
-        out.add("§72. Leave doorways out — the generator carves openings on a fixed corridor line at build time.");
+        out.add("§72. Leave doorways out, or put an opening on the fixed corridor line; `/dung room gen` auto-detects its Y level. The generator still carves the graph's door directions.");
         out.add("§73. Select the build and run §f//copy§7 (WorldEdit).");
         out.add("§74. Place marker wall signs inside the selection: §f[PLAYER_SPAWN]§7, §f[SPAWN_FLOOR]§7, §f[SHOPKEEPER]§7, §f[LOOT]§7, §f[HAZARD]§7, §f[MECHANIC]§7, §f[SPECIAL]§7.");
         out.add("§75. Run §f/dung room gen <id> <TYPE>§7 — writes <id>.schem + <id>.yml to plugins/Dung/structures/.");
         out.add("§76. Verify with §f/dung room validate <id>§7 and §f/dung room preview <id> 0§7.");
+        out.add("§77. Inspect or override door levels with §f/dung room doors <id>§7 and §f/dung room door <id> <n|e|s|w> <floor-y> [height|clear]§7.");
+        out.add("§78. Run §f/dung room reload§7 after hand-editing a sidecar.");
         return out.toArray(new String[0]);
+    }
+
+    /** Tutorial topic for the per-direction authored-door metadata and fixed corridor contract. */
+    private static String[] doorTutorialText() {
+        return new String[]{
+                "§fDoors are graph connections, not authored geometry: the generator carves the open",
+                "§fN/E/S/W face on the fixed §fPERP_CENTER§f corridor line, three blocks wide.",
+                "§7Put an authored opening on that line; §f/dung room gen§7 auto-detects its floor Y and height.",
+                "§7Inspect: §f/dung room doors <id>",
+                "§7Override: §f/dung room door <id> <n|e|s|w> <floor-y> [height|clear]",
+                "§7YAML: §fdoors:§7 with §fnorth/east/south/west: {floor-y: 0, height: 4}§7 (height 0 = room default).",
+                "§7Different floor Y at the two ends becomes a 3-wide one-block-step corridor; if the delta",
+                "§7does not fit the gap between the rooms, the room falls back to procedural.",
+                "§8Horizontal door position is fixed; a door elsewhere on the wall needs a new corridor layout.",
+                "§8Example: §f/dung room door updown e 3 4"
+        };
     }
 
     // ---------- /dung lobbykit ----------
@@ -749,8 +920,13 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
             "party", "shop", "upgrades", "salvage", "balance", "bossbar", "stop", "reset",
             "forceboss", "room", "tutorial", "help"
     };
-    private static final String[] ROOM_SUBS = {"list", "reload", "validate", "preview", "gen"};
-    private static final String[] TUTORIAL_SUBS = {"start", "combat", "elite", "treasure", "shop", "upgrade", "secret", "locked", "boss"};
+    private static final String[] ROOM_SUBS = {
+            "list", "reload", "validate", "preview", "gen", "doors", "door"
+    };
+    private static final String[] TUTORIAL_SUBS = {
+            "doors", "start", "combat", "elite", "treasure", "shop", "upgrade", "secret", "locked",
+            "boss", "event"
+    };
     private static final String[] PARTY_SUBS = {"create", "invite", "accept", "decline", "leave", "kick", "disband", "info"};
     private static final String[] CLASSES = {"warrior", "mage", "ranger"};
     private static final String[] GIVE_TYPES = {"rareweapon", "heal", "coins"};
@@ -765,7 +941,7 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                     case "start" -> filter(new String[]{"seed"}, args[1]);
                     case "floor" -> filter(new String[]{"seed", "preview", "inspect", "regenerate"},
                             args[1]);
-                    case "give" -> filter(GIVE_TYPES, args[1]);
+                    case "give" -> giveTargets(args[1]);
                     case "class" -> filter(CLASSES, args[1]);
                     case "party" -> filter(PARTY_SUBS, args[1]);
                     case "room" -> filter(ROOM_SUBS, args[1]);
@@ -773,6 +949,26 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                     case "forceboss" -> filter(new String[]{"warden", "grovekeeper", "random"}, args[1]);
                     default -> List.of();
                 };
+            }
+            if (args.length == 3 && args[0].equalsIgnoreCase("room")
+                    && (args[1].equalsIgnoreCase("validate")
+                    || args[1].equalsIgnoreCase("preview")
+                    || args[1].equalsIgnoreCase("doors")
+                    || args[1].equalsIgnoreCase("door"))) {
+                return structureIds(args[2]);
+            }
+            if (args.length == 4 && args[0].equalsIgnoreCase("room")
+                    && args[1].equalsIgnoreCase("door")) {
+                return filter(new String[]{"n", "e", "s", "w", "north", "east", "south", "west"},
+                        args[3]);
+            }
+            if (args.length == 5 && args[0].equalsIgnoreCase("room")
+                    && args[1].equalsIgnoreCase("door")) {
+                return filter(new String[]{"0", "1", "2", "3", "4", "5", "6", "7", "clear"}, args[4]);
+            }
+            if (args.length >= 3 && args[0].equalsIgnoreCase("give")
+                    && args[1].equalsIgnoreCase("coins")) {
+                return filter(new String[]{"10", "64"}, args[2]);
             }
             if (args.length >= 3 && args[0].equalsIgnoreCase("party")) {
                 String sub = args[1].toLowerCase();
@@ -800,6 +996,33 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
         java.util.ArrayList<String> out = new java.util.ArrayList<>();
         for (Player pl : Bukkit.getOnlinePlayers()) {
             if (pl.getName().toLowerCase().startsWith(q)) out.add(pl.getName());
+        }
+        return out;
+    }
+
+    /** Legacy give targets plus online player names for the UI target shortcut. */
+    private static List<String> giveTargets(String prefix) {
+        java.util.ArrayList<String> out = new java.util.ArrayList<>(filter(GIVE_TYPES, prefix));
+        for (String name : playerNames(prefix)) {
+            if (!out.contains(name)) out.add(name);
+        }
+        return out;
+    }
+
+    /** Case-insensitive online-player lookup without the deprecated Bukkit name lookups. */
+    private static Player onlinePlayer(String name) {
+        for (Player pl : Bukkit.getOnlinePlayers()) {
+            if (pl.getName().equalsIgnoreCase(name)) return pl;
+        }
+        return null;
+    }
+
+    /** Structure ids for room-command tab completion. */
+    private List<String> structureIds(String prefix) {
+        java.util.ArrayList<String> out = new java.util.ArrayList<>();
+        String q = prefix.toLowerCase();
+        for (com.lieyabull.dung.structure.StructureDefinition s : plugin.structures().registry().all()) {
+            if (s.id.toLowerCase().startsWith(q)) out.add(s.id);
         }
         return out;
     }
@@ -850,10 +1073,13 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
     }
 
     private void give(Player p, String[] args) {
-        if (args.length < 2) { p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands("§7Usage: /dung give <rareweapon|heal|coins>")); return; }
+        if (args.length < 2) {
+            plugin.giveUI().open(p);
+            return;
+        }
         switch (args[1].toLowerCase()) {
             case "rareweapon":
-                // free debug spawn (no coin cost): real purchases go through /shop
+                // Legacy free debug spawn (no coin cost): real purchases go through /shop.
                 var debugWep = GearFactory.markPersistent(ItemPool.randomWeapon(2));
                 GearFactory.localizeFor(debugWep, p);
                 p.getInventory().addItem(debugWep);
@@ -863,12 +1089,30 @@ public final class DungCommand implements CommandExecutor, TabCompleter {
                 p.setHealth(20);
                 p.sendMessage("§aHealed.");
                 break;
-            case "coins":
-                p.getInventory().addItem(new ItemStack(org.bukkit.Material.GOLD_NUGGET, 10));
-                p.sendMessage("§e+10 coins (run).");
+            case "coins": {
+                int amount = 10;
+                if (args.length >= 3) {
+                    try {
+                        amount = Integer.parseInt(args[2]);
+                    } catch (NumberFormatException e) {
+                        p.sendMessage("§7Usage: /dung give coins [1-64]");
+                        return;
+                    }
+                }
+                amount = Math.max(1, Math.min(64, amount));
+                p.getInventory().addItem(new ItemStack(org.bukkit.Material.GOLD_NUGGET, amount));
+                p.sendMessage("§e+" + amount + " coins (run).");
                 break;
+            }
             default:
-                p.sendMessage("§7Unknown give target.");
+                Player target = onlinePlayer(args[1]);
+                if (target != null) {
+                    plugin.giveUI().open(p, target);
+                    return;
+                }
+                p.sendMessage(com.lieyabull.dung.ui.ChatUI.clickableCommands(
+                        "§7Usage: /dung give [player] — open the admin gear builder; "
+                                + "legacy: rareweapon|heal|coins [amount]"));
         }
     }
 

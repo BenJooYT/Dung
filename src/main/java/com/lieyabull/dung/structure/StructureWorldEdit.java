@@ -97,15 +97,15 @@ public final class StructureWorldEdit {
             }
             BlockVector3 origin = clipboard.getOrigin();
             BlockVector3 min = clipboard.getMinimumPoint();
-            // The transform rotates each clipboard-local position around (0,0,0); the paste then
-            // translates so the clipboard origin lands on `to`. To make structure (0,0,0) (the min
-            // corner) land on (ox,oy,oz) we must therefore anchor `to` at the rotated min offset:
-            //   world(min) = to + R(min) - origin  ==  (ox,oy,oz)
-            int[] rm = rotatePoint(min.getBlockX(), min.getBlockZ(), rotationSteps);
-            BlockVector3 to = BlockVector3.at(
-                    ox - rm[0] + origin.getBlockX(),
-                    oy - min.getBlockY() + origin.getBlockY(),
-                    oz - rm[1] + origin.getBlockZ());
+            // WorldEdit applies the rotation to (p - origin), then adds `to`. Anchor at the
+            // rotated (min - origin) so the structure-relative min corner lands exactly on the
+            // requested target, even when the schematic's stored origin is not its minimum corner.
+            int[] anchor = StructureAuthoring.pasteAnchor(
+                    ox, oy, oz,
+                    min.x(), min.y(), min.z(),
+                    origin.x(), origin.y(), origin.z(),
+                    rotationSteps);
+            BlockVector3 to = BlockVector3.at(anchor[0], anchor[1], anchor[2]);
             Operation op = holder.createPaste(session)
                     .to(to)
                     .copyEntities(false)
@@ -119,14 +119,4 @@ public final class StructureWorldEdit {
         }
     }
 
-    /** Rotate a (x,z) point clockwise by `steps` 90-degree turns around the origin — the same mapping
-     *  `AffineTransform.rotateY` applies to clipboard-local positions. */
-    private static int[] rotatePoint(int x, int z, int steps) {
-        switch (steps % 4) {
-            case 1: return new int[]{z, -x};
-            case 2: return new int[]{-x, -z};
-            case 3: return new int[]{-z, x};
-            default: return new int[]{x, z};
-        }
-    }
 }

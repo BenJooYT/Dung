@@ -62,6 +62,22 @@ class StructureValidatorTest {
     }
 
     @Test
+    void rejectsDoorOutsideStructureHeight() {
+        StructureDefinition s = valid();
+        s.doorsConfigured = true;
+        s.door(0).floorY = 4; // bounds height is 4 (0..3)
+        assertTrue(StructureValidator.validate(s).hasErrors());
+    }
+
+    @Test
+    void rejectsNegativeDoorFloor() {
+        StructureDefinition s = valid();
+        s.doorsConfigured = true;
+        s.door(2).floorY = -1;
+        assertTrue(StructureValidator.validate(s).hasErrors());
+    }
+
+    @Test
     void shopRoomRequiresShopkeeperMarker() {
         StructureDefinition s = valid();
         s.types.set(0, "SHOP");

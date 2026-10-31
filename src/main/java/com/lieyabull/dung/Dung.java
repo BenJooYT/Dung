@@ -15,6 +15,7 @@ import com.lieyabull.dung.listener.CompostListener;
 import com.lieyabull.dung.listener.PotionListener;
 import com.lieyabull.dung.plot.ProvenanceManager;
 import com.lieyabull.dung.structure.StructureManager;
+import com.lieyabull.dung.ui.GiveUI;
 import com.lieyabull.dung.ui.ShopUI;
 import com.lieyabull.dung.ui.StashUI;
 import com.lieyabull.dung.ui.TrollUI;
@@ -34,6 +35,7 @@ public final class Dung extends JavaPlugin {
     private ShopUI shopUI;
     private StashUI stashUI;
     private WorkstationUI workstationUI;
+    private GiveUI giveUI;
     private com.lieyabull.dung.ui.CpBreakdownUI cpBreakdownUI;
     private PlotManager plotManager;
     private StructureManager structureManager;
@@ -60,6 +62,7 @@ public final class Dung extends JavaPlugin {
         shopUI = new ShopUI(this);
         stashUI = new StashUI(this);
         workstationUI = new WorkstationUI(this);
+        giveUI = new GiveUI(this);
         cpBreakdownUI = new com.lieyabull.dung.ui.CpBreakdownUI();
         plotManager = new PlotManager(this);
         try {
@@ -92,6 +95,7 @@ public final class Dung extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(shopUI, this);
         Bukkit.getPluginManager().registerEvents(stashUI, this);
         Bukkit.getPluginManager().registerEvents(workstationUI, this);
+        Bukkit.getPluginManager().registerEvents(giveUI, this);
         Bukkit.getPluginManager().registerEvents(cpBreakdownUI, this);
         Bukkit.getPluginManager().registerEvents(trollUI, this);
         com.lieyabull.dung.command.MetaCommand metaCmd = new com.lieyabull.dung.command.MetaCommand(this);
@@ -180,6 +184,10 @@ public final class Dung extends JavaPlugin {
 
     public WorkstationUI workstationUI() {
         return workstationUI;
+    }
+
+    public GiveUI giveUI() {
+        return giveUI;
     }
 
     public com.lieyabull.dung.ui.CpBreakdownUI cpBreakdownUI() {

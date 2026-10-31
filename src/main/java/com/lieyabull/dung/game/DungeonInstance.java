@@ -731,14 +731,16 @@ public final class DungeonInstance {
         // SECRET and LOCKED rooms always use procedural mechanics (secret passage carving,
         // locked barriers) and never get templates.
         // Custom rooms can be disabled via config (custom-rooms: false) or /room toggle.
-        if (plugin.getConfig().getBoolean("custom-rooms", true)) {
-            resolveStructures(run.floor);
-        }
+        boolean customRooms = plugin.getConfig().getBoolean("custom-rooms", true);
+        if (customRooms) resolveStructures(run.floor);
         // Scale room sizes up to the party tier. Structure rooms keep their fixed template footprint
         // (they are not size-scalable); only procedural rooms are resized for the extra elbow room.
         for (Floor.RoomNode n : run.floor.rooms()) {
             if (n.structure == null) RoomGen.scaleToTier(n, tier);
         }
+        // Validate links after procedural scaling so a structure/procedural edge uses the final
+        // procedural footprint. A fallback clears the structure and scales the replacement room.
+        if (customRooms) validateDoorLinks(run.floor, spacing, tier);
         // Batch ALL floor block operations through a single WorldEdit EditSession so changes
         // commit atomically with no per-block lighting/physics overhead (the #1 cause of the ~4s
         // server freeze when starting a run). StructureWorldEdit.paste() already uses its own
@@ -863,6 +865,56 @@ public final class DungeonInstance {
         }
     }
 
+    /** Reject authored structure links whose vertical door delta cannot fit a 1-block-step corridor
+     *  in the gap between the two rooms. Clearing the assignment falls back to a procedural room,
+     *  which always has base-level doors. */
+    private void validateDoorLinks(Floor floor, int spacing, int tier) {
+        int[] DX = {0, 1, 0, -1};
+        int[] DZ = {-1, 0, 1, 0};
+        Set<String> seen = new HashSet<>();
+        for (Floor.RoomNode n : floor.rooms()) {
+            if (n.structure == null) continue;
+            for (int d = 0; d < 4; d++) {
+                if (n.structure == null) break; // a previous bad edge fell back to procedural
+                if (!n.doors[d]) continue;
+                Floor.RoomNode m = floor.at(n.x + DX[d], n.z + DZ[d]);
+                if (m == null) continue;
+                if (!seen.add(edgeId(n.x, n.z, m.x, m.z))) continue;
+                boolean horiz = d == 1 || d == 3;
+                RoomBounds ta = n.structure.total();
+                RoomBounds tb = m.structure == null ? null : m.structure.total();
+                int aBase = horiz ? n.x * spacing + offsetX : n.z * spacing + offsetZ;
+                int bBase = horiz ? m.x * spacing + offsetX : m.z * spacing + offsetZ;
+                int aAlong = structureWallAlong(aBase, ta, d, horiz);
+                int bAlong = m.structure != null ? structureWallAlong(bBase, tb, d ^ 2, horiz)
+                        : proceduralWallAlong(bBase, m.sizeW, m.sizeH, d ^ 2, horiz);
+                int lo = Math.min(aAlong, bAlong) + 1;
+                int hi = Math.max(aAlong, bAlong) - 1;
+                if (hi < lo) continue;
+                int aFloor = doorFloorOffset(n, d);
+                int bFloor = doorFloorOffset(m, d ^ 2);
+                int startFloor = aAlong <= bAlong ? aFloor : bFloor;
+                int endFloor = aAlong <= bAlong ? bFloor : aFloor;
+                if (canStepDoorDelta(endFloor - startFloor, hi - lo)) continue;
+                plugin.getLogger().warning("[structures] Door Y delta " + (endFloor - startFloor)
+                        + " cannot fit the " + (hi - lo + 1) + "-block gap between rooms ("
+                        + n.x + "," + n.z + ") and (" + m.x + "," + m.z
+                        + "); using procedural fallback.");
+                clearStructure(n);
+                clearStructure(m);
+                RoomGen.scaleToTier(n, tier);
+                RoomGen.scaleToTier(m, tier);
+            }
+        }
+    }
+
+    private static void clearStructure(Floor.RoomNode n) {
+        n.structure = null;
+        n.structureId = null;
+        n.clipboard = null;
+        n.rotationSteps = 0;
+    }
+
     /** Carve a 3-wide doorway through each structure room's own wall, at the fixed corridor line
      *  ({@link RoomGen#PERP_CENTER}), for exactly the door directions the floor graph opens. The
      *  perpendicular is anchored to the grid line (the same one procedural rooms use), so a structure
@@ -876,29 +928,61 @@ public final class DungeonInstance {
         return n.type == RoomType.BOSS ? RoomGen.BOSS_ROOM_HEIGHT : RoomGen.ROOM_HEIGHT;
     }
 
+    /** Vertical door offset relative to the room base (structure metadata; procedural = 0). */
+    static int doorFloorOffset(Floor.RoomNode n, int d) {
+        return n.structure == null ? 0 : n.structure.doorFloorY(d);
+    }
+
+    /** Door air height; structure metadata height 0 means use the room's normal air height. */
+    static int doorAirHeight(Floor.RoomNode n, int d) {
+        if (n.structure == null) return roomAirHeight(n);
+        int h = n.structure.doorHeight(d);
+        return h > 0 ? h : roomAirHeight(n);
+    }
+
+    /** True only when the structure explicitly overrides the legacy flat door. */
+    static boolean hasCustomDoor(Floor.RoomNode n, int d) {
+        return n.structure != null
+                && (n.structure.doorFloorY(d) != 0 || n.structure.doorHeight(d) != 0);
+    }
+
+    /** Linear floor height for column {@code t} in a stepped corridor. */
+    static int interpolateDoorFloor(int start, int end, int t, int lo, int hi) {
+        if (hi <= lo) return end;
+        int step = (int) Math.round((double) (end - start) * (t - lo) / (hi - lo));
+        return start + step;
+    }
+
+    /** A one-block-per-column staircase needs at least |delta| transitions. */
+    static boolean canStepDoorDelta(int delta, int corridorLength) {
+        return Math.abs(delta) <= Math.max(0, corridorLength);
+    }
+
     static void carveStructureDoorsStatic(org.bukkit.World world, Floor floor, int baseY,
             int spacing, int offsetX, int offsetZ) {
         for (Floor.RoomNode n : floor.rooms()) {
             if (n.structure == null) continue;
             RoomBounds t = n.structure.total();
-            int airHeight = roomAirHeight(n);
             for (int d = 0; d < 4; d++) {
                 if (!n.doors[d]) continue;
+                int floorOffset = doorFloorOffset(n, d);
+                int airHeight = doorAirHeight(n, d);
+                int floorY = baseY + floorOffset;
                 boolean horiz = d == 1 || d == 3;
                 int baseAlong = horiz ? n.x * spacing + offsetX : n.z * spacing + offsetZ;
                 int wallAlong = structureWallAlong(baseAlong, t, d, horiz);
                 int perpC = horiz ? (n.z * spacing + offsetZ + RoomGen.PERP_CENTER)
                         : (n.x * spacing + offsetX + RoomGen.PERP_CENTER);
                 for (int off = -1; off <= 1; off++) {
-                    for (int y = baseY + 1; y <= baseY + airHeight; y++) {
+                    for (int y = floorY + 1; y <= floorY + airHeight; y++) {
                         int px = horiz ? wallAlong : (perpC + off);
                         int pz = horiz ? (perpC + off) : wallAlong;
                         setBlock(world, px, y, pz, Material.AIR);
                     }
                     int fx = horiz ? wallAlong : perpC;
                     int fz = horiz ? perpC : wallAlong;
-                    setBlock(world, fx, baseY, fz, Material.POLISHED_ANDESITE);
-                    setBlock(world, fx, baseY + airHeight + 1, fz, Material.STONE_BRICKS);
+                    setBlock(world, fx, floorY, fz, Material.POLISHED_ANDESITE);
+                    setBlock(world, fx, floorY + airHeight + 1, fz, Material.STONE_BRICKS);
                 }
             }
         }
@@ -938,26 +1022,65 @@ public final class DungeonInstance {
                         : proceduralWallAlong(bBase, m.sizeW, m.sizeH, d ^ 2, horiz);
                 int lo = Math.min(aAlong, bAlong) + 1;
                 int hi = Math.max(aAlong, bAlong) - 1;
-                int airHeight = Math.max(roomAirHeight(n), roomAirHeight(m));
+                if (hi < lo) continue;
+                int airHeight = Math.max(doorAirHeight(n, d), doorAirHeight(m, d ^ 2));
+                int aFloor = doorFloorOffset(n, d);
+                int bFloor = doorFloorOffset(m, d ^ 2);
+                int startFloor = aAlong <= bAlong ? aFloor : bFloor;
+                int endFloor = aAlong <= bAlong ? bFloor : aFloor;
+                if (!canStepDoorDelta(endFloor - startFloor, hi - lo)) {
+                    Bukkit.getLogger().warning("[structures] Door height delta "
+                            + (endFloor - startFloor) + " cannot fit a " + (hi - lo + 1)
+                            + "-block corridor; using a flat fallback.");
+                    endFloor = startFloor;
+                }
                 int perpC = horiz ? (n.z * spacing + offsetZ + RoomGen.PERP_CENTER)
                         : (n.x * spacing + offsetX + RoomGen.PERP_CENTER);
                 for (int t = lo; t <= hi; t++) {
+                    int floorOffset = interpolateDoorFloor(startFloor, endFloor, t, lo, hi);
+                    int floorY = baseY + floorOffset;
+                    int roofY = floorY + airHeight + 1;
                     for (int off = -corridorHalf; off <= corridorHalf; off++) {
                         int px = horiz ? t : (perpC + off);
                         int pz = horiz ? (perpC + off) : t;
-                        setBlock(world, px, baseY, pz, Material.POLISHED_ANDESITE);
-                        for (int y = baseY + 1; y <= baseY + airHeight; y++) {
+                        for (int y = baseY; y < floorY; y++) {
+                            setBlock(world, px, y, pz, Material.STONE_BRICKS);
+                        }
+                        setBlock(world, px, floorY, pz, Material.POLISHED_ANDESITE);
+                        for (int y = floorY + 1; y <= floorY + airHeight; y++) {
                             setBlock(world, px, y, pz, Material.AIR);
                         }
-                        setBlock(world, px, baseY + airHeight + 1, pz, Material.STONE_BRICKS);
+                        setBlock(world, px, roofY, pz, Material.STONE_BRICKS);
                     }
                 }
                 for (int t = lo; t <= hi; t++) {
+                    int floorOffset = interpolateDoorFloor(startFloor, endFloor, t, lo, hi);
+                    int roofY = baseY + floorOffset + airHeight + 1;
                     for (int off = -corridorHalf; off <= corridorHalf; off++) {
                         if (Math.abs(off) <= 1) continue;
                         int px = horiz ? t : (perpC + off);
                         int pz = horiz ? (perpC + off) : t;
-                        for (int y = baseY; y <= baseY + airHeight + 1; y++) {
+                        for (int y = baseY; y <= roofY; y++) {
+                            setBlock(world, px, y, pz, Material.STONE_BRICKS);
+                        }
+                    }
+                }
+
+                // If one door is shorter, seal its wall from the short opening's top up to the
+                // taller corridor roof. Mixed floor levels are handled by the staircase above.
+                int aHeight = doorAirHeight(n, d);
+                int bHeight = doorAirHeight(m, d ^ 2);
+                if (aHeight != bHeight) {
+                    boolean aShort = aHeight < bHeight;
+                    int shortWall = aShort ? aAlong : bAlong;
+                    int shortFloor = aShort ? aFloor : bFloor;
+                    int shortHeight = aShort ? aHeight : bHeight;
+                    int top = Math.max(aFloor + aHeight, bFloor + bHeight);
+                    for (int off = -corridorHalf; off <= corridorHalf; off++) {
+                        int px = horiz ? shortWall : (perpC + off);
+                        int pz = horiz ? (perpC + off) : shortWall;
+                        for (int y = baseY + shortFloor + shortHeight + 1;
+                                y <= baseY + top + 1; y++) {
                             setBlock(world, px, y, pz, Material.STONE_BRICKS);
                         }
                     }
@@ -985,6 +1108,9 @@ public final class DungeonInstance {
                 Floor.RoomNode b = floor.at(a.x + dx[d], a.z + dz[d]);
                 if (b == null) continue;
                 if (!done.add(edgeId(a.x, a.z, b.x, b.z))) continue;
+                // Custom structure door geometry is handled by carveStructureCorridorsStatic.
+                // Flat structure doors keep the legacy mixed-height seal below.
+                if (hasCustomDoor(a, d) || hasCustomDoor(b, d ^ 2)) continue;
                 int ah = roomAirHeight(a);
                 int bh = roomAirHeight(b);
                 if (ah == bh) continue;
@@ -1677,8 +1803,10 @@ public final class DungeonInstance {
             RoomBounds t = n.structure.total();
             int wallAlong = facingWallAlong(n, d, t);
             int perpC = horiz ? (baseZ(n) + RoomGen.PERP_CENTER) : (baseX(n) + RoomGen.PERP_CENTER);
+            int floorY = BASE_Y + doorFloorOffset(n, d);
+            int airHeight = doorAirHeight(n, d);
             for (int off = -1; off <= 1; off++) {
-                for (int y = BASE_Y + 1; y <= BASE_Y + roomHeight; y++) {
+                for (int y = floorY + 1; y <= floorY + airHeight; y++) {
                     int px = horiz ? wallAlong : (perpC + off);
                     int pz = horiz ? (perpC + off) : wallAlong;
                     if (close) {

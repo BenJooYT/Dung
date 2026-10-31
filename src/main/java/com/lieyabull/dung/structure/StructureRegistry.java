@@ -1,6 +1,7 @@
 package com.lieyabull.dung.structure;
 
 import com.lieyabull.dung.Dung;
+import com.lieyabull.dung.dungeon.RoomGen;
 import com.lieyabull.dung.dungeon.RoomType;
 import com.lieyabull.dung.room.RoomValidationIssue;
 import com.sk89q.worldedit.extent.clipboard.Clipboard;
@@ -31,6 +32,8 @@ public final class StructureRegistry {
 
     private final Dung plugin;
     private final Map<String, Registered> byId = new LinkedHashMap<>();
+    /** Sidecar file for each disk-loaded structure (defaults have no entry). */
+    private final Map<String, File> files = new LinkedHashMap<>();
 
     public StructureRegistry(Dung plugin) {
         this.plugin = plugin;
@@ -40,6 +43,7 @@ public final class StructureRegistry {
     /** (Re)load all structures from disk, then fill any gaps with defaults. */
     public synchronized void load() {
         byId.clear();
+        files.clear();
         File dir = new File(plugin.getDataFolder(), STRUCTURES_DIR);
         if (!dir.exists()) dir.mkdirs();
         int loaded = scan(dir, byId);
@@ -66,6 +70,7 @@ public final class StructureRegistry {
                     continue;
                 }
                 out.put(r.definition().id, r);
+                files.put(r.definition().id, meta.toFile());
                 loaded++;
             }
         } catch (IOException e) {
@@ -97,6 +102,15 @@ public final class StructureRegistry {
                         + schemFile.getName() + "' could not be loaded by WorldEdit.");
                 return null;
             }
+            boolean metadataChanged = migrateLegacyCoordinates(def, clipboard);
+            if (!def.doorsConfigured) {
+                def.doors = StructureAuthoring.detectDoors(
+                        StructureWorldEdit.blockLookup(clipboard), def.total(), RoomGen.PERP_CENTER);
+                def.doorsConfigured = true;
+                metadataChanged = true;
+                plugin.getLogger().info("[structures] Detected door levels for '" + def.id + "'.");
+            }
+            if (metadataChanged) persistMetadata(def, metaFile);
             StructureValidator.Result res = StructureValidator.validate(def, StructureWorldEdit.blockLookup(clipboard));
             if (res.hasErrors()) {
                 plugin.getLogger().warning("[structures] Rejected invalid structure '" + def.id + "':");
@@ -108,6 +122,28 @@ public final class StructureRegistry {
         } catch (Exception e) {
             plugin.getLogger().warning("[structures] Failed to load " + metaFile.getAbsolutePath() + ": " + e.getMessage());
             return null;
+        }
+    }
+
+    /** Older {@code /dung room gen} builds wrote absolute clipboard coordinates into the sidecar.
+     *  Detect that exact shape and rewrite it relative to the clipboard minimum. */
+    private boolean migrateLegacyCoordinates(StructureDefinition def, Clipboard clipboard) {
+        var min = clipboard.getMinimumPoint();
+        var max = clipboard.getMaximumPoint();
+        StructureAuthoring.ClipboardFrame frame = StructureAuthoring.frame(
+                min.x(), min.y(), min.z(), max.x(), max.y(), max.z());
+        if (!StructureAuthoring.migrateLegacy(def, frame)) return false;
+        plugin.getLogger().info("[structures] Migrated legacy absolute coordinates to relative for '"
+                + def.id + "'.");
+        return true;
+    }
+
+    private void persistMetadata(StructureDefinition def, File metaFile) {
+        try {
+            Files.write(metaFile.toPath(), StructureMetadata.dump(def).getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            plugin.getLogger().warning("[structures] Could not rewrite " + metaFile.getName()
+                    + " after migration/door detection: " + e.getMessage());
         }
     }
 
@@ -132,6 +168,20 @@ public final class StructureRegistry {
 
     public Registered byId(String id) {
         return byId.get(id == null ? null : id.trim().toLowerCase());
+    }
+
+    /** Persist an edited definition back to its disk sidecar. Defaults and unknown ids fail. */
+    public boolean save(StructureDefinition def) {
+        if (def == null) return false;
+        File file = files.get(def.id);
+        if (file == null) return false;
+        try {
+            Files.write(file.toPath(), StructureMetadata.dump(def).getBytes(StandardCharsets.UTF_8));
+            return true;
+        } catch (IOException e) {
+            plugin.getLogger().warning("[structures] Could not save " + file.getName() + ": " + e.getMessage());
+            return false;
+        }
     }
 
     public StructureDefinition definition(String id) {

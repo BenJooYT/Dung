@@ -27,9 +27,11 @@ public final class SignScanner {
     /** A written sign found in a clipboard: its structure-relative position and its first text line. */
     public record Sign(int x, int y, int z, String text) {}
 
-    /** Scan the whole clipboard for written signs and return their first text line (normalized). */
+    /** Scan the whole clipboard for written signs and return their first text line (normalized).
+     *  Positions are structure-relative (clipboard minimum = 0,0,0), matching the metadata contract. */
     public static List<Sign> scan(Clipboard clipboard) {
         List<Sign> out = new ArrayList<>();
+        BlockVector3 min = clipboard.getMinimumPoint();
         Region region = clipboard.getRegion();
         for (BlockVector3 pt : region) {
             BlockState bs = clipboard.getBlock(pt);
@@ -38,7 +40,10 @@ public final class SignScanner {
             if (id == null || !id.endsWith("_sign")) continue;
             String text = firstLine(clipboard, pt, bs);
             if (text == null || text.isBlank()) continue;
-            out.add(new Sign(pt.getBlockX(), pt.getBlockY(), pt.getBlockZ(), normalize(text)));
+            out.add(new Sign(pt.x() - min.x(),
+                    pt.y() - min.y(),
+                    pt.z() - min.z(),
+                    normalize(text)));
         }
         return out;
     }

@@ -1680,6 +1680,18 @@ tab = detailed build/run/progression).
       `MockMaker` init errors (Mockito agent can't load on this Termux/Android JVM — same suites
       run green on CI). CI run is the authoritative verdict for this iteration.
 
+## Multi-level authored doors
+- [x] Added optional per-direction `doors` metadata (`floor-y`, `height`) with backward-compatible
+      flat defaults; `StructureTransform` rotates the specs with the room.
+- [x] `/dung room gen` and `StructureRegistry` auto-detect authored openings at the fixed
+      `PERP_CENTER` line; existing sidecars without a `doors` key are detected and rewritten.
+- [x] Structure corridors now use a one-block-step staircase when the two door floors differ,
+      sealing unequal door heights; impossible deltas fall back to a procedural room.
+- [x] Door bars, `/dung floor inspect`, metadata validation, and authoring docs updated.
+- [x] New authoring commands: `/dung room doors <id>`, `/dung room door <id> <n|e|s|w>
+      <floor-y> [height|clear]`, a dedicated `/dung tutorial doors` topic, and structure-id/
+      direction tab completion.
+
 ## Build / run
 ```
 gradlew build            # compiles + jars

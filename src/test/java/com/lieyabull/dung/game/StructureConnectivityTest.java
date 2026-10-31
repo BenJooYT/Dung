@@ -495,6 +495,62 @@ class StructureConnectivityTest {
     }
 
     @Test
+    void staggeredDoorLevelsBuildAWalkableStepCorridor() {
+        Floor f = new Floor(0, 5, 5);
+        Floor.RoomNode a = new Floor.RoomNode(1, 1, RoomType.COMBAT);
+        Floor.RoomNode b = new Floor.RoomNode(2, 1, RoomType.COMBAT);
+        f.add(a);
+        f.add(b);
+        a.doors[1] = true;
+        b.doors[3] = true;
+
+        StructureDefinition ad = boxDef(13, 7);
+        StructureDefinition bd = boxDef(13, 7);
+        ad.doorsConfigured = true;
+        bd.doorsConfigured = true;
+        ad.door(1).floorY = 0;
+        ad.door(1).height = 4;
+        bd.door(3).floorY = 3;
+        bd.door(3).height = 4;
+        a.structure = ad;
+        b.structure = bd;
+
+        int spacing = 25;
+        int corridorHalf = RoomGen.corridorHalfFor(0);
+        FakeWorld fw = new FakeWorld(Material.AIR);
+        for (Floor.RoomNode n : List.of(a, b)) {
+            RoomBounds t = n.structure.total();
+            fillPaste(fw, n.x * spacing - t.minX, BASE_Y - t.minY,
+                    n.z * spacing - t.minZ, t);
+        }
+        DungeonInstance.carveStructureDoorsStatic(fw.world, f, BASE_Y, spacing, 0, 0);
+        DungeonInstance.carveStructureCorridorsStatic(fw.world, f, BASE_Y, spacing, 0, 0,
+                corridorHalf);
+
+        int aWall = DungeonInstance.structureWallAlong(a.x * spacing, ad.total(), 1, true);
+        int bWall = DungeonInstance.structureWallAlong(b.x * spacing, bd.total(), 3, true);
+        int perp = a.z * spacing + RoomGen.PERP_CENTER;
+        for (int y = BASE_Y + 1; y <= BASE_Y + 4; y++) {
+            assertTrue(fw.at(aWall, y, perp) == Material.AIR,
+                    "low door must be open at y=" + y);
+        }
+        for (int y = BASE_Y + 4; y <= BASE_Y + 7; y++) {
+            assertTrue(fw.at(bWall, y, perp) == Material.AIR,
+                    "high door must be open at y=" + y);
+        }
+
+        int lo = Math.min(aWall, bWall) + 1;
+        int hi = Math.max(aWall, bWall) - 1;
+        for (int t = lo; t <= hi; t++) {
+            int floor = DungeonInstance.interpolateDoorFloor(0, 3, t, lo, hi);
+            assertTrue(fw.at(t, BASE_Y + floor, perp) == Material.POLISHED_ANDESITE,
+                    "missing stair floor at t=" + t + " y=" + (BASE_Y + floor));
+            assertTrue(fw.at(t, BASE_Y + floor + 1, perp) == Material.AIR,
+                    "blocked stair headroom at t=" + t);
+        }
+    }
+
+    @Test
     void mixedHeightDoorSealsShortSide() {
         Floor f = new Floor(0, 5, 5);
         Floor.RoomNode normal = f.start;

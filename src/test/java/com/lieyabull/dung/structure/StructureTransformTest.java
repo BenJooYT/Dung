@@ -9,6 +9,7 @@ import com.lieyabull.dung.room.SpawnFloor;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests that rotating a {@link StructureDefinition}'s metadata stays consistent with the WorldEdit
@@ -64,6 +65,23 @@ class StructureTransformTest {
         s.allowedRotations = java.util.List.of();
         assertEquals(StructureTransform.Rotation.NONE,
                 StructureTransform.pickRandom(s, new java.util.Random(1L)));
+    }
+
+    @Test
+    void doorSpecsRotateWithCardinalDirections() {
+        StructureDefinition s = sample();
+        s.doorsConfigured = true;
+        s.door(0).floorY = 2;
+        s.door(0).height = 4;
+        s.door(1).floorY = 3;
+        s.door(1).height = 5;
+
+        StructureDefinition rot = StructureTransform.rotate(s, StructureTransform.Rotation.CW_90);
+        assertTrue(rot.doorsConfigured);
+        assertEquals(2, rot.doorFloorY(3), "north door becomes west");
+        assertEquals(4, rot.doorHeight(3));
+        assertEquals(3, rot.doorFloorY(0), "east door becomes north");
+        assertEquals(5, rot.doorHeight(0));
     }
 
     @Test

@@ -67,7 +67,26 @@ public final class StructureMetadata {
         for (Object o : list(map, "markers")) {
             if (o instanceof Map<?, ?> m) s.markers.add(marker(m));
         }
+
+        if (map.containsKey("doors")) {
+            Object raw = map.get("doors");
+            if (!(raw instanceof Map<?, ?> doorsMap)) {
+                throw new IllegalArgumentException("'doors' must be a mapping");
+            }
+            s.doorsConfigured = true;
+            s.doors = new StructureDefinition.DoorSpec[4];
+            s.doors[0] = doorSpec(doorsMap, "north");
+            s.doors[1] = doorSpec(doorsMap, "east");
+            s.doors[2] = doorSpec(doorsMap, "south");
+            s.doors[3] = doorSpec(doorsMap, "west");
+        }
         return s;
+    }
+
+    private static StructureDefinition.DoorSpec doorSpec(Map<?, ?> doors, String direction) {
+        Object raw = doors.get(direction);
+        if (!(raw instanceof Map<?, ?> m)) return new StructureDefinition.DoorSpec();
+        return new StructureDefinition.DoorSpec(int_(m, "floor-y", 0), int_(m, "height", 0));
     }
 
     private static RoomBounds bounds(Map<?, ?> m) {
@@ -117,6 +136,22 @@ public final class StructureMetadata {
             markers.add(mm);
         }
         m.put("markers", markers);
+
+        if (s.doorsConfigured) {
+            Map<String, Object> doors = new LinkedHashMap<>();
+            doors.put("north", doorMap(s.door(0)));
+            doors.put("east", doorMap(s.door(1)));
+            doors.put("south", doorMap(s.door(2)));
+            doors.put("west", doorMap(s.door(3)));
+            m.put("doors", doors);
+        }
+        return m;
+    }
+
+    private static Map<String, Object> doorMap(StructureDefinition.DoorSpec door) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("floor-y", door.floorY);
+        m.put("height", door.height);
         return m;
     }
 

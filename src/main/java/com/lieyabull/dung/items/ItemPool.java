@@ -6,91 +6,94 @@ import org.bukkit.inventory.ItemStack;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * SkyBlock-style loot: weapons and armor defined by base templates, rolled with a rarity
  * that scales with floor depth. Higher rarities multiply damage/defense.
+ * <p>
+ * The base descriptors live in {@link GiveCatalog}; the exact builders below are shared by
+ * live loot and the admin Give UI so both paths produce the same stats and tags.
  */
 public final class ItemPool {
-    // weapon templates: name, material, base dmg, ability, mana cost
-    // Each entry has a weight; Doomblade has half weight (1) vs others (2) so it drops half as often.
-    private static final String[][] WEAPONS = {
-        {"Frayed Blade", "IRON_SWORD", "5", "Rush", "15"},
-        {"Crude Axe", "STONE_AXE", "6", "Cleave", "20"},
-        {"Longsword", "IRON_SWORD", "8", "Slash", "18"},
-        {"War Hammer", "IRON_AXE", "11", "Smash", "30"},
-        {"Crystal Shard", "DIAMOND_SWORD", "13", "Blade Storm", "35"},
-        {"Arcane Staff", "BLAZE_ROD", "12", "Arcane Bolt", "25"},
-        {"Doomblade", "DIAMOND_SWORD", "18", "Ravage", "45"},
-        {"Storm Rod", "LIGHTNING_ROD", "14", "Chain Lightning", "35"},
-        {"Blaze Staff", "BLAZE_ROD", "12", "Fireball", "25"},
-        {"Soul Siphon", "NETHERITE_HOE", "12", "Life Drain", "20"},
-    };
-    // Weapon selection weights — Doomblade has half weight (1) vs others (2) so it drops half as often.
+
+    /** Weapon selection weights — Doomblade has half weight (1) vs others (2) so it drops half as often. */
     private static final int[] WEAPON_WEIGHTS = {2, 2, 2, 2, 2, 2, 1, 2, 2, 2};
-    // armor templates (head/chest/legs/boots) per base set
-    private static final String[][] ARMOR_BASES = {
-        {"Cloth", "LEATHER_HELMET", "LEATHER_CHESTPLATE", "LEATHER_LEGGINGS", "LEATHER_BOOTS", "1"},
-        {"Chain", "CHAINMAIL_HELMET", "CHAINMAIL_CHESTPLATE", "CHAINMAIL_LEGGINGS", "CHAINMAIL_BOOTS", "3"},
-        {"Iron", "IRON_HELMET", "IRON_CHESTPLATE", "IRON_LEGGINGS", "IRON_BOOTS", "6"},
-        {"Golden", "GOLDEN_HELMET", "GOLDEN_CHESTPLATE", "GOLDEN_LEGGINGS", "GOLDEN_BOOTS", "7"},
-        {"Diamond", "DIAMOND_HELMET", "DIAMOND_CHESTPLATE", "DIAMOND_LEGGINGS", "DIAMOND_BOOTS", "10"},
-        {"Netherite", "NETHERITE_HELMET", "NETHERITE_CHESTPLATE", "NETHERITE_LEGGINGS", "NETHERITE_BOOTS", "14"},
-    };
+    /** Health factor per armor slot: head, chest, legs, boots. */
+    private static final double[] SLOT_HEALTH = {0.65, 1.0, 0.80, 0.55};
 
     private ItemPool() {}
 
-    /** A reach-boosting weapon boosts the melee reach above the 3.0 default. */
-    private static final double reachOf(String id) {
-        switch (id) {
-            case "longsword": return 3.8;
-            case "arcane_staff": return 4.5;
-            case "doomblade": return 4.0;
-            case "storm_rod": return 4.5;
-            default: return 0.0;
+    /** Build one exact weapon base at the given rarity. */
+    public static ItemStack createWeapon(GiveCatalog.WeaponBase base, Rarity r, Random rng) {
+        int dmg = (int) Math.round(base.baseDamage() * r.statMult);
+        int health = rollWeaponHealth(base, r, rng);
+        ItemStack s = GearFactory.weapon(base.id(), base.name(), base.material(), r, dmg, health,
+                base.ability(), base.abilityCost());
+        if (base.magicDamage() > 0) {
+            s = GearFactory.withMagicDamage(s, (int) Math.round(base.magicDamage() * r.statMult));
         }
+        if (base.reach() > 0) {
+            s = GearFactory.withReach(s, base.reach());
+        }
+        return s;
     }
 
-    // Health affixes ("where logical"): armour carries the bulk of extra HP and scales with the
-    // material tier, the slot (chest is the biggest piece, boots the smallest) and rarity. Heavy
-    // melee weapons give a small bruiser bonus (they imply bulk/fortitude); mage/light weapons none.
-    private static final double[] ARMOR_HEALTH = {4, 7, 11, 13, 17, 21}; // per ARMOR_BASES index
-    private static final double[] SLOT_HEALTH = {0.65, 1.0, 0.80, 0.55}; // head, chest, legs, boots
-    private static final java.util.Set<String> BRUISER = java.util.Set.of(
-            "war_hammer", "doomblade", "longsword", "crude_axe");
+    /** Build one exact armor piece. Emberguard pieces are forced to {@link Rarity#EMBER}. */
+    public static ItemStack createArmor(GiveCatalog.ArmorPiece piece, Rarity r, Random rng) {
+        GiveCatalog.ArmorSet set = piece.set();
+        int slot = piece.slot();
+        if (set.emberguard()) {
+            int def = (int) Math.round(set.baseDefense() * Rarity.EMBER.statMult);
+            int health = (int) Math.round(set.healthBase() * SLOT_HEALTH[slot] * Rarity.EMBER.statMult);
+            return GearFactory.emberArmor(slot, def, health);
+        }
+        int def = (int) Math.round(set.baseDefense() * r.statMult);
+        int health = rollArmorHealth(set, slot, r, rng);
+        Material mat = set.material(slot);
+        if (mat == null) mat = Material.LEATHER_HELMET; // defensive fallback: never crash loot
+        return GearFactory.armor(set.id() + "_" + slot, set.name(), mat, r, def, health);
+    }
 
-    private static int rollWeaponHealth(String id, Rarity r) {
-        if (!BRUISER.contains(id)) return 0;
-        double v = 8 * r.statMult * (0.8 + ThreadLocalRandom.current().nextDouble() * 0.4);
+    /** Build one Emberguard piece directly (the live loot branch). */
+    public static ItemStack createEmberguard(int slot) {
+        int def = (int) Math.round(GiveCatalog.EMBERGUARD.baseDefense() * Rarity.EMBER.statMult);
+        int health = (int) Math.round(GiveCatalog.EMBERGUARD.healthBase() * SLOT_HEALTH[slot]
+                * Rarity.EMBER.statMult);
+        return GearFactory.emberArmor(slot, def, health);
+    }
+
+    /** Build one mana shield at the given rarity. */
+    public static ItemStack createShield(Rarity r) {
+        return GearFactory.shield(r);
+    }
+
+    private static int rollWeaponHealth(GiveCatalog.WeaponBase base, Rarity r, Random rng) {
+        if (!base.bruiser()) return 0;
+        double v = 8 * r.statMult * (0.8 + rng.nextDouble() * 0.4);
         return Math.max(0, (int) Math.round(v));
     }
 
-    private static int rollArmorHealth(int set, int slot, Rarity r) {
-        double v = ARMOR_HEALTH[set] * SLOT_HEALTH[slot] * r.statMult
-                * (0.9 + ThreadLocalRandom.current().nextDouble() * 0.3);
+    private static int rollArmorHealth(GiveCatalog.ArmorSet set, int slot, Rarity r, Random rng) {
+        double v = set.healthBase() * SLOT_HEALTH[slot] * r.statMult
+                * (0.9 + rng.nextDouble() * 0.3);
         return Math.max(0, (int) Math.round(v));
     }
 
     /** Roll rarity given floor (0-based). A rarity is only eligible once floor >= its unlock;
      *  higher floors push toward the rarer tiers (uncapped, so deep floors keep improving). */
     public static Rarity rollRarity(int floor) {
-        // no hard cap: deep floors should keep improving drops. push grows without bound.
         double push = floor * 0.03;
-        // only rarities that have unlocked at this floor may appear (COMMON always is).
         List<Rarity> eligible = new ArrayList<>();
         for (Rarity r : Rarity.values()) {
             if (floor >= r.floorUnlock) eligible.add(r);
         }
         if (eligible.isEmpty()) eligible.add(Rarity.COMMON);
-        // weight a single roll against a table; higher rarities get boosted by push, and the
-        // sum is normalized so push may exceed 1.0 without breaking the thresholds.
         double[] weights = new double[eligible.size()];
         double total = 0;
         for (int i = 0; i < eligible.size(); i++) {
             Rarity r = eligible.get(i);
-            // Scale the rarity boost by ordinal but halve it so low floors keep COMMON as the
-            // most common tier; deep floors (large push) still climb toward the rare tiers.
             double w = r.baseChance * (1.0 + push * r.ordinal() * 0.5);
             weights[i] = w;
             total += w;
@@ -104,12 +107,12 @@ public final class ItemPool {
     }
 
     public static ItemStack randomWeapon(int floor) {
-        // Weighted selection — Doomblade has half weight
+        List<GiveCatalog.WeaponBase> bases = GiveCatalog.WEAPONS;
         int[] weights = WEAPON_WEIGHTS;
-        if (weights.length != WEAPONS.length) {
+        if (weights.length != bases.size()) {
             Bukkit.getLogger().warning("[Dung] WEAPONS/WEAPON_WEIGHTS length mismatch ("
-                    + WEAPONS.length + " vs " + weights.length + ") — falling back to uniform weights.");
-            weights = new int[WEAPONS.length];
+                    + bases.size() + " vs " + weights.length + ") — falling back to uniform weights.");
+            weights = new int[bases.size()];
             java.util.Arrays.fill(weights, 1);
         }
         int totalWeight = 0;
@@ -120,84 +123,27 @@ public final class ItemPool {
             roll -= weights[i];
             if (roll < 0) { idx = i; break; }
         }
-        String[] w = WEAPONS[idx];
+        GiveCatalog.WeaponBase base = bases.get(idx);
         Rarity r = rollRarity(floor);
-        int base = Integer.parseInt(w[2]);
-        int dmg = (int) Math.round(base * r.statMult);
-        String id = w[0].toLowerCase().replace(' ', '_');
-        Material mat = Material.matchMaterial(w[1]);
-        if (mat == null) mat = Material.WOODEN_SWORD; // defensive fallback: never crash loot
-        ItemStack s = GearFactory.weapon(id,
-                w[0], mat, r, dmg, rollWeaponHealth(id, r), w[3], Integer.parseInt(w[4]));
-        // Magic weapons (Arcane Staff, Storm Rod, Blaze Staff, Soul Siphon) have separate
-        // magic damage and only deal 1 melee damage. The magic damage is stored in a separate PDC tag.
-        String name = w[0];
-        int magicDmg = switch (name) {
-            case "Arcane Staff" -> 12;
-            case "Storm Rod" -> 14;
-            case "Blaze Staff" -> 12;
-            case "Soul Siphon" -> 12;
-            default -> 0;
-        };
-        if (magicDmg > 0) {
-            int scaledMagic = (int) Math.round(magicDmg * r.statMult);
-            s = GearFactory.withMagicDamage(s, scaledMagic);
+        // Doomblade: halve the mythic chance by re-rolling without MYTHIC.
+        if ("doomblade".equals(base.id()) && r == Rarity.MYTHIC
+                && ThreadLocalRandom.current().nextBoolean()) {
+            r = rollRarityNoMythic(floor);
         }
-        double reach = reachOf(id);
-        s = reach > 0 ? GearFactory.withReach(s, reach) : s;
-        // Doomblade: halve the mythic chance by re-rolling rarity if it rolled MYTHIC
-        if ("doomblade".equals(id) && r == Rarity.MYTHIC && ThreadLocalRandom.current().nextBoolean()) {
-            // Downgrade to a non-mythic rarity by re-rolling without MYTHIC eligible
-            Rarity downgrade = rollRarityNoMythic(floor);
-            int newDmg = (int) Math.round(base * downgrade.statMult);
-            int newHealth = rollWeaponHealth(id, downgrade);
-            int newMagic = magicDmg > 0 ? (int) Math.round(magicDmg * downgrade.statMult) : 0;
-            ItemStack ds = s;
-            ds.editMeta(meta -> {
-                var pdc = meta.getPersistentDataContainer();
-                pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.RARITY),
-                        org.bukkit.persistence.PersistentDataType.STRING, downgrade.name());
-                pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.DAMAGE),
-                        org.bukkit.persistence.PersistentDataType.INTEGER, newDmg);
-                pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.HEALTH),
-                        org.bukkit.persistence.PersistentDataType.INTEGER, newHealth);
-                if (newMagic > 0) {
-                    pdc.set(org.bukkit.NamespacedKey.minecraft(ItemTags.MAGIC_DAMAGE),
-                            org.bukkit.persistence.PersistentDataType.INTEGER, newMagic);
-                }
-                // Recolor the display name for the new rarity
-                String dn = meta.getDisplayName();
-                if (dn != null) {
-                    // Strip old color codes and re-apply the new rarity color
-                    String stripped = dn.replaceAll("§[0-9a-fklmnor]", "");
-                    meta.setDisplayName(downgrade.legacy + stripped);
-                }
-            });
-            GearFactory.rewriteWeaponStatLore(ds, downgrade, newDmg, newHealth);
-            s = ds;
-        }
-        return s;
+        return createWeapon(base, r, ThreadLocalRandom.current());
     }
 
     /** Roll a random armor piece. slot: 0=head,1=chest,2=legs,3=boots. */
     public static ItemStack randomArmor(int floor, int slot) {
         Rarity r = rollRarity(floor);
         // Emberguard is an endgame armor-only branch for now. It uses exactly half of the
-        // Mythic outcome rate, while leaving the other half as ordinary Mythic armor. Keeping
-        // Ember out of rollRarity() itself leaves the rarity reusable for future Ember weapons.
+        // Mythic outcome rate, while leaving the other half as ordinary Mythic armor.
         if (floor >= 7 && r == Rarity.MYTHIC && ThreadLocalRandom.current().nextBoolean()) {
-            int def = (int) Math.round(14 * Rarity.EMBER.statMult);
-            int health = (int) Math.round(ARMOR_HEALTH[5] * SLOT_HEALTH[slot] * Rarity.EMBER.statMult);
-            return GearFactory.emberArmor(slot, def, health);
+            return createEmberguard(slot);
         }
-        int set = ThreadLocalRandom.current().nextInt(ARMOR_BASES.length);
-        String[] b = ARMOR_BASES[set];
-        int base = Integer.parseInt(b[5]);
-        int def = (int) Math.round(base * r.statMult);
-        String id = b[0].toLowerCase().replace(' ', '_') + "_" + slot;
-        Material mat = Material.matchMaterial(b[slot + 1]);
-        if (mat == null) mat = Material.LEATHER_HELMET; // defensive fallback: never crash loot
-        return GearFactory.armor(id, b[0], mat, r, def, rollArmorHealth(set, slot, r));
+        GiveCatalog.ArmorSet set = GiveCatalog.LOOT_ARMOR_SETS.get(
+                ThreadLocalRandom.current().nextInt(GiveCatalog.LOOT_ARMOR_SETS.size()));
+        return createArmor(new GiveCatalog.ArmorPiece(set, slot), r, ThreadLocalRandom.current());
     }
 
     /** Roll rarity but exclude MYTHIC (for Doomblade mythic-halving). */
@@ -227,8 +173,7 @@ public final class ItemPool {
 
     /** Roll a random shield item. Shields drop at a lower rate than weapons/armor. */
     public static ItemStack randomShield(int floor) {
-        Rarity r = rollRarity(floor);
-        return GearFactory.shield(r);
+        return createShield(rollRarity(floor));
     }
 
     /** A full "loot reward" for clearing a room: chance of gear + always some coins. */

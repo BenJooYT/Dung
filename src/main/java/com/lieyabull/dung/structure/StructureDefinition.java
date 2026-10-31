@@ -53,6 +53,30 @@ public final class StructureDefinition {
     /** Gameplay markers (player spawn, shopkeeper, loot, ...). */
     public List<RoomMarker> markers = new ArrayList<>();
 
+    /** Per-direction door geometry, indexed N/E/S/W. */
+    public static final class DoorSpec {
+        /** Floor block Y relative to the structure minimum. 0 = the clipboard bottom layer. */
+        public int floorY;
+        /** Air height above the floor. 0 = use the room's default air height. */
+        public int height;
+
+        public DoorSpec() {}
+
+        public DoorSpec(int floorY, int height) {
+            this.floorY = floorY;
+            this.height = height;
+        }
+
+        public DoorSpec copy() {
+            return new DoorSpec(floorY, height);
+        }
+    }
+
+    /** Per-direction door floor/height. Missing entries behave as floorY=0, height=0. */
+    public DoorSpec[] doors = new DoorSpec[4];
+    /** True when the sidecar contains an explicit {@code doors} mapping (skips auto-detection). */
+    public boolean doorsConfigured;
+
     /** Logical height of the room (blocks). */
     public int roomHeight;
     /** Height (blocks) of the entry connection. */
@@ -77,6 +101,24 @@ public final class StructureDefinition {
         List<RoomMarker> out = new ArrayList<>();
         for (RoomMarker m : markers) if (m.type == type) out.add(m);
         return out;
+    }
+
+    /** Door descriptor for N/E/S/W; missing array entries are initialized lazily. */
+    public DoorSpec door(int direction) {
+        if (direction < 0 || direction > 3) return new DoorSpec();
+        if (doors == null) doors = new DoorSpec[4];
+        if (doors[direction] == null) doors[direction] = new DoorSpec();
+        return doors[direction];
+    }
+
+    public int doorFloorY(int direction) {
+        return direction < 0 || direction > 3 || doors == null || doors[direction] == null
+                ? 0 : doors[direction].floorY;
+    }
+
+    public int doorHeight(int direction) {
+        return direction < 0 || direction > 3 || doors == null || doors[direction] == null
+                ? 0 : doors[direction].height;
     }
 
     public boolean serves(RoomType type) {

@@ -8,6 +8,7 @@ import com.lieyabull.dung.room.SpawnFloor;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Round-trips the &lt;id&gt;.yml metadata contract through SnakeYAML. */
@@ -41,5 +42,29 @@ class StructureMetadataTest {
         assertEquals("bare_room", s.id);
         assertTrue(s.allowedRotations.contains(0), "allowed-rotations defaults to all four");
         assertEquals("structure.schem", s.schematic, "schematic defaults to structure.schem");
+        assertFalse(s.doorsConfigured);
+        assertEquals(0, s.doorFloorY(0));
+    }
+
+    @Test
+    void doorHeightsRoundTrip() {
+        StructureDefinition s = new StructureDefinition();
+        s.id = "updown";
+        s.types.add("COMBAT");
+        s.bounds.add(new RoomBounds(0, 0, 0, 12, 8, 12));
+        s.doorsConfigured = true;
+        s.door(0).floorY = 0;
+        s.door(0).height = 4;
+        s.door(1).floorY = 3;
+        s.door(1).height = 4;
+
+        String yaml = StructureMetadata.dump(s);
+        assertTrue(yaml.contains("doors:"), yaml);
+        StructureDefinition back = StructureMetadata.load(yaml);
+        assertTrue(back.doorsConfigured);
+        assertEquals(0, back.doorFloorY(0));
+        assertEquals(4, back.doorHeight(0));
+        assertEquals(3, back.doorFloorY(1));
+        assertEquals(4, back.doorHeight(1));
     }
 }

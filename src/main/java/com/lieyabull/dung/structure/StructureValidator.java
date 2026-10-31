@@ -98,6 +98,9 @@ public final class StructureValidator {
             }
         }
 
+        // --- per-direction door vertical geometry ---
+        validateDoors(s, issues);
+
         // --- spawn floors ---
         validateSpawnFloors(s, issues, lookup);
 
@@ -106,6 +109,36 @@ public final class StructureValidator {
 
         boolean valid = !hasError(issues);
         return new Result(issues, valid);
+    }
+
+    private static void validateDoors(StructureDefinition s, List<RoomValidationIssue> issues) {
+        if (!s.doorsConfigured) return;
+        RoomBounds total = s.total();
+        String[] names = {"N", "E", "S", "W"};
+        for (int d = 0; d < 4; d++) {
+            StructureDefinition.DoorSpec door = s.door(d);
+            if (door.floorY < 0) {
+                issues.add(RoomValidationIssue.error("DOOR", names[d] + " door floor-y is negative", null));
+            }
+            if (door.height < 0) {
+                issues.add(RoomValidationIssue.error("DOOR", names[d] + " door height is negative", null));
+            }
+            if (door.floorY >= total.height()) {
+                issues.add(RoomValidationIssue.error("DOOR", names[d] + " door floor-y is outside the structure bounds", null));
+            } else {
+                int defaultAir = hasType(s, "BOSS") ? 7 : 4;
+                int air = door.height > 0 ? door.height : Math.min(defaultAir, total.height());
+                if (door.floorY + air > total.height()) {
+                    issues.add(RoomValidationIssue.error("DOOR",
+                            names[d] + " door opening extends above the structure bounds", null));
+                }
+            }
+        }
+    }
+
+    private static boolean hasType(StructureDefinition s, String type) {
+        for (String t : s.types) if (t.equalsIgnoreCase(type)) return true;
+        return false;
     }
 
     private static void validateSpawnFloors(StructureDefinition s, List<RoomValidationIssue> issues, BlockLookup lookup) {
