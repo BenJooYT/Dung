@@ -78,6 +78,11 @@ start|descend|leave|stats|cp|class|shieldswitch|tutorial`, `/shop`, `/upgrades`,
 - `hub-rooms: 15` — room budget for the hub layout.
 - `floor-archetype: random|none|ruins|caverns|temple|overgrown|inferno|crypt` — classic-layout theme. Ignored by the hub layout.
 - `floor-modifiers: random|none|<comma list>` — up to two of `flooded`, `collapsing`, `corrupted`, `overgrown`, `darkness`, `infested`, `frozen`.
+- `room-source: procedural|custom|both` — where room bodies come from. `procedural` uses only `RoomGen`; `custom` uses the structure library with procedural fallback; `both` mixes per room.
+- `room-source-chance: 0.5` — share of eligible rooms that get a structure in `both` mode. The roll is derived from the floor seed, so a seed replays the same mix.
+- `custom-rooms: true` — legacy master switch; `false` still forces procedural.
+
+The floor graph, doors, corridors, SECRET/LOCKED rooms, and the hub chamber are always procedural. `room-source` only selects the room body.
 
 Rooms support rectangle/L/cave/cross/ring/arena shapes, safe and hazard features (pools, pits, pillars, rubble, spikes, roots, altar, chest platform, stairs, bridges, terraces), archetype palettes, one-time event rooms, and the Four Pillar Arena / The Ring / The Altar / The Platforms templates.
 
@@ -459,7 +464,7 @@ registers the survivors; fills any uncovered room type with `DefaultStructures`.
 **`StructureManager`** — top-level coordinator owned by `Dung` (replaces the old room editor):
 `registry()` and `reload()`. `DungeonInstance.resolveStructures` picks and rotates structures per room
 and pastes them via `StructureWorldEdit`; the procedural `RoomGen` path remains as the fallback when
-no structure serves a room or `custom-rooms` is off.
+no structure serves a room, `room-source` is `procedural`, or `custom-rooms` is `false`.
 
 ### `entity` — enemies & AI
 
@@ -639,8 +644,8 @@ Lifecycle:
   class + permanent upgrades, applies held gear), sets up scoreboards, grants starter kits,
   fires tutorial (including key/bomb hotbar instructions) for new profiles, then `enterFloor(0)`.
 - `enterFloor(i)` — randomizes spacing (25–28, +2 per party tier), generates + builds the floor, teleports all
-  party members to the START room. When `custom-rooms` is on, structures from the library are
-  selected per room, given a random allowed rotation for variety, and pasted via
+  party members to the START room. With `room-source: custom|both` (and `custom-rooms: true`),
+  structures from the library are selected per room, given a random allowed rotation for variety, and pasted via
   `StructureWorldEdit`; structure doorways and corridors are then carved procedurally on the shared
   corridor line (`PERP_CENTER`), so each structure opens exactly the door directions the floor graph
   needs and connects to procedural neighbours without a hole between the room wall and the corridor.

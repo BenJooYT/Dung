@@ -12,6 +12,7 @@ import com.lieyabull.dung.dungeon.FloorProfile;
 import com.lieyabull.dung.dungeon.FloorSeeds;
 import com.lieyabull.dung.dungeon.RoomGen;
 import com.lieyabull.dung.dungeon.RoomRole;
+import com.lieyabull.dung.dungeon.RoomSource;
 import com.lieyabull.dung.dungeon.RoomType;
 import com.lieyabull.dung.room.RoomBounds;
 import com.lieyabull.dung.room.RoomMarker;
@@ -734,9 +735,10 @@ public final class DungeonInstance {
         // exists for their type; rooms without a matching template are built procedurally.
         // SECRET and LOCKED rooms always use procedural mechanics (secret passage carving,
         // locked barriers) and never get templates.
-        // Custom rooms can be disabled via config (custom-rooms: false) or /room toggle.
-        boolean customRooms = plugin.getConfig().getBoolean("custom-rooms", true);
-        if (customRooms) resolveStructures(run.floor);
+        // Room bodies: procedural, custom structures, or a deterministic per-room mix.
+        RoomSource roomSource = roomSource();
+        boolean customRooms = roomSource.usesCustom();
+        if (customRooms) resolveStructures(run.floor, roomSource);
         // Scale room sizes up to the party tier. Structure rooms keep their fixed template footprint
         // (they are not size-scalable); only procedural rooms are resized for the extra elbow room.
         for (Floor.RoomNode n : run.floor.rooms()) {
@@ -847,13 +849,15 @@ public final class DungeonInstance {
      *  are NOT stored in the template — they are carved procedurally at build time on the shared
      *  corridor line ({@link #carveStructureDoors}), so any rotation is valid for any door graph.
      *  A rotated copy is stored on the room node; the original template is unchanged. */
-    private void resolveStructures(Floor floor) {
+    private void resolveStructures(Floor floor, RoomSource source) {
         java.util.Random rnd = FloorSeeds.random(run.floorSeed, "structures");
+        double chance = roomSourceChance(source);
         for (Floor.RoomNode n : floor.rooms()) {
             // SECRET and LOCKED rooms always use procedural mechanics; the hub chamber is
             // intentionally procedural so its larger footprint is preserved.
             if (n.type == RoomType.SECRET || n.type == RoomType.LOCKED) continue;
             if (n.role == RoomRole.HUB) continue;
+            if (source == RoomSource.BOTH && rnd.nextDouble() >= chance) continue;
             StructureDefinition s = registry().pick(n.type, rnd);
             if (s == null) continue;
             // Pick a random allowed rotation (doors are carved procedurally, so nothing to align).
@@ -867,6 +871,45 @@ public final class DungeonInstance {
             StructureRegistry.Registered reg = registry().byId(s.id);
             n.clipboard = reg == null ? null : reg.clipboard();
         }
+    }
+
+    /** The configured room-source mode. {@code custom-rooms: false} still forces procedural when
+     *  {@code room-source} is absent, so existing installs keep their switch. */
+    private RoomSource roomSource() {
+        String raw = plugin.getConfig().getString("room-source");
+        if (raw == null || raw.isBlank()) {
+            // Preserve pre-room-source installs: custom rooms when available, otherwise procedural.
+            return plugin.getConfig().getBoolean("custom-rooms", true)
+                    ? RoomSource.CUSTOM : RoomSource.PROCEDURAL;
+        }
+        RoomSource source;
+        try {
+            source = RoomSource.valueOf(raw.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            source = RoomSource.parse(raw);
+            if (source == RoomSource.DEFAULT) {
+                plugin.getLogger().warning("[dungeon] Unknown room-source '" + raw
+                        + "', using " + RoomSource.DEFAULT + ".");
+            }
+        }
+        // The legacy switch only ever disabled custom rooms; keep that intent.
+        if (source != RoomSource.PROCEDURAL
+                && !plugin.getConfig().getBoolean("custom-rooms", true)) {
+            return RoomSource.PROCEDURAL;
+        }
+        return source;
+    }
+
+    /** Share of eligible rooms that get a structure in BOTH mode. */
+    private double roomSourceChance(RoomSource source) {
+        if (source != RoomSource.BOTH) return 1.0;
+        double chance = plugin.getConfig().getDouble("room-source-chance", 0.5);
+        if (chance < 0.0 || chance > 1.0) {
+            plugin.getLogger().warning("[dungeon] room-source-chance must be 0..1, got " + chance
+                    + "; clamping.");
+            chance = Math.max(0.0, Math.min(1.0, chance));
+        }
+        return chance;
     }
 
     /** Reject authored structure links whose vertical door delta cannot fit a 1-block-step corridor
